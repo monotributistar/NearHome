@@ -12,7 +12,7 @@ services:
       - db_data:/var/lib/mysql
       - ./init-db:/docker-entrypoint-initdb.d
     networks:
-      - nearhome-net
+      - backend
     healthcheck:
       test: ["CMD", "mariadb-admin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
       interval: 10s
@@ -28,7 +28,7 @@ services:
     volumes:
       - redis_data:/data
     networks:
-      - nearhome-net
+      - backend
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -51,10 +51,11 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       TZ: ${TZ:-America/Argentina/Buenos_Aires}
-    ports:
-      - "8000:8000"
     networks:
-      - nearhome-net
+      - backend
+      - frontend
+    expose:
+      - "8000"
 
   detector:
     build:
@@ -70,12 +71,12 @@ services:
       REDIS_PORT: 6379
       API_BASE_URL: http://api:8000
       TZ: ${TZ:-America/Argentina/Buenos_Aires}
-    ports:
-      - "8001:8001"
     volumes:
       - yolo_models:/root/.cache/ultralytics
     networks:
-      - nearhome-net
+      - backend
+    expose:
+      - "8001"
 
   shinobi:
     image: registry.gitlab.com/shinobi-systems/shinobi:dev
@@ -88,8 +89,6 @@ services:
       HOME_URL: ${HOME_URL:-http://localhost:8080}
       TZ: ${TZ:-America/Argentina/Buenos_Aires}
       PLUGIN_KEYS: '{"yolo":{"host":"detector","port":"8001"}}'
-    ports:
-      - "8080:8080"
     volumes:
       - shinobi_config:/config
       - shinobi_data:/var/lib/mysql
@@ -97,7 +96,27 @@ services:
       - shinobi_plugins:/home/Shinobi/plugins
       - /etc/localtime:/etc/localtime:ro
     networks:
-      - nearhome-net
+      - backend
+      - cameras
+    expose:
+      - "8080"
+
+  nginx:
+    image: nginx:alpine
+    container_name: nearhome-nginx
+    restart: unless-stopped
+    depends_on:
+      - api
+      - shinobi
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    networks:
+      - frontend
+      - cameras
 
 volumes:
   db_data:
@@ -116,5 +135,21 @@ volumes:
     driver: local
 
 networks:
-  nearhome-net:
+  backend:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 10.10.0.0/24
+    internal: true
+
+  frontend:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.20.0.0/24
+
+  cameras:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.30.0.0/24
