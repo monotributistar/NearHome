@@ -1,0 +1,71 @@
+services:
+  mariadb:
+    image: mariadb:10.11
+    container_name: nearhome-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - db_data:/var/lib/mysql
+    networks:
+      - nearhome-net
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    container_name: nearhome-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - nearhome-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  shinobi:
+    image: registry.gitlab.com/shinobi-systems/shinobi:dev
+    container_name: nearhome-shinobi-nvr
+    restart: unless-stopped
+    environment:
+      HOME_URL: ${HOME_URL:-http://localhost:8080}
+      TZ: ${TZ:-America/Argentina/Buenos_Aires}
+    ports:
+      - "8080:8080"
+    volumes:
+      - shinobi_config:/config
+      - shinobi_data:/var/lib/mysql
+      - shinobi_videos:/opt/shinobi/videos
+      - shinobi_plugins:/home/Shinobi/plugins
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - nearhome-net
+
+volumes:
+  db_data:
+    driver: local
+  redis_data:
+    driver: local
+  shinobi_config:
+    driver: local
+  shinobi_data:
+    driver: local
+  shinobi_videos:
+    driver: local
+  shinobi_plugins:
+    driver: local
+
+networks:
+  nearhome-net:
+    driver: bridge
