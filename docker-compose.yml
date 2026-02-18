@@ -10,6 +10,7 @@ services:
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
     volumes:
       - db_data:/var/lib/mysql
+      - ./init-db:/docker-entrypoint-initdb.d
     networks:
       - nearhome-net
     healthcheck:
@@ -34,13 +35,59 @@ services:
       timeout: 5s
       retries: 5
 
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: nearhome-api
+    restart: unless-stopped
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mariadb:3306/nearhome
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      TZ: ${TZ:-America/Argentina/Buenos_Aires}
+    ports:
+      - "8000:8000"
+    networks:
+      - nearhome-net
+
+  detector:
+    build:
+      context: ./detection
+      dockerfile: Dockerfile
+    container_name: nearhome-detector
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      API_BASE_URL: http://api:8000
+      TZ: ${TZ:-America/Argentina/Buenos_Aires}
+    ports:
+      - "8001:8001"
+    volumes:
+      - yolo_models:/root/.cache/ultralytics
+    networks:
+      - nearhome-net
+
   shinobi:
     image: registry.gitlab.com/shinobi-systems/shinobi:dev
     container_name: nearhome-shinobi-nvr
     restart: unless-stopped
+    depends_on:
+      detector:
+        condition: service_started
     environment:
       HOME_URL: ${HOME_URL:-http://localhost:8080}
       TZ: ${TZ:-America/Argentina/Buenos_Aires}
+      PLUGIN_KEYS: '{"yolo":{"host":"detector","port":"8001"}}'
     ports:
       - "8080:8080"
     volumes:
@@ -64,6 +111,8 @@ volumes:
   shinobi_videos:
     driver: local
   shinobi_plugins:
+    driver: local
+  yolo_models:
     driver: local
 
 networks:
