@@ -1,1 +1,10 @@
 .env
+CREDENTIALS.md
+*.log
+__pycache__/
+*.pyc
+.pytest_cache/
+.vscode/
+.idea/
+*.swp
+*.swo

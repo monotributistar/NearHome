@@ -1,0 +1,20 @@
+services:
+  shinobi:
+    image: registry.gitlab.com/shinobi-systems/shinobi:dev
+    container_name: nearhome-shinobi-pro
+    restart: unless-stopped
+    volumes:
+      - shinobi_pro_config:/config
+      - shinobi_pro_data:/var/lib/mysql
+      - shinobi_pro_videos:/opt/shinobi/videos
+    environment:
+      TZ: America/Argentina/Buenos_Aires
+    ports:
+      - "8080:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  shinobi_pro_config:
+  shinobi_pro_data:
+  shinobi_pro_videos:

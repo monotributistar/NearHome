@@ -11,8 +11,6 @@ services:
     volumes:
       - db_data:/var/lib/mysql
       - ./init-db:/docker-entrypoint-initdb.d
-    networks:
-      - backend
     healthcheck:
       test: ["CMD", "mariadb-admin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
       interval: 10s
@@ -27,8 +25,6 @@ services:
     command: redis-server --appendonly yes
     volumes:
       - redis_data:/data
-    networks:
-      - backend
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -51,11 +47,8 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       TZ: ${TZ:-America/Argentina/Buenos_Aires}
-    networks:
-      - backend
-      - frontend
-    expose:
-      - "8000"
+    ports:
+      - "8000:8000"
 
   detector:
     build:
@@ -69,89 +62,35 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      API_BASE_URL: http://api:8000
+      API_BASE_URL: http://host.docker.internal:8000
       TZ: ${TZ:-America/Argentina/Buenos_Aires}
     volumes:
       - yolo_models:/root/.cache/ultralytics
-    networks:
-      - backend
-    expose:
-      - "8001"
+    ports:
+      - "8001:8001"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   shinobi:
-    image: registry.gitlab.com/shinobi-systems/shinobi:dev
-    container_name: nearhome-shinobi-nvr
+    image: shinobisystems/shinobi:latest
+    container_name: nearhome-shinobi
     restart: unless-stopped
-    depends_on:
-      detector:
-        condition: service_started
-    environment:
-      HOME_URL: ${HOME_URL:-http://localhost:8080}
-      TZ: ${TZ:-America/Argentina/Buenos_Aires}
-      PLUGIN_KEYS: '{"yolo":{"host":"detector","port":"8001"}}'
     volumes:
       - shinobi_config:/config
       - shinobi_data:/var/lib/mysql
       - shinobi_videos:/opt/shinobi/videos
-      - shinobi_plugins:/home/Shinobi/plugins
-      - /etc/localtime:/etc/localtime:ro
-    networks:
-      - backend
-      - cameras
+    environment:
+      TZ: ${TZ:-America/Argentina/Buenos_Aires}
+    ports:
+      - "8080:8080"
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    expose:
-      - "8080"
-
-  nginx:
-    image: nginx:alpine
-    container_name: nearhome-nginx
-    restart: unless-stopped
-    depends_on:
-      - api
-      - shinobi
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/ssl:/etc/nginx/ssl:ro
-    networks:
-      - frontend
-      - cameras
 
 volumes:
   db_data:
-    driver: local
   redis_data:
-    driver: local
   shinobi_config:
-    driver: local
   shinobi_data:
-    driver: local
   shinobi_videos:
-    driver: local
   shinobi_plugins:
-    driver: local
   yolo_models:
-    driver: local
-
-networks:
-  backend:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 10.10.0.0/24
-    internal: true
-
-  frontend:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 10.20.0.0/24
-
-  cameras:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 10.30.0.0/24

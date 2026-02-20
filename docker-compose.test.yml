@@ -1,0 +1,18 @@
+services:
+  shinobi:
+    image: registry.gitlab.com/shinobi-systems/shinobi:dev
+    container_name: nearhome-shinobi
+    restart: unless-stopped
+    environment:
+      HOME_URL: http://localhost:8080
+      TZ: America/Argentina/Buenos_Aires
+    network_mode: host
+    volumes:
+      - shinobi_config:/config
+      - shinobi_data:/var/lib/mysql
+      - shinobi_videos:/opt/shinobi/videos
+
+volumes:
+  shinobi_config:
+  shinobi_data:
+  shinobi_videos:
