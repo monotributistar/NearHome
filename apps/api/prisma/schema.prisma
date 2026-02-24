@@ -1,0 +1,141 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Tenant {
+  id            String         @id @default(cuid())
+  name          String
+  createdAt     DateTime       @default(now())
+  memberships   Membership[]
+  cameras       Camera[]
+  subscriptions Subscription[]
+  events        Event[]
+}
+
+model User {
+  id           String       @id @default(cuid())
+  email        String       @unique
+  passwordHash String
+  name         String
+  createdAt    DateTime     @default(now())
+  isActive     Boolean      @default(true)
+  memberships  Membership[]
+}
+
+model Membership {
+  id        String   @id @default(cuid())
+  tenantId  String
+  userId    String
+  role      String
+  createdAt DateTime @default(now())
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@unique([tenantId, userId])
+}
+
+model Camera {
+  id                    String                @id @default(cuid())
+  tenantId              String
+  name                  String
+  description           String?
+  rtspUrl               String
+  location              String?
+  tags                  String
+  isActive              Boolean               @default(true)
+  lifecycleStatus       String                @default("draft")
+  lastSeenAt            DateTime?
+  lastTransitionAt      DateTime?
+  createdAt             DateTime              @default(now())
+  deletedAt             DateTime?
+  tenant                Tenant                @relation(fields: [tenantId], references: [id])
+  events                Event[]
+  profile               CameraProfile?
+  lifecycleLogs         CameraLifecycleLog[]
+  latestHealthSnapshot  CameraHealthSnapshot?
+}
+
+model CameraProfile {
+  id                  String   @id @default(cuid())
+  tenantId            String
+  cameraId            String   @unique
+  proxyPath           String
+  recordingEnabled    Boolean  @default(false)
+  recordingStorageKey String
+  detectorConfigKey   String
+  detectorResultsKey  String
+  detectorFlags       String
+  status              String   @default("ready")
+  lastHealthAt        DateTime?
+  lastError           String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  camera              Camera   @relation(fields: [cameraId], references: [id])
+}
+
+model CameraLifecycleLog {
+  id          String   @id @default(cuid())
+  tenantId    String
+  cameraId    String
+  fromStatus  String?
+  toStatus    String
+  event       String
+  reason      String?
+  actorUserId String?
+  createdAt   DateTime @default(now())
+  camera      Camera   @relation(fields: [cameraId], references: [id])
+}
+
+model CameraHealthSnapshot {
+  id          String   @id @default(cuid())
+  tenantId    String
+  cameraId    String   @unique
+  connectivity String
+  latencyMs   Int?
+  packetLossPct Float?
+  jitterMs    Int?
+  error       String?
+  checkedAt   DateTime @default(now())
+  camera      Camera   @relation(fields: [cameraId], references: [id])
+}
+
+model Plan {
+  id        String         @id @default(cuid())
+  code      String         @unique
+  name      String
+  limits    String
+  features  String
+  createdAt DateTime       @default(now())
+  subscriptions Subscription[]
+}
+
+model Subscription {
+  id                 String   @id @default(cuid())
+  tenantId           String
+  planId             String
+  status             String
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  createdAt          DateTime @default(now())
+  tenant             Tenant   @relation(fields: [tenantId], references: [id])
+  plan               Plan     @relation(fields: [planId], references: [id])
+
+  @@unique([tenantId])
+}
+
+model Event {
+  id        String   @id @default(cuid())
+  tenantId  String
+  cameraId  String
+  type      String
+  severity  String
+  timestamp DateTime
+  payload   String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  camera    Camera   @relation(fields: [cameraId], references: [id])
+}

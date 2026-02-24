@@ -1,0 +1,8 @@
+node_modules
+.turbo
+dist
+build
+test-results
+playwright-report
+apps/api/dist
+pnpm-lock.yaml
