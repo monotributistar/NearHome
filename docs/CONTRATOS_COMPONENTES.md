@@ -33,8 +33,10 @@ Base URL: `http://localhost:3001`
 
 - Header `Authorization: Bearer <jwt>`
 - Header `X-Tenant-Id: <tenantId>` para recursos tenant-scoped
+- Header opcional `X-Request-Id: <requestId>` (si no viene, el backend genera uno)
 - 401: token inválido/expirado
 - 403: sin membresía o permiso insuficiente
+- Respuesta incluye siempre header `x-request-id`
 
 ### Error estándar (NH-001)
 

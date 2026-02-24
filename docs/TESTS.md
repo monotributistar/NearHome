@@ -24,6 +24,16 @@ Cobertura incluida:
   - `tenant_admin` puede configurar `PUT /cameras/:id/profile`
   - `monitor` no puede configurar perfil interno (403)
   - si la config queda incompleta, el perfil cae a `pending` con `configComplete=false`
+- NH-027 camera lifecycle
+  - transición `draft -> ready` con `POST /cameras/:id/validate`
+  - `monitor` no puede `retire/reactivate` (403)
+- NH-028 stream sessions lifecycle
+  - emisión de token crea sesión `issued`
+  - transición `issued -> active -> ended`
+  - `client_user` no puede finalizar sesiones ajenas
+- NH-011 observabilidad base
+  - eco de `x-request-id` cuando viene en request
+  - generación automática de `x-request-id` cuando falta
 
 ## Ejecutar
 

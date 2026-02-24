@@ -91,3 +91,7 @@ Construir un control-plane multi-tenant productivo (POC) con:
 2. NH-014 API changelog versionado.
 3. NH-013 Versionado API `/v1`.
 4. Estrategia de migración a Postgres para staging/prod.
+
+Estado actual:
+- NH-011 completado.
+- Siguiente foco: NH-014 + NH-013.

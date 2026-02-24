@@ -798,3 +798,32 @@ describe("NH-002 login rate limit", () => {
     }
   });
 });
+
+describe("NH-011 request-id and structured logging contract", () => {
+  it("echoes incoming x-request-id header in responses", async () => {
+    const requestId = `nh-req-${Date.now()}`;
+    const loginResponse = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      headers: {
+        "x-request-id": requestId,
+        "x-forwarded-for": `test-reqid-${Date.now()}`
+      },
+      payload: { email: "admin@nearhome.dev", password: "demo1234" }
+    });
+    expect(loginResponse.statusCode).toBe(200);
+    expect(loginResponse.headers["x-request-id"]).toBe(requestId);
+  });
+
+  it("generates x-request-id when header is missing", async () => {
+    const loginResponse = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      headers: { "x-forwarded-for": `test-reqid-auto-${Date.now()}` },
+      payload: { email: "admin@nearhome.dev", password: "demo1234" }
+    });
+    expect(loginResponse.statusCode).toBe(200);
+    expect(typeof loginResponse.headers["x-request-id"]).toBe("string");
+    expect((loginResponse.headers["x-request-id"] as string).length).toBeGreaterThan(0);
+  });
+});

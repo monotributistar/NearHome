@@ -188,7 +188,7 @@
 
 ### NH-011 (P1) - Request ID + logs estructurados
 
-- Estado: `todo`
+- Estado: `done`
 - Scope:
   - Correlation id por request y logging con contexto.
 - Aceptación:

@@ -25,6 +25,8 @@ type ApiErrorBody = {
 declare module "fastify" {
   interface FastifyRequest {
     ctx?: RequestContext;
+    requestId?: string;
+    requestStartedAt?: number;
   }
 }
 
@@ -434,6 +436,31 @@ export async function buildApp() {
 
   await app.register(jwt, { secret: jwtSecret });
   await app.register(sensible);
+
+  app.addHook("onRequest", async (request, reply) => {
+    const incomingRequestId = request.headers["x-request-id"];
+    const requestId =
+      typeof incomingRequestId === "string" && incomingRequestId.trim().length > 0 ? incomingRequestId.trim() : request.id;
+    request.requestId = requestId;
+    request.requestStartedAt = Date.now();
+    reply.header("x-request-id", requestId);
+  });
+
+  app.addHook("onResponse", async (request, reply) => {
+    const latencyMs = request.requestStartedAt ? Date.now() - request.requestStartedAt : undefined;
+    request.log.info(
+      {
+        requestId: request.requestId ?? request.id,
+        route: request.routeOptions.url,
+        method: request.method,
+        statusCode: reply.statusCode,
+        latencyMs,
+        tenantId: request.ctx?.tenantId ?? null,
+        userId: request.ctx?.userId ?? null
+      },
+      "request.summary"
+    );
+  });
 
   app.setNotFoundHandler((_request, reply) => {
     const body: ApiErrorBody = {
