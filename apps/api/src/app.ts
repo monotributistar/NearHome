@@ -462,6 +462,25 @@ export async function buildApp() {
     );
   });
 
+  app.all("/v1/*", async (request, reply) => {
+    const targetUrl = request.url.replace(/^\/v1/, "") || "/";
+    const proxied = (await app.inject({
+      method: request.method as any,
+      url: targetUrl,
+      headers: request.headers as Record<string, string>,
+      payload: request.body as any
+    })) as any;
+
+    const ignoredHeaders = new Set(["content-length", "transfer-encoding", "connection"]);
+    for (const [key, value] of Object.entries(proxied.headers)) {
+      if (!ignoredHeaders.has(key.toLowerCase()) && value !== undefined) {
+        reply.header(key, value as string);
+      }
+    }
+
+    reply.status(proxied.statusCode).send(proxied.body);
+  });
+
   app.setNotFoundHandler((_request, reply) => {
     const body: ApiErrorBody = {
       code: "NOT_FOUND",

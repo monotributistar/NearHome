@@ -827,3 +827,51 @@ describe("NH-011 request-id and structured logging contract", () => {
     expect((loginResponse.headers["x-request-id"] as string).length).toBeGreaterThan(0);
   });
 });
+
+describe("NH-013 API versioning /v1 compatibility", () => {
+  it("supports login and me through /v1 prefix", async () => {
+    const loginResponse = await app.inject({
+      method: "POST",
+      url: "/v1/auth/login",
+      headers: { "x-forwarded-for": `test-v1-login-${Date.now()}` },
+      payload: { email: "admin@nearhome.dev", password: "demo1234" }
+    });
+    expect(loginResponse.statusCode).toBe(200);
+
+    const token = loginResponse.json<{ accessToken: string }>().accessToken;
+    const meResponse = await app.inject({
+      method: "GET",
+      url: "/v1/auth/me",
+      headers: { authorization: `Bearer ${token}` }
+    });
+    expect(meResponse.statusCode).toBe(200);
+    expect(meResponse.json()).toMatchObject({
+      user: { email: "admin@nearhome.dev" }
+    });
+  });
+
+  it("supports tenant-scoped routes through /v1 prefix", async () => {
+    const token = await login("monitor@nearhome.dev");
+    const meResponse = await app.inject({
+      method: "GET",
+      url: "/auth/me",
+      headers: { authorization: `Bearer ${token}` }
+    });
+    const tenantId = meResponse.json<{ memberships: Array<{ tenantId: string }> }>().memberships[0]?.tenantId;
+    expect(tenantId).toBeTruthy();
+
+    const camerasResponse = await app.inject({
+      method: "GET",
+      url: "/v1/cameras?_start=0&_end=5",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "x-tenant-id": tenantId!
+      }
+    });
+    expect(camerasResponse.statusCode).toBe(200);
+    expect(camerasResponse.json()).toMatchObject({
+      data: expect.any(Array),
+      total: expect.any(Number)
+    });
+  });
+});

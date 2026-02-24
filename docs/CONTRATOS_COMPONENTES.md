@@ -29,6 +29,11 @@ Archivo fuente: `packages/shared/src/index.ts`
 
 Base URL: `http://localhost:3001`
 
+Versionado:
+
+- Alias soportado: `http://localhost:3001/v1/*`
+- Compatibilidad: rutas sin prefijo siguen activas en esta etapa.
+
 ### Seguridad transversal
 
 - Header `Authorization: Bearer <jwt>`

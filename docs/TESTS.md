@@ -34,6 +34,9 @@ Cobertura incluida:
 - NH-011 observabilidad base
   - eco de `x-request-id` cuando viene en request
   - generación automática de `x-request-id` cuando falta
+- NH-013 versionado API
+  - login/me funcionando en `/v1/auth/*`
+  - rutas tenant-scoped funcionando en `/v1/*`
 
 ## Ejecutar
 

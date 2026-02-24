@@ -6,6 +6,7 @@
 - Etapa activa: lifecycle de cámara + validación funcional (API/E2E)
 - Etapa activa: stream sessions + tracking operativo (NH-028) completada
 - Etapa activa: observabilidad base (NH-011) completada
+- Etapa activa: versionado `/v1` (NH-013) + changelog API (NH-014) completadas
 
 ## Progreso completado
 
@@ -25,6 +26,9 @@
    - `x-request-id` propagado/generado en todas las respuestas.
    - Log estructurado `request.summary` con `requestId`, `route`, `method`, `statusCode`, `latencyMs`, `tenantId`, `userId`.
    - Test de contrato para header de correlación.
+6. Versionado API y gobernanza de contratos:
+   - Compatibilidad de rutas con prefijo `/v1/*` sin romper rutas legacy.
+   - Documento de changelog en `docs/API_CHANGELOG.md` con cambios y compatibilidad.
 
 ## Cambios técnicos relevantes
 
@@ -48,6 +52,8 @@
   - Endpoints `GET/POST /stream-sessions*` y emisión de stream token con sesión asociada.
 - `apps/api/src/app.ts`:
   - Hooks de `onRequest/onResponse` para correlación y logging estructurado.
+- `apps/api/src/app.ts`:
+  - `rewriteUrl` para compatibilidad `/v1/*`.
 
 ## Problemas encontrados y resolución
 
@@ -67,11 +73,12 @@
 - `pnpm --filter @app/api test`: `17 passed`
 - `pnpm --filter @app/api test`: `19 passed`
 - `pnpm --filter @app/api test`: `21 passed`
+- `pnpm --filter @app/api test`: `23 passed`
 - `pnpm test:e2e:admin`: `6 passed`
 - `pnpm test:e2e:portal`: `1 passed`
 
 ## Próximo bloque recomendado
 
-1. NH-014: changelog de contratos API.
-2. NH-013: versionado `/v1` sin romper admin/portal.
-3. NH-012: endpoint de readiness con chequeo DB.
+1. NH-012: endpoint de readiness con chequeo DB.
+2. NH-016: auditoría básica de acciones críticas.
+3. NH-019: estrategia de migración a Postgres.

@@ -204,7 +204,7 @@
 
 ### NH-013 (P1) - Versionado API /v1
 
-- Estado: `todo`
+- Estado: `done`
 - Scope:
   - Namespacing de rutas y compatibilidad con fronts.
 - Aceptación:
@@ -212,7 +212,7 @@
 
 ### NH-014 (P1) - API changelog
 
-- Estado: `todo`
+- Estado: `done`
 - Scope:
   - Documento de cambios de contratos.
 - Aceptación:

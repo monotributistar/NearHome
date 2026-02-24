@@ -1,0 +1,33 @@
+# API Changelog
+
+## 2026-02-24 - v1.2.0
+
+### Added
+
+- NH-011: soporte de correlación por request:
+  - Header opcional de entrada `X-Request-Id`.
+  - Header de salida `x-request-id` en todas las respuestas.
+  - Logging estructurado `request.summary`.
+- NH-013: compatibilidad de rutas con prefijo `/v1/*` sin romper rutas actuales.
+- NH-028: ciclo de vida de sesiones de stream:
+  - `GET /stream-sessions`
+  - `GET /stream-sessions/:id`
+  - `POST /stream-sessions/:id/activate`
+  - `POST /stream-sessions/:id/end`
+  - `POST /cameras/:id/stream-token` ahora devuelve también `session`.
+
+### Changed
+
+- `POST /cameras/:id/stream-token`:
+  - Antes: `{ token, expiresAt }`
+  - Ahora: `{ token, expiresAt, session }`
+
+### Compatibility
+
+- Compatibilidad backward preservada:
+  - Rutas legacy sin prefijo (`/auth/*`, `/cameras/*`, etc.) siguen activas.
+  - Campo `token` y `expiresAt` se mantiene en stream-token.
+
+### Notes
+
+- `/v1` es alias de compatibilidad actual; la migración de fronts puede hacerse incrementalmente.
