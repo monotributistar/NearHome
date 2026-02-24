@@ -9,6 +9,8 @@
   - Header de salida `x-request-id` en todas las respuestas.
   - Logging estructurado `request.summary`.
 - NH-013: compatibilidad de rutas con prefijo `/v1/*` sin romper rutas actuales.
+- NH-012: endpoint de readiness con check de DB:
+  - `GET /readiness` devuelve `200` (`db=up`) o `503` (`db=down`).
 - NH-028: ciclo de vida de sesiones de stream:
   - `GET /stream-sessions`
   - `GET /stream-sessions/:id`
@@ -31,3 +33,4 @@
 ### Notes
 
 - `/v1` es alias de compatibilidad actual; la migración de fronts puede hacerse incrementalmente.
+- `READINESS_FORCE_FAIL=1` está disponible para testear fallback de readiness en entorno local.

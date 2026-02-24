@@ -37,6 +37,9 @@ Cobertura incluida:
 - NH-013 versionado API
   - login/me funcionando en `/v1/auth/*`
   - rutas tenant-scoped funcionando en `/v1/*`
+- NH-012 readiness
+  - `GET /readiness` devuelve `200` con `db=up`
+  - devuelve `503` en modo de falla forzada (`READINESS_FORCE_FAIL=1`)
 
 ## Ejecutar
 

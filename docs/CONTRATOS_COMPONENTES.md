@@ -121,6 +121,11 @@ Versionado:
 - `GET /events?cameraId=&from=&to=`
   - out: `{ data: Event[], total }`
 
+- `GET /readiness`
+  - out ok: `{ ok: true, db: "up", timestamp, requestId }`
+  - out fail: `{ ok: false, db: "down", reason, timestamp, requestId }`
+  - status: `200` en estado listo, `503` cuando DB no disponible
+
 ## 3) Contrato de autorización (RBAC)
 
 Roles:

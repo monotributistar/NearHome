@@ -196,7 +196,7 @@
 
 ### NH-012 (P1) - Endpoint readiness
 
-- Estado: `todo`
+- Estado: `done`
 - Scope:
   - `GET /readiness` con check de DB.
 - Aceptación:

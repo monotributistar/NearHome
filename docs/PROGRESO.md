@@ -7,6 +7,7 @@
 - Etapa activa: stream sessions + tracking operativo (NH-028) completada
 - Etapa activa: observabilidad base (NH-011) completada
 - Etapa activa: versionado `/v1` (NH-013) + changelog API (NH-014) completadas
+- Etapa activa: readiness operativa (NH-012) completada
 
 ## Progreso completado
 
@@ -29,6 +30,9 @@
 6. Versionado API y gobernanza de contratos:
    - Compatibilidad de rutas con prefijo `/v1/*` sin romper rutas legacy.
    - Documento de changelog en `docs/API_CHANGELOG.md` con cambios y compatibilidad.
+7. Readiness operacional:
+   - Endpoint `GET /readiness` con verificación de DB.
+   - Retorna `503` en no disponibilidad de DB (incluye reason + requestId).
 
 ## Cambios técnicos relevantes
 
@@ -54,6 +58,8 @@
   - Hooks de `onRequest/onResponse` para correlación y logging estructurado.
 - `apps/api/src/app.ts`:
   - `rewriteUrl` para compatibilidad `/v1/*`.
+- `apps/api/src/app.ts`:
+  - endpoint `GET /readiness` con chequeo DB (`SELECT 1`).
 
 ## Problemas encontrados y resolución
 
@@ -74,11 +80,12 @@
 - `pnpm --filter @app/api test`: `19 passed`
 - `pnpm --filter @app/api test`: `21 passed`
 - `pnpm --filter @app/api test`: `23 passed`
+- `pnpm --filter @app/api test`: `25 passed`
 - `pnpm test:e2e:admin`: `6 passed`
 - `pnpm test:e2e:portal`: `1 passed`
 
 ## Próximo bloque recomendado
 
-1. NH-012: endpoint de readiness con chequeo DB.
-2. NH-016: auditoría básica de acciones críticas.
-3. NH-019: estrategia de migración a Postgres.
+1. NH-016: auditoría básica de acciones críticas.
+2. NH-019: estrategia de migración a Postgres.
+3. NH-017: contrato ControlPlane->DataPlane.

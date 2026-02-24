@@ -875,3 +875,43 @@ describe("NH-013 API versioning /v1 compatibility", () => {
     });
   });
 });
+
+describe("NH-012 readiness endpoint", () => {
+  it("returns ok when db is reachable", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: "/readiness"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      db: "up"
+    });
+    expect(typeof response.headers["x-request-id"]).toBe("string");
+  });
+
+  it("returns 503 when readiness is forced to fail", async () => {
+    const previous = process.env.READINESS_FORCE_FAIL;
+    process.env.READINESS_FORCE_FAIL = "1";
+
+    const failingApp = await buildApp();
+    await failingApp.ready();
+
+    try {
+      const response = await failingApp.inject({
+        method: "GET",
+        url: "/readiness"
+      });
+      expect(response.statusCode).toBe(503);
+      expect(response.json()).toMatchObject({
+        ok: false,
+        db: "down",
+        reason: "forced_failure"
+      });
+    } finally {
+      await failingApp.close();
+      process.env.READINESS_FORCE_FAIL = previous;
+    }
+  });
+});

@@ -424,6 +424,7 @@ export async function buildApp() {
   const jwtSecret = process.env.JWT_SECRET ?? "dev-super-secret";
   const loginRateLimitMax = Number(process.env.LOGIN_RATE_LIMIT_MAX ?? 20);
   const loginRateLimitWindowMs = Number(process.env.LOGIN_RATE_LIMIT_WINDOW_MS ?? 60_000);
+  const readinessForceFail = process.env.READINESS_FORCE_FAIL === "1";
   const loginBuckets = new Map<string, LoginBucket>();
 
   await app.register(cors, {
@@ -1613,6 +1614,38 @@ export async function buildApp() {
   });
 
   app.get("/health", async () => ({ ok: true }));
+
+  app.get("/readiness", async (request, reply) => {
+    if (readinessForceFail) {
+      reply.status(503);
+      return {
+        ok: false,
+        db: "down",
+        reason: "forced_failure",
+        timestamp: new Date().toISOString(),
+        requestId: request.requestId ?? request.id
+      };
+    }
+
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      return {
+        ok: true,
+        db: "up",
+        timestamp: new Date().toISOString(),
+        requestId: request.requestId ?? request.id
+      };
+    } catch {
+      reply.status(503);
+      return {
+        ok: false,
+        db: "down",
+        reason: "db_unreachable",
+        timestamp: new Date().toISOString(),
+        requestId: request.requestId ?? request.id
+      };
+    }
+  });
 
   return app;
 }
