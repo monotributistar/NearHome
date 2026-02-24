@@ -26,6 +26,13 @@ test("NH-007 portal smoke: login + cameras + stream token + events", async ({ pa
   const response = await streamResponse;
   const responseBody = await response.text();
   expect(response.status(), responseBody).toBe(200);
+  await expect(page.getByTestId("stream-session-status")).toContainText("issued");
+
+  await page.getByTestId("stream-activate").click();
+  await expect(page.getByTestId("stream-session-status")).toContainText("active");
+
+  await page.getByTestId("stream-end").click();
+  await expect(page.getByTestId("stream-session-status")).toContainText("ended");
 
   await page.getByRole("link", { name: "Events" }).click();
   await expect(page.getByText("Events")).toBeVisible();

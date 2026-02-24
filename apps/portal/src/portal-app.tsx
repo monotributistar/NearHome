@@ -202,10 +202,18 @@ function CameraDetailPage({ api }: { api: ApiClient }) {
   const { id } = useParams();
   const [camera, setCamera] = useState<any>(null);
   const [token, setToken] = useState<any>(null);
+  const [session, setSession] = useState<any>(null);
+  const [sessions, setSessions] = useState<any[]>([]);
+
+  async function loadSessions(cameraId: string) {
+    const res = await api.get<any>("/stream-sessions", { cameraId, _start: 0, _end: 5, _sort: "createdAt", _order: "DESC" });
+    setSessions(res.data ?? []);
+  }
 
   useEffect(() => {
     if (!id) return;
     api.get<any>(`/cameras/${id}`).then((res) => setCamera(res.data ?? res));
+    loadSessions(id).catch(() => setSessions([]));
   }, [api, id]);
 
   if (!camera) return <div>Loading...</div>;
@@ -220,6 +228,8 @@ function CameraDetailPage({ api }: { api: ApiClient }) {
           onClick={async () => {
             const res = await api.post<any>(`/cameras/${camera.id}/stream-token`);
             setToken(res);
+            setSession(res.session ?? null);
+            await loadSessions(camera.id);
           }}
         >
           Get stream token
@@ -230,6 +240,51 @@ function CameraDetailPage({ api }: { api: ApiClient }) {
             <div className="text-xs">expiresAt: {token.expiresAt}</div>
           </div>
         )}
+        {session && (
+          <div className="space-y-2 rounded-box bg-base-200 p-3">
+            <div className="text-sm">
+              Session: <Badge data-testid="stream-session-status">{session.status}</Badge>
+            </div>
+            <div className="flex gap-2">
+              <PrimaryButton
+                data-testid="stream-activate"
+                type="button"
+                disabled={session.status !== "issued"}
+                onClick={async () => {
+                  const res = await api.post<any>(`/stream-sessions/${session.id}/activate`, {});
+                  setSession(res.data ?? res);
+                  await loadSessions(camera.id);
+                }}
+              >
+                Mark active
+              </PrimaryButton>
+              <PrimaryButton
+                data-testid="stream-end"
+                type="button"
+                disabled={session.status === "ended" || session.status === "expired"}
+                onClick={async () => {
+                  const res = await api.post<any>(`/stream-sessions/${session.id}/end`, { reason: "portal user ended" });
+                  setSession(res.data ?? res);
+                  await loadSessions(camera.id);
+                }}
+              >
+                End session
+              </PrimaryButton>
+            </div>
+          </div>
+        )}
+        <div>
+          <h3 className="mb-2 text-sm font-semibold">Recent stream sessions</h3>
+          <div className="space-y-1">
+            {sessions.map((item) => (
+              <div key={item.id} className="flex items-center justify-between rounded-box bg-base-200 px-3 py-2 text-xs">
+                <span className="truncate">{item.id}</span>
+                <Badge>{item.status}</Badge>
+              </div>
+            ))}
+            {!sessions.length && <div className="text-xs opacity-70">No stream sessions yet</div>}
+          </div>
+        </div>
       </div>
     </PageCard>
   );

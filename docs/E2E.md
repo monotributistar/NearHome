@@ -25,6 +25,8 @@
 - Listado de cámaras
 - Detalle de cámara
 - Obtener stream token mock
+- Activar sesión de stream (`issued -> active`)
+- Cerrar sesión de stream (`active -> ended`)
 - Listado de eventos
 
 ### NH-022 Admin Users

@@ -65,7 +65,7 @@ Construir un control-plane multi-tenant productivo (POC) con:
 - Transiciones operativas (`validate`, `retire`, `reactivate`).
 - Snapshot de salud y timeline en Admin.
 
-### Etapa 6 - Stream session + tracking (siguiente)
+### Etapa 6 - Stream session + tracking (completada)
 
 - Definir y exponer ciclo de vida de sesión de stream (token/session desacoplado).
 - Tracking operativo por cámara (última sesión, fallos, reconexión).
@@ -87,7 +87,7 @@ Construir un control-plane multi-tenant productivo (POC) con:
 
 ## 5) Backlog inmediato recomendado
 
-1. NH-028 Stream session + tracking operativo.
-2. NH-011 Request ID + logs estructurados.
-3. NH-014 API changelog versionado.
+1. NH-011 Request ID + logs estructurados.
+2. NH-014 API changelog versionado.
+3. NH-013 Versionado API `/v1`.
 4. Estrategia de migración a Postgres para staging/prod.

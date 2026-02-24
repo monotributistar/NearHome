@@ -107,6 +107,24 @@ export const EventSchema = z.object({
   payload: z.record(z.any()).optional()
 });
 
+export const StreamSessionStatusSchema = z.enum(["requested", "issued", "active", "ended", "expired"]);
+
+export const StreamSessionSchema = z.object({
+  id: z.string(),
+  tenantId: z.string(),
+  cameraId: z.string(),
+  userId: z.string(),
+  status: StreamSessionStatusSchema,
+  token: z.string(),
+  expiresAt: z.string(),
+  issuedAt: z.string(),
+  activatedAt: z.string().nullable().optional(),
+  endedAt: z.string().nullable().optional(),
+  endReason: z.string().nullable().optional(),
+  createdAt: z.string(),
+  updatedAt: z.string()
+});
+
 export const LoginInputSchema = z.object({
   email: z.string().email(),
   password: z.string().min(4)
@@ -127,3 +145,4 @@ export type Plan = z.infer<typeof PlanSchema>;
 export type Subscription = z.infer<typeof SubscriptionSchema>;
 export type Entitlements = z.infer<typeof EntitlementsSchema>;
 export type Event = z.infer<typeof EventSchema>;
+export type StreamSession = z.infer<typeof StreamSessionSchema>;

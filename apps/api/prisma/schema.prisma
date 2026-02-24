@@ -15,6 +15,7 @@ model Tenant {
   cameras       Camera[]
   subscriptions Subscription[]
   events        Event[]
+  streamSessions StreamSession[]
 }
 
 model User {
@@ -25,6 +26,7 @@ model User {
   createdAt    DateTime     @default(now())
   isActive     Boolean      @default(true)
   memberships  Membership[]
+  streamSessions StreamSession[]
 }
 
 model Membership {
@@ -58,6 +60,7 @@ model Camera {
   profile               CameraProfile?
   lifecycleLogs         CameraLifecycleLog[]
   latestHealthSnapshot  CameraHealthSnapshot?
+  streamSessions        StreamSession[]
 }
 
 model CameraProfile {
@@ -138,4 +141,36 @@ model Event {
   payload   String
   tenant    Tenant   @relation(fields: [tenantId], references: [id])
   camera    Camera   @relation(fields: [cameraId], references: [id])
+}
+
+model StreamSession {
+  id            String                    @id @default(cuid())
+  tenantId      String
+  cameraId      String
+  userId        String
+  status        String
+  token         String
+  expiresAt     DateTime
+  issuedAt      DateTime
+  activatedAt   DateTime?
+  endedAt       DateTime?
+  endReason     String?
+  createdAt     DateTime                  @default(now())
+  updatedAt     DateTime                  @updatedAt
+  tenant        Tenant                    @relation(fields: [tenantId], references: [id])
+  camera        Camera                    @relation(fields: [cameraId], references: [id])
+  user          User                      @relation(fields: [userId], references: [id])
+  transitions   StreamSessionTransition[]
+}
+
+model StreamSessionTransition {
+  id              String        @id @default(cuid())
+  streamSessionId String
+  tenantId        String
+  fromStatus      String?
+  toStatus        String
+  event           String
+  actorUserId     String?
+  createdAt       DateTime      @default(now())
+  streamSession   StreamSession @relation(fields: [streamSessionId], references: [id])
 }

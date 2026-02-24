@@ -174,7 +174,7 @@
 
 ### NH-028 (P1) - Bloque stream session y seguimiento operativo
 
-- Estado: `todo`
+- Estado: `done`
 - Scope:
   - Modelo de sesión de stream (`requested`, `issued`, `active`, `ended`, `expired`).
   - Trazabilidad por cámara y actor (quién abrió/cerró sesión).

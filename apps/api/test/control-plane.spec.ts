@@ -16,6 +16,7 @@ async function login(email: string, password = "demo1234"): Promise<string> {
   const response = await app.inject({
     method: "POST",
     url: "/auth/login",
+    headers: { "x-forwarded-for": `test-${email}-${Date.now()}-${Math.random()}` },
     payload: { email, password }
   });
   expect(response.statusCode).toBe(200);
@@ -619,6 +620,143 @@ describe("NH-027 camera lifecycle", () => {
     });
     expect(adminReactivate.statusCode).toBe(200);
     expect(adminReactivate.json()).toMatchObject({ data: { lifecycleStatus: "draft", isActive: true } });
+  });
+});
+
+describe("NH-028 stream sessions lifecycle", () => {
+  it("issues, activates and ends stream session with tenant tracking", async () => {
+    const monitorToken = await login("monitor@nearhome.dev");
+    const monitorMe = await me(monitorToken);
+    const tenantId = monitorMe.memberships[0].tenantId;
+
+    const camerasResponse = await app.inject({
+      method: "GET",
+      url: "/cameras",
+      headers: {
+        authorization: `Bearer ${monitorToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+    expect(camerasResponse.statusCode).toBe(200);
+    const cameraId = camerasResponse.json<{ data: Array<{ id: string }> }>().data[0]?.id;
+    expect(cameraId).toBeTruthy();
+
+    const tokenResponse = await app.inject({
+      method: "POST",
+      url: `/cameras/${cameraId}/stream-token`,
+      headers: {
+        authorization: `Bearer ${monitorToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {}
+    });
+    expect(tokenResponse.statusCode).toBe(200);
+    const issuedSessionId = tokenResponse.json<{ session: { id: string; status: string } }>().session.id;
+    expect(tokenResponse.json()).toMatchObject({
+      token: expect.any(String),
+      session: { id: expect.any(String), status: "issued", cameraId }
+    });
+
+    const listResponse = await app.inject({
+      method: "GET",
+      url: `/stream-sessions?cameraId=${cameraId}`,
+      headers: {
+        authorization: `Bearer ${monitorToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+    expect(listResponse.statusCode).toBe(200);
+    const sessions = listResponse.json<{ data: Array<{ id: string; status: string }> }>().data;
+    expect(sessions.some((session) => session.id === issuedSessionId && session.status === "issued")).toBe(true);
+
+    const activateResponse = await app.inject({
+      method: "POST",
+      url: `/stream-sessions/${issuedSessionId}/activate`,
+      headers: {
+        authorization: `Bearer ${monitorToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {}
+    });
+    expect(activateResponse.statusCode).toBe(200);
+    expect(activateResponse.json()).toMatchObject({ data: { id: issuedSessionId, status: "active" } });
+
+    const endResponse = await app.inject({
+      method: "POST",
+      url: `/stream-sessions/${issuedSessionId}/end`,
+      headers: {
+        authorization: `Bearer ${monitorToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: { reason: "viewer closed" }
+    });
+    expect(endResponse.statusCode).toBe(200);
+    expect(endResponse.json()).toMatchObject({ data: { id: issuedSessionId, status: "ended", endReason: "viewer closed" } });
+
+    const detailResponse = await app.inject({
+      method: "GET",
+      url: `/stream-sessions/${issuedSessionId}`,
+      headers: {
+        authorization: `Bearer ${monitorToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+    expect(detailResponse.statusCode).toBe(200);
+    const detail = detailResponse.json<{ data: { history: Array<{ event: string }> } }>().data;
+    expect(detail.history.some((entry) => entry.event === "stream.ended")).toBe(true);
+  });
+
+  it("enforces ownership for client_user and allows tenant_admin override", async () => {
+    const monitorToken = await login("monitor@nearhome.dev");
+    const clientToken = await login("client@nearhome.dev");
+    const adminToken = await login("admin@nearhome.dev");
+    const monitorMe = await me(monitorToken);
+    const tenantId = monitorMe.memberships[0].tenantId;
+
+    const camerasResponse = await app.inject({
+      method: "GET",
+      url: "/cameras",
+      headers: {
+        authorization: `Bearer ${monitorToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+    const cameraId = camerasResponse.json<{ data: Array<{ id: string }> }>().data[0]?.id;
+    expect(cameraId).toBeTruthy();
+
+    const tokenResponse = await app.inject({
+      method: "POST",
+      url: `/cameras/${cameraId}/stream-token`,
+      headers: {
+        authorization: `Bearer ${monitorToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {}
+    });
+    const sessionId = tokenResponse.json<{ session: { id: string } }>().session.id;
+
+    const forbiddenEnd = await app.inject({
+      method: "POST",
+      url: `/stream-sessions/${sessionId}/end`,
+      headers: {
+        authorization: `Bearer ${clientToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: { reason: "unauthorized end" }
+    });
+    expect(forbiddenEnd.statusCode).toBe(403);
+
+    const adminEnd = await app.inject({
+      method: "POST",
+      url: `/stream-sessions/${sessionId}/end`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: { reason: "admin override" }
+    });
+    expect(adminEnd.statusCode).toBe(200);
+    expect(adminEnd.json()).toMatchObject({ data: { id: sessionId, status: "ended", endReason: "admin override" } });
   });
 });
 

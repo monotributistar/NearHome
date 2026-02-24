@@ -70,9 +70,11 @@ type DetectorFlags = {
 
 type ProfileStatus = "pending" | "ready" | "error";
 type CameraLifecycleStatus = "draft" | "provisioning" | "ready" | "degraded" | "offline" | "error" | "retired";
+type StreamSessionStatus = "requested" | "issued" | "active" | "ended" | "expired";
 
 const CameraLifecycleStatusSchema = z.enum(["draft", "provisioning", "ready", "degraded", "offline", "error", "retired"]);
 const CameraConnectivitySchema = z.enum(["online", "degraded", "offline"]);
+const StreamSessionStatusSchema = z.enum(["requested", "issued", "active", "ended", "expired"]);
 
 function canTransitionCameraLifecycle(from: CameraLifecycleStatus, to: CameraLifecycleStatus) {
   const allowed: Record<CameraLifecycleStatus, CameraLifecycleStatus[]> = {
@@ -200,6 +202,49 @@ function cameraResponse(camera: {
   };
 }
 
+function streamSessionResponse(session: {
+  id: string;
+  tenantId: string;
+  cameraId: string;
+  userId: string;
+  status: string;
+  token: string;
+  expiresAt: Date;
+  issuedAt: Date;
+  activatedAt: Date | null;
+  endedAt: Date | null;
+  endReason: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}) {
+  return {
+    id: session.id,
+    tenantId: session.tenantId,
+    cameraId: session.cameraId,
+    userId: session.userId,
+    status: session.status as StreamSessionStatus,
+    token: session.token,
+    expiresAt: toISO(session.expiresAt),
+    issuedAt: toISO(session.issuedAt),
+    activatedAt: session.activatedAt ? toISO(session.activatedAt) : null,
+    endedAt: session.endedAt ? toISO(session.endedAt) : null,
+    endReason: session.endReason,
+    createdAt: toISO(session.createdAt),
+    updatedAt: toISO(session.updatedAt)
+  };
+}
+
+function canTransitionStreamSession(from: StreamSessionStatus, to: StreamSessionStatus) {
+  const allowed: Record<StreamSessionStatus, StreamSessionStatus[]> = {
+    requested: ["issued", "ended", "expired"],
+    issued: ["active", "ended", "expired"],
+    active: ["ended", "expired"],
+    ended: [],
+    expired: []
+  };
+  return allowed[from].includes(to);
+}
+
 async function computeEntitlements(tenantId: string) {
   const subscription = await prisma.subscription.findFirst({
     where: { tenantId, status: "active" },
@@ -293,6 +338,85 @@ async function transitionCameraLifecycle(args: {
   return updated;
 }
 
+async function appendStreamSessionTransition(args: {
+  streamSessionId: string;
+  tenantId: string;
+  fromStatus: StreamSessionStatus | null;
+  toStatus: StreamSessionStatus;
+  event: string;
+  actorUserId?: string;
+}) {
+  await prisma.streamSessionTransition.create({
+    data: {
+      streamSessionId: args.streamSessionId,
+      tenantId: args.tenantId,
+      fromStatus: args.fromStatus,
+      toStatus: args.toStatus,
+      event: args.event,
+      actorUserId: args.actorUserId
+    }
+  });
+}
+
+async function transitionStreamSession(args: {
+  tenantId: string;
+  streamSessionId: string;
+  toStatus: StreamSessionStatus;
+  event: string;
+  actorUserId?: string;
+  endReason?: string | null;
+}) {
+  const session = await prisma.streamSession.findFirst({
+    where: { id: args.streamSessionId, tenantId: args.tenantId }
+  });
+  if (!session) throw new Error("STREAM_SESSION_NOT_FOUND");
+
+  const fromStatus = session.status as StreamSessionStatus;
+  if (fromStatus !== args.toStatus && !canTransitionStreamSession(fromStatus, args.toStatus)) {
+    throw new Error("INVALID_STREAM_SESSION_TRANSITION");
+  }
+
+  const now = new Date();
+  const updated = await prisma.streamSession.update({
+    where: { id: session.id },
+    data: {
+      status: args.toStatus,
+      ...(args.toStatus === "active" ? { activatedAt: now } : {}),
+      ...(args.toStatus === "ended" || args.toStatus === "expired" ? { endedAt: now } : {}),
+      ...(args.toStatus === "ended" ? { endReason: args.endReason ?? "ended by user action" } : {})
+    }
+  });
+
+  await appendStreamSessionTransition({
+    streamSessionId: session.id,
+    tenantId: args.tenantId,
+    fromStatus,
+    toStatus: args.toStatus,
+    event: args.event,
+    actorUserId: args.actorUserId
+  });
+
+  return updated;
+}
+
+async function expireStaleStreamSessions(tenantId: string) {
+  const stale = await prisma.streamSession.findMany({
+    where: {
+      tenantId,
+      status: { in: ["requested", "issued", "active"] },
+      expiresAt: { lt: new Date() }
+    }
+  });
+  for (const session of stale) {
+    await transitionStreamSession({
+      tenantId,
+      streamSessionId: session.id,
+      toStatus: "expired",
+      event: "stream.expired"
+    });
+  }
+}
+
 export async function buildApp() {
   const app = Fastify({ logger: true });
   const jwtSecret = process.env.JWT_SECRET ?? "dev-super-secret";
@@ -338,6 +462,12 @@ export async function buildApp() {
     if (err.message === "CAMERA_NOT_FOUND") {
       statusCode = 404;
     }
+    if (err.message === "STREAM_SESSION_NOT_FOUND") {
+      statusCode = 404;
+    }
+    if (err.message === "INVALID_STREAM_SESSION_TRANSITION") {
+      statusCode = 400;
+    }
 
     const code = error instanceof z.ZodError ? "VALIDATION_ERROR" : statusToCode(statusCode);
     const defaultMessage = statusCode >= 500 ? "Internal server error" : "Request failed";
@@ -353,6 +483,10 @@ export async function buildApp() {
               ? "Invalid camera lifecycle transition"
               : err.message === "CAMERA_NOT_FOUND"
                 ? "Camera not found"
+                : err.message === "STREAM_SESSION_NOT_FOUND"
+                  ? "Stream session not found"
+                  : err.message === "INVALID_STREAM_SESSION_TRANSITION"
+                    ? "Invalid stream session transition"
             : error instanceof z.ZodError
               ? "Validation failed"
               : err.message || defaultMessage
@@ -819,11 +953,168 @@ export async function buildApp() {
     const camera = await prisma.camera.findFirst({ where: { id, tenantId: ctx.tenantId, deletedAt: null } });
     if (!camera) throw app.httpErrors.notFound();
 
+    await expireStaleStreamSessions(ctx.tenantId);
+
     const expiresAt = new Date(Date.now() + 1000 * 60 * 5);
+    const requested = await prisma.streamSession.create({
+      data: {
+        tenantId: ctx.tenantId,
+        cameraId: id,
+        userId: ctx.userId,
+        status: "requested",
+        token: "",
+        expiresAt,
+        issuedAt: new Date()
+      }
+    });
+    await appendStreamSessionTransition({
+      streamSessionId: requested.id,
+      tenantId: ctx.tenantId,
+      fromStatus: null,
+      toStatus: "requested",
+      event: "stream.requested",
+      actorUserId: ctx.userId
+    });
+    const token = Buffer.from(`${ctx.userId}:${id}:${requested.id}:${expiresAt.toISOString()}`).toString("base64");
+    const session = await transitionStreamSession({
+      tenantId: ctx.tenantId,
+      streamSessionId: requested.id,
+      toStatus: "issued",
+      event: "stream.issued",
+      actorUserId: ctx.userId
+    });
+    const sessionWithToken = await prisma.streamSession.update({
+      where: { id: session.id },
+      data: { token }
+    });
+
     return {
-      token: Buffer.from(`${ctx.userId}:${id}:${expiresAt.toISOString()}`).toString("base64"),
-      expiresAt: expiresAt.toISOString()
+      token,
+      expiresAt: expiresAt.toISOString(),
+      session: streamSessionResponse(sessionWithToken)
     };
+  });
+
+  app.get("/stream-sessions", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+    await expireStaleStreamSessions(ctx.tenantId);
+
+    const query = request.query as Record<string, unknown>;
+    const { skip, take, sort, order } = parseListQuery(query);
+    const cameraId = typeof query.cameraId === "string" ? query.cameraId : undefined;
+    const status = StreamSessionStatusSchema.safeParse(query.status);
+
+    const where = {
+      tenantId: ctx.tenantId,
+      ...(cameraId ? { cameraId } : {}),
+      ...(status.success ? { status: status.data } : {}),
+      ...(ctx.role === "client_user" ? { userId: ctx.userId } : {})
+    };
+
+    const [data, total] = await Promise.all([
+      prisma.streamSession.findMany({
+        where,
+        skip,
+        take,
+        orderBy: { [sort]: order }
+      }),
+      prisma.streamSession.count({ where })
+    ]);
+
+    reply.header("x-total-count", String(total));
+    return { data: data.map(streamSessionResponse), total };
+  });
+
+  app.get("/stream-sessions/:id", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+    await expireStaleStreamSessions(ctx.tenantId);
+
+    const id = (request.params as { id: string }).id;
+    const session = await prisma.streamSession.findFirst({
+      where: {
+        id,
+        tenantId: ctx.tenantId,
+        ...(ctx.role === "client_user" ? { userId: ctx.userId } : {})
+      }
+    });
+    if (!session) throw new Error("STREAM_SESSION_NOT_FOUND");
+
+    const transitions = await prisma.streamSessionTransition.findMany({
+      where: { streamSessionId: session.id },
+      orderBy: { createdAt: "desc" },
+      take: 30
+    });
+    return {
+      data: {
+        ...streamSessionResponse(session),
+        history: transitions.map((entry) => ({
+          id: entry.id,
+          fromStatus: entry.fromStatus,
+          toStatus: entry.toStatus,
+          event: entry.event,
+          actorUserId: entry.actorUserId,
+          createdAt: toISO(entry.createdAt)
+        }))
+      }
+    };
+  });
+
+  app.post("/stream-sessions/:id/activate", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+    await expireStaleStreamSessions(ctx.tenantId);
+
+    const id = (request.params as { id: string }).id;
+    const session = await prisma.streamSession.findFirst({
+      where: {
+        id,
+        tenantId: ctx.tenantId
+      }
+    });
+    if (!session) throw new Error("STREAM_SESSION_NOT_FOUND");
+    if (ctx.role === "client_user" && session.userId !== ctx.userId) {
+      throw app.httpErrors.forbidden("Stream session ownership mismatch");
+    }
+
+    const updated = await transitionStreamSession({
+      tenantId: ctx.tenantId,
+      streamSessionId: id,
+      toStatus: "active",
+      event: "stream.activated",
+      actorUserId: ctx.userId
+    });
+    return { data: streamSessionResponse(updated) };
+  });
+
+  app.post("/stream-sessions/:id/end", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+    await expireStaleStreamSessions(ctx.tenantId);
+
+    const id = (request.params as { id: string }).id;
+    const body = z.object({ reason: z.string().optional() }).parse(request.body ?? {});
+    const session = await prisma.streamSession.findFirst({
+      where: {
+        id,
+        tenantId: ctx.tenantId
+      }
+    });
+    if (!session) throw new Error("STREAM_SESSION_NOT_FOUND");
+    if (ctx.role === "client_user" && session.userId !== ctx.userId) {
+      throw app.httpErrors.forbidden("Stream session ownership mismatch");
+    }
+
+    const updated = await transitionStreamSession({
+      tenantId: ctx.tenantId,
+      streamSessionId: id,
+      toStatus: "ended",
+      event: "stream.ended",
+      actorUserId: ctx.userId,
+      endReason: body.reason ?? "ended by user action"
+    });
+    return { data: streamSessionResponse(updated) };
   });
 
   app.get("/cameras/:id/profile", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {

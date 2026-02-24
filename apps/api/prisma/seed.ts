@@ -5,6 +5,8 @@ const prisma = new PrismaClient();
 
 async function main() {
   await prisma.event.deleteMany();
+  await prisma.streamSessionTransition.deleteMany();
+  await prisma.streamSession.deleteMany();
   await prisma.cameraProfile.deleteMany();
   await prisma.cameraLifecycleLog.deleteMany();
   await prisma.cameraHealthSnapshot.deleteMany();
@@ -237,6 +239,40 @@ async function main() {
       }
     });
   }
+
+  const issuedAt = new Date();
+  const expiresAt = new Date(issuedAt.getTime() + 5 * 60 * 1000);
+  const seedSession = await prisma.streamSession.create({
+    data: {
+      tenantId: tenantA.id,
+      cameraId: camA1.id,
+      userId: monitor.id,
+      status: "issued",
+      token: Buffer.from(`${monitor.id}:${camA1.id}:${expiresAt.toISOString()}`).toString("base64"),
+      expiresAt,
+      issuedAt
+    }
+  });
+  await prisma.streamSessionTransition.createMany({
+    data: [
+      {
+        streamSessionId: seedSession.id,
+        tenantId: tenantA.id,
+        fromStatus: null,
+        toStatus: "requested",
+        event: "stream.requested",
+        actorUserId: monitor.id
+      },
+      {
+        streamSessionId: seedSession.id,
+        tenantId: tenantA.id,
+        fromStatus: "requested",
+        toStatus: "issued",
+        event: "stream.issued",
+        actorUserId: monitor.id
+      }
+    ]
+  });
 
   console.log("Seed ready");
   console.log("Users: admin@nearhome.dev / monitor@nearhome.dev / client@nearhome.dev");

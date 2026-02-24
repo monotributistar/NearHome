@@ -13,6 +13,8 @@ Archivo fuente: `packages/shared/src/index.ts`
 - `CameraProfile { id, cameraId, tenantId, proxyPath, recordingEnabled, recordingStorageKey, detectorConfigKey, detectorResultsKey, detectorFlags, status, configComplete, lastHealthAt?, lastError?, createdAt, updatedAt }`
 - `CameraLifecycleLog { id, tenantId, cameraId, fromStatus?, toStatus, event, reason?, actorUserId?, createdAt }`
 - `CameraHealthSnapshot { id, tenantId, cameraId, connectivity, latencyMs?, packetLossPct?, jitterMs?, error?, checkedAt }`
+- `StreamSession { id, tenantId, cameraId, userId, status, token, expiresAt, issuedAt, activatedAt?, endedAt?, endReason?, createdAt, updatedAt }`
+- `StreamSessionTransition { id, streamSessionId, tenantId, fromStatus?, toStatus, event, actorUserId?, createdAt }`
 - `Plan { id, code, name, limits, features }`
 - `Subscription { id, tenantId, planId, status, currentPeriodStart, currentPeriodEnd }`
 - `Entitlements { planCode, limits, features }`
@@ -96,7 +98,18 @@ Base URL: `http://localhost:3001`
 - `GET /tenants/:id/entitlements`
 
 - `POST /cameras/:id/stream-token`
-  - out: `{ token, expiresAt }`
+  - out: `{ token, expiresAt, session }`
+  - crea sesión de stream con tracking (`requested -> issued`)
+- `GET /stream-sessions` (tenant-scoped)
+  - filtros: `cameraId`, `status`, `_start`, `_end`, `_sort`, `_order`
+  - `client_user` solo ve sesiones propias
+- `GET /stream-sessions/:id` (tenant-scoped)
+  - out: `{ data: { ...session, history[] } }`
+- `POST /stream-sessions/:id/activate`
+  - transición `issued -> active`
+- `POST /stream-sessions/:id/end`
+  - transición `issued|active -> ended`
+  - `client_user` solo puede cerrar sesiones propias
 
 - `GET /events?cameraId=&from=&to=`
   - out: `{ data: Event[], total }`
@@ -115,6 +128,8 @@ Matriz mínima:
 - `cameras.profile.update`: solo `tenant_admin`.
 - `cameras.lifecycle.validate|retire|reactivate`: solo `tenant_admin`.
 - `cameras.lifecycle.read`: todos los roles del tenant.
+- `stream.sessions.list|get`: `tenant_admin|monitor`; `client_user` solo propias.
+- `stream.sessions.activate|end`: `tenant_admin|monitor`; `client_user` solo propias.
 - `subscription.activate`: solo `tenant_admin`.
 - `plans.list`: `tenant_admin` y `monitor`.
 - `events.list`: todos los roles del tenant.
