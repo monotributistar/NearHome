@@ -228,7 +228,7 @@
 
 ### NH-016 (P1) - Auditoría básica
 
-- Estado: `todo`
+- Estado: `done`
 - Scope:
   - Registrar acciones críticas (crear/editar/eliminar cámara, cambiar suscripción).
 - Aceptación:

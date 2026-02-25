@@ -5,6 +5,7 @@ const prisma = new PrismaClient();
 
 async function main() {
   await prisma.event.deleteMany();
+  await prisma.auditLog.deleteMany();
   await prisma.streamSessionTransition.deleteMany();
   await prisma.streamSession.deleteMany();
   await prisma.cameraProfile.deleteMany();

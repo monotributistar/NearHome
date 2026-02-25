@@ -87,13 +87,14 @@ Construir un control-plane multi-tenant productivo (POC) con:
 
 ## 5) Backlog inmediato recomendado
 
-1. NH-012 Endpoint readiness con chequeo DB.
-2. NH-016 Auditoría básica de acciones críticas.
-3. NH-019 Estrategia de migración a Postgres para staging/prod.
-4. NH-017 Contrato ControlPlane->DataPlane.
+1. NH-019 Estrategia de migración a Postgres para staging/prod.
+2. NH-017 Contrato ControlPlane->DataPlane.
+3. NH-018 Stream-token firmado.
+4. NH-020 CI pipeline.
 
 Estado actual:
 - NH-011 completado.
 - NH-013 completado.
 - NH-014 completado.
 - NH-012 completado.
+- NH-016 completado.

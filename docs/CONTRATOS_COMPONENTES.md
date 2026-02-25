@@ -15,6 +15,7 @@ Archivo fuente: `packages/shared/src/index.ts`
 - `CameraHealthSnapshot { id, tenantId, cameraId, connectivity, latencyMs?, packetLossPct?, jitterMs?, error?, checkedAt }`
 - `StreamSession { id, tenantId, cameraId, userId, status, token, expiresAt, issuedAt, activatedAt?, endedAt?, endReason?, createdAt, updatedAt }`
 - `StreamSessionTransition { id, streamSessionId, tenantId, fromStatus?, toStatus, event, actorUserId?, createdAt }`
+- `AuditLog { id, tenantId, actorUserId?, resource, action, resourceId?, payload?, createdAt }`
 - `Plan { id, code, name, limits, features }`
 - `Subscription { id, tenantId, planId, status, currentPeriodStart, currentPeriodEnd }`
 - `Entitlements { planCode, limits, features }`
@@ -78,6 +79,9 @@ Versionado:
 
 - `GET /memberships` (tenant-scoped)
 - `POST /memberships` (tenant_admin)
+- `GET /audit-logs` (tenant_admin)
+  - filtros opcionales: `resource`, `action`, `_start`, `_end`
+  - out: `{ data: AuditLog[], total }`
 
 - `GET /cameras` (tenant-scoped; `_start`, `_end`, `_sort`, `_order`, filtros)
 - `POST /cameras` (tenant_admin)
@@ -143,6 +147,7 @@ Matriz mínima:
 - `stream.sessions.list|get`: `tenant_admin|monitor`; `client_user` solo propias.
 - `stream.sessions.activate|end`: `tenant_admin|monitor`; `client_user` solo propias.
 - `subscription.activate`: solo `tenant_admin`.
+- `audit.logs.list`: solo `tenant_admin`.
 - `plans.list`: `tenant_admin` y `monitor`.
 - `events.list`: todos los roles del tenant.
 

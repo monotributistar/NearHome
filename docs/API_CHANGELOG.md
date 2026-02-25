@@ -11,6 +11,9 @@
 - NH-013: compatibilidad de rutas con prefijo `/v1/*` sin romper rutas actuales.
 - NH-012: endpoint de readiness con check de DB:
   - `GET /readiness` devuelve `200` (`db=up`) o `503` (`db=down`).
+- NH-016: auditoría básica de acciones críticas:
+  - `GET /audit-logs` (tenant-scoped, solo `tenant_admin`).
+  - registro de acciones en cámaras y suscripciones.
 - NH-028: ciclo de vida de sesiones de stream:
   - `GET /stream-sessions`
   - `GET /stream-sessions/:id`

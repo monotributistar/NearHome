@@ -760,6 +760,99 @@ describe("NH-028 stream sessions lifecycle", () => {
   });
 });
 
+describe("NH-016 audit logs", () => {
+  it("stores critical actions and returns them for tenant_admin", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const adminMe = await me(adminToken);
+    const tenantId = adminMe.memberships[0].tenantId;
+
+    const cameraCreate = await app.inject({
+      method: "POST",
+      url: "/cameras",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        name: `Audit Cam ${Date.now()}`,
+        rtspUrl: "rtsp://demo/audit",
+        location: "Audit Lab",
+        tags: ["audit"],
+        isActive: true
+      }
+    });
+    expect(cameraCreate.statusCode).toBe(200);
+    const cameraId = cameraCreate.json<{ data: { id: string } }>().data.id;
+
+    const plansResponse = await app.inject({
+      method: "GET",
+      url: "/plans",
+      headers: { authorization: `Bearer ${adminToken}` }
+    });
+    expect(plansResponse.statusCode).toBe(200);
+    const planId = plansResponse.json<{ data: Array<{ id: string }> }>().data[0]?.id;
+    expect(planId).toBeTruthy();
+
+    const subscriptionSet = await app.inject({
+      method: "POST",
+      url: `/tenants/${tenantId}/subscription`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: { planId }
+    });
+    expect(subscriptionSet.statusCode).toBe(200);
+
+    const logsResponse = await app.inject({
+      method: "GET",
+      url: "/audit-logs?_start=0&_end=100",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+    expect(logsResponse.statusCode).toBe(200);
+    const logsBody = logsResponse.json<{
+      data: Array<{ resource: string; action: string; resourceId: string | null }>;
+      total: number;
+    }>();
+
+    expect(logsBody.total).toBeGreaterThan(0);
+    expect(logsBody.data).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          resource: "camera",
+          action: "create",
+          resourceId: cameraId
+        }),
+        expect.objectContaining({
+          resource: "subscription",
+          action: "set_plan"
+        })
+      ])
+    );
+  });
+
+  it("denies audit log access for monitor role", async () => {
+    const monitorToken = await login("monitor@nearhome.dev");
+    const monitorMe = await me(monitorToken);
+    const tenantId = monitorMe.memberships[0].tenantId;
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/audit-logs",
+      headers: {
+        authorization: `Bearer ${monitorToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toMatchObject({ code: "FORBIDDEN" });
+  });
+});
+
 describe("NH-002 login rate limit", () => {
   it("returns 429 when login attempts exceed configured limit", async () => {
     const previousMax = process.env.LOGIN_RATE_LIMIT_MAX;

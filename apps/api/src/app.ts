@@ -247,6 +247,28 @@ function canTransitionStreamSession(from: StreamSessionStatus, to: StreamSession
   return allowed[from].includes(to);
 }
 
+function auditLogResponse(entry: {
+  id: string;
+  tenantId: string;
+  actorUserId: string | null;
+  resource: string;
+  action: string;
+  resourceId: string | null;
+  payload: string | null;
+  createdAt: Date;
+}) {
+  return {
+    id: entry.id,
+    tenantId: entry.tenantId,
+    actorUserId: entry.actorUserId,
+    resource: entry.resource,
+    action: entry.action,
+    resourceId: entry.resourceId,
+    payload: entry.payload ? parseJson<Record<string, unknown>>(entry.payload) : null,
+    createdAt: toISO(entry.createdAt)
+  };
+}
+
 async function computeEntitlements(tenantId: string) {
   const subscription = await prisma.subscription.findFirst({
     where: { tenantId, status: "active" },
@@ -417,6 +439,26 @@ async function expireStaleStreamSessions(tenantId: string) {
       event: "stream.expired"
     });
   }
+}
+
+async function appendAuditLog(args: {
+  tenantId: string;
+  actorUserId?: string;
+  resource: string;
+  action: string;
+  resourceId?: string;
+  payload?: Record<string, unknown>;
+}) {
+  await prisma.auditLog.create({
+    data: {
+      tenantId: args.tenantId,
+      actorUserId: args.actorUserId,
+      resource: args.resource,
+      action: args.action,
+      resourceId: args.resourceId ?? null,
+      payload: args.payload ? JSON.stringify(args.payload) : null
+    }
+  });
 }
 
 export async function buildApp() {
@@ -843,6 +885,34 @@ export async function buildApp() {
     };
   });
 
+  app.get("/audit-logs", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin"]);
+    const query = request.query as Record<string, unknown>;
+    const { skip, take } = parseListQuery(query);
+    const resource = typeof query.resource === "string" ? query.resource : undefined;
+    const action = typeof query.action === "string" ? query.action : undefined;
+
+    const where = {
+      tenantId: ctx.tenantId,
+      ...(resource ? { resource } : {}),
+      ...(action ? { action } : {})
+    };
+
+    const [rows, total] = await Promise.all([
+      prisma.auditLog.findMany({
+        where,
+        skip,
+        take,
+        orderBy: { createdAt: "desc" }
+      }),
+      prisma.auditLog.count({ where })
+    ]);
+
+    reply.header("x-total-count", String(total));
+    return { data: rows.map(auditLogResponse), total };
+  });
+
   app.get("/cameras", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
     const ctx = getTenantContext(request);
     assertRole(request, ["tenant_admin", "monitor", "client_user"]);
@@ -922,6 +992,19 @@ export async function buildApp() {
       });
     }
 
+    await appendAuditLog({
+      tenantId: ctx.tenantId,
+      actorUserId: ctx.userId,
+      resource: "camera",
+      action: "create",
+      resourceId: camera.id,
+      payload: {
+        name: camera.name,
+        isActive: camera.isActive,
+        lifecycleStatus: camera.lifecycleStatus
+      }
+    });
+
     const withProfile = await prisma.camera.findUniqueOrThrow({ where: { id: camera.id }, include: { profile: true } });
     return { data: cameraResponse(withProfile) };
   });
@@ -952,8 +1035,13 @@ export async function buildApp() {
       })
       .parse(request.body);
 
+    const current = await prisma.camera.findFirst({
+      where: { id, tenantId: ctx.tenantId, deletedAt: null }
+    });
+    if (!current) throw new Error("CAMERA_NOT_FOUND");
+
     const camera = await prisma.camera.update({
-      where: { id },
+      where: { id: current.id },
       data: {
         name: body.name,
         description: body.description,
@@ -982,15 +1070,42 @@ export async function buildApp() {
       }
     }
 
+    await appendAuditLog({
+      tenantId: ctx.tenantId,
+      actorUserId: ctx.userId,
+      resource: "camera",
+      action: "update",
+      resourceId: camera.id,
+      payload: {
+        name: camera.name,
+        isActive: camera.isActive,
+        lifecycleStatus: camera.lifecycleStatus
+      }
+    });
+
     const withProfile = await prisma.camera.findUniqueOrThrow({ where: { id: camera.id }, include: { profile: true } });
     return { data: cameraResponse(withProfile) };
   });
 
   app.delete("/cameras/:id", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
+    const ctx = getTenantContext(request);
     assertRole(request, ["tenant_admin"]);
     const id = (request.params as { id: string }).id;
-    const camera = await prisma.camera.update({ where: { id }, data: { deletedAt: new Date() } });
-    return { data: cameraResponse(camera) };
+    const camera = await prisma.camera.findFirst({ where: { id, tenantId: ctx.tenantId, deletedAt: null } });
+    if (!camera) throw new Error("CAMERA_NOT_FOUND");
+    const deleted = await prisma.camera.update({ where: { id: camera.id }, data: { deletedAt: new Date() } });
+    await appendAuditLog({
+      tenantId: ctx.tenantId,
+      actorUserId: ctx.userId,
+      resource: "camera",
+      action: "delete",
+      resourceId: camera.id,
+      payload: {
+        name: camera.name,
+        lifecycleStatus: camera.lifecycleStatus
+      }
+    });
+    return { data: cameraResponse(deleted) };
   });
 
   app.post("/cameras/:id/stream-token", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
@@ -1259,8 +1374,31 @@ export async function buildApp() {
           lastError: profile.lastError ?? "incomplete profile configuration"
         }
       });
+      await appendAuditLog({
+        tenantId: ctx.tenantId,
+        actorUserId: ctx.userId,
+        resource: "camera_profile",
+        action: "update",
+        resourceId: id,
+        payload: {
+          status: normalized.status,
+          configComplete: false
+        }
+      });
       return { data: profileResponse(normalized) };
     }
+
+    await appendAuditLog({
+      tenantId: ctx.tenantId,
+      actorUserId: ctx.userId,
+      resource: "camera_profile",
+      action: "update",
+      resourceId: id,
+      payload: {
+        status: profile.status,
+        configComplete
+      }
+    });
 
     return { data: profileResponse(profile) };
   });
@@ -1372,6 +1510,17 @@ export async function buildApp() {
       }
     });
 
+    await appendAuditLog({
+      tenantId: ctx.tenantId,
+      actorUserId: ctx.userId,
+      resource: "camera",
+      action: shouldPass ? "validate_pass" : "validate_fail",
+      resourceId: id,
+      payload: {
+        lifecycleStatus: transitioned.lifecycleStatus
+      }
+    });
+
     return { data: cameraResponse(transitioned) };
   });
 
@@ -1393,6 +1542,17 @@ export async function buildApp() {
       where: { id },
       data: { isActive: false },
       include: { profile: true }
+    });
+    await appendAuditLog({
+      tenantId: ctx.tenantId,
+      actorUserId: ctx.userId,
+      resource: "camera",
+      action: "retire",
+      resourceId: id,
+      payload: {
+        lifecycleStatus: transitioned.lifecycleStatus,
+        isActive: false
+      }
     });
 
     return { data: cameraResponse({ ...deactivated, lifecycleStatus: transitioned.lifecycleStatus }) };
@@ -1416,6 +1576,17 @@ export async function buildApp() {
       where: { id },
       data: { isActive: true },
       include: { profile: true }
+    });
+    await appendAuditLog({
+      tenantId: ctx.tenantId,
+      actorUserId: ctx.userId,
+      resource: "camera",
+      action: "reactivate",
+      resourceId: id,
+      payload: {
+        lifecycleStatus: transitioned.lifecycleStatus,
+        isActive: true
+      }
     });
 
     return { data: cameraResponse({ ...activated, lifecycleStatus: transitioned.lifecycleStatus }) };
@@ -1472,6 +1643,18 @@ export async function buildApp() {
       actorUserId: ctx.userId
     });
 
+    await appendAuditLog({
+      tenantId: ctx.tenantId,
+      actorUserId: ctx.userId,
+      resource: "camera",
+      action: "health_update",
+      resourceId: id,
+      payload: {
+        connectivity: body.connectivity,
+        lifecycleStatus: transitioned.lifecycleStatus
+      }
+    });
+
     return { data: cameraResponse(transitioned) };
   });
 
@@ -1512,6 +1695,18 @@ export async function buildApp() {
         currentPeriodEnd: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30)
       },
       include: { plan: true }
+    });
+
+    await appendAuditLog({
+      tenantId,
+      actorUserId: request.ctx!.userId,
+      resource: "subscription",
+      action: "set_plan",
+      resourceId: subscription.id,
+      payload: {
+        planId: subscription.planId,
+        status: subscription.status
+      }
     });
 
     return {

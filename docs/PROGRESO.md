@@ -8,6 +8,7 @@
 - Etapa activa: observabilidad base (NH-011) completada
 - Etapa activa: versionado `/v1` (NH-013) + changelog API (NH-014) completadas
 - Etapa activa: readiness operativa (NH-012) completada
+- Etapa activa: auditoría básica de acciones críticas (NH-016) completada
 
 ## Progreso completado
 
@@ -33,6 +34,10 @@
 7. Readiness operacional:
    - Endpoint `GET /readiness` con verificación de DB.
    - Retorna `503` en no disponibilidad de DB (incluye reason + requestId).
+8. Auditoría básica (NH-016):
+   - Nuevo modelo `AuditLog` en DB.
+   - Endpoint `GET /audit-logs` (solo `tenant_admin`).
+   - Registro de acciones críticas: cámaras (`create/update/delete`, `profile`, lifecycle) y suscripción.
 
 ## Cambios técnicos relevantes
 
@@ -60,6 +65,10 @@
   - `rewriteUrl` para compatibilidad `/v1/*`.
 - `apps/api/src/app.ts`:
   - endpoint `GET /readiness` con chequeo DB (`SELECT 1`).
+- `apps/api/prisma/schema.prisma`:
+  - Nuevo modelo `AuditLog`.
+- `apps/api/src/app.ts`:
+  - Endpoint `GET /audit-logs` + escritura de auditoría en mutaciones críticas.
 
 ## Problemas encontrados y resolución
 
@@ -81,11 +90,12 @@
 - `pnpm --filter @app/api test`: `21 passed`
 - `pnpm --filter @app/api test`: `23 passed`
 - `pnpm --filter @app/api test`: `25 passed`
+- `pnpm --filter @app/api test`: `27 passed`
 - `pnpm test:e2e:admin`: `6 passed`
 - `pnpm test:e2e:portal`: `1 passed`
 
 ## Próximo bloque recomendado
 
-1. NH-016: auditoría básica de acciones críticas.
-2. NH-019: estrategia de migración a Postgres.
-3. NH-017: contrato ControlPlane->DataPlane.
+1. NH-019: estrategia de migración a Postgres.
+2. NH-017: contrato ControlPlane->DataPlane.
+3. NH-018: stream-token firmado.

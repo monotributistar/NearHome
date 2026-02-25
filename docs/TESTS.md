@@ -31,6 +31,10 @@ Cobertura incluida:
   - emisión de token crea sesión `issued`
   - transición `issued -> active -> ended`
   - `client_user` no puede finalizar sesiones ajenas
+- NH-016 auditoría básica
+  - `tenant_admin` obtiene logs en `GET /audit-logs`
+  - se registran acciones críticas (`camera.create`, `subscription.set_plan`)
+  - `monitor` no puede consultar auditoría (403)
 - NH-011 observabilidad base
   - eco de `x-request-id` cuando viene en request
   - generación automática de `x-request-id` cuando falta
