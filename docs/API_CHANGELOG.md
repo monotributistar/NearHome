@@ -17,6 +17,11 @@
 - NH-029: administración completa de tenants:
   - `DELETE /tenants/:id` con soft delete.
   - tenants eliminados se excluyen de `/auth/me` y `/tenants`.
+- NH-031: integración inicial con data-plane (`stream-gateway`):
+  - `POST /cameras/:id/stream-token` puede devolver `playbackUrl`.
+  - provision/deprovision best-effort hacia `STREAM_GATEWAY_URL`.
+- NH-030: validación multi-tenant de monitor:
+  - cobertura API y E2E de visibilidad de cámaras por tenant seleccionado.
 - NH-028: ciclo de vida de sesiones de stream:
   - `GET /stream-sessions`
   - `GET /stream-sessions/:id`

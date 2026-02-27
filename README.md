@@ -3,6 +3,7 @@
 Monorepo PNPM + Turborepo con:
 
 - `apps/api`: Fastify + Prisma (SQLite) control-plane POC
+- `apps/stream-gateway`: data-plane MVP para playback (provision + playback tokenizado)
 - `apps/admin`: Refine headless + React Router + simple-rest
 - `apps/portal`: cliente/monitor con React Router
 - `packages/shared`: contratos Zod + tipos compartidos
@@ -42,6 +43,7 @@ pnpm i
 
 ```bash
 cp apps/api/.env.example apps/api/.env
+cp apps/stream-gateway/.env.example apps/stream-gateway/.env
 cp apps/admin/.env.example apps/admin/.env
 cp apps/portal/.env.example apps/portal/.env
 ```
@@ -61,6 +63,7 @@ pnpm dev
 ## URLs dev
 
 - API: `http://localhost:3001`
+- Stream gateway: `http://localhost:3010`
 - Admin: `http://localhost:5173`
 - Portal: `http://localhost:5174`
 
@@ -75,13 +78,15 @@ pnpm dev
 - `pnpm bootstrap`
 - `pnpm run setup`
 - `pnpm dev`
+- `pnpm dev:stream`
 - `pnpm db:reset`
 - `pnpm typecheck`
 - `pnpm build`
 - `pnpm test:e2e`
 - `pnpm test:e2e:admin`
 - `pnpm test:e2e:portal`
+- `pnpm test:stream`
 
 ## Estado
 
-POC funcional orientado a control-plane. Data-plane real (ingesta RTSP/detección/streaming productivo) queda para la siguiente etapa.
+POC funcional orientado a control-plane + data-plane MVP de playback tokenizado. Streaming productivo de baja latencia y pipeline de detección real quedan para la siguiente etapa.

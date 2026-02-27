@@ -110,7 +110,7 @@ Versionado:
 - `GET /tenants/:id/entitlements`
 
 - `POST /cameras/:id/stream-token`
-  - out: `{ token, expiresAt, session }`
+  - out: `{ token, expiresAt, session, playbackUrl? }`
   - crea sesión de stream con tracking (`requested -> issued`)
 - `GET /stream-sessions` (tenant-scoped)
   - filtros: `cameraId`, `status`, `_start`, `_end`, `_sort`, `_order`

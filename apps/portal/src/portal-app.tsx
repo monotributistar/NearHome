@@ -238,6 +238,17 @@ function CameraDetailPage({ api }: { api: ApiClient }) {
           <div className="alert">
             <div className="text-xs break-all">token: {token.token}</div>
             <div className="text-xs">expiresAt: {token.expiresAt}</div>
+            {token.playbackUrl && (
+              <div className="text-xs break-all">
+                playbackUrl: <a className="link" href={token.playbackUrl} target="_blank" rel="noreferrer">{token.playbackUrl}</a>
+              </div>
+            )}
+          </div>
+        )}
+        {token?.playbackUrl && (
+          <div className="rounded-box bg-base-200 p-3">
+            <div className="mb-2 text-xs opacity-70">Playback preview (MVP)</div>
+            <video className="w-full rounded-box" controls muted src={token.playbackUrl} />
           </div>
         )}
         {session && (

@@ -464,6 +464,7 @@ async function appendAuditLog(args: {
 export async function buildApp() {
   const app = Fastify({ logger: true });
   const jwtSecret = process.env.JWT_SECRET ?? "dev-super-secret";
+  const streamGatewayUrl = process.env.STREAM_GATEWAY_URL?.replace(/\/$/, "") ?? null;
   const loginRateLimitMax = Number(process.env.LOGIN_RATE_LIMIT_MAX ?? 20);
   const loginRateLimitWindowMs = Number(process.env.LOGIN_RATE_LIMIT_WINDOW_MS ?? 60_000);
   const readinessForceFail = process.env.READINESS_FORCE_FAIL === "1";
@@ -1160,6 +1161,18 @@ export async function buildApp() {
         lifecycleStatus: camera.lifecycleStatus
       }
     });
+
+    if (streamGatewayUrl) {
+      try {
+        await fetch(`${streamGatewayUrl}/deprovision`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ tenantId: ctx.tenantId, cameraId: camera.id })
+        });
+      } catch (error) {
+        request.log.warn({ error, tenantId: ctx.tenantId, cameraId: camera.id }, "stream_gateway.deprovision_failed");
+      }
+    }
     return { data: cameraResponse(deleted) };
   });
 
@@ -1205,10 +1218,29 @@ export async function buildApp() {
       data: { token }
     });
 
+    let playbackUrl: string | undefined;
+    if (streamGatewayUrl) {
+      try {
+        await fetch(`${streamGatewayUrl}/provision`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            tenantId: ctx.tenantId,
+            cameraId: id,
+            rtspUrl: camera.rtspUrl
+          })
+        });
+        playbackUrl = `${streamGatewayUrl}/playback/${ctx.tenantId}/${id}/index.m3u8?token=${encodeURIComponent(token)}`;
+      } catch (error) {
+        request.log.warn({ error, tenantId: ctx.tenantId, cameraId: id }, "stream_gateway.provision_failed");
+      }
+    }
+
     return {
       token,
       expiresAt: expiresAt.toISOString(),
-      session: streamSessionResponse(sessionWithToken)
+      session: streamSessionResponse(sessionWithToken),
+      ...(playbackUrl ? { playbackUrl } : {})
     };
   });
 

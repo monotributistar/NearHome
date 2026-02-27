@@ -275,6 +275,84 @@ describe("NH-029 tenant administration", () => {
   });
 });
 
+describe("NH-030 monitor tenant-scoped camera visibility", () => {
+  it("allows monitor to view cameras only for tenants where it has membership", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const monitorToken = await login("monitor@nearhome.dev");
+    const monitorMe = await me(monitorToken);
+    const monitorUserId = monitorMe.memberships[0].userId;
+    const monitorPrimaryTenantId = monitorMe.memberships[0].tenantId;
+
+    const createdTenantResponse = await app.inject({
+      method: "POST",
+      url: "/tenants",
+      headers: {
+        authorization: `Bearer ${adminToken}`
+      },
+      payload: {
+        name: `Monitor Scoped Tenant ${Date.now()}`
+      }
+    });
+    expect(createdTenantResponse.statusCode).toBe(200);
+    const scopedTenantId = createdTenantResponse.json<{ data: { id: string } }>().data.id;
+
+    const assignMembershipResponse = await app.inject({
+      method: "POST",
+      url: "/memberships",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": scopedTenantId
+      },
+      payload: {
+        userId: monitorUserId,
+        role: "monitor"
+      }
+    });
+    expect(assignMembershipResponse.statusCode).toBe(200);
+
+    const cameraName = `Scoped Cam ${Date.now()}`;
+    const createCameraResponse = await app.inject({
+      method: "POST",
+      url: "/cameras",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": scopedTenantId
+      },
+      payload: {
+        name: cameraName,
+        rtspUrl: "rtsp://demo/scoped-monitor",
+        isActive: true
+      }
+    });
+    expect(createCameraResponse.statusCode).toBe(200);
+    const scopedCameraId = createCameraResponse.json<{ data: { id: string } }>().data.id;
+
+    const listScopedTenantResponse = await app.inject({
+      method: "GET",
+      url: "/cameras?_start=0&_end=100",
+      headers: {
+        authorization: `Bearer ${monitorToken}`,
+        "x-tenant-id": scopedTenantId
+      }
+    });
+    expect(listScopedTenantResponse.statusCode).toBe(200);
+    const scopedCameras = listScopedTenantResponse.json<{ data: Array<{ id: string; name: string }> }>().data;
+    expect(scopedCameras.some((camera) => camera.id === scopedCameraId)).toBe(true);
+
+    const listPrimaryTenantResponse = await app.inject({
+      method: "GET",
+      url: "/cameras?_start=0&_end=100",
+      headers: {
+        authorization: `Bearer ${monitorToken}`,
+        "x-tenant-id": monitorPrimaryTenantId
+      }
+    });
+    expect(listPrimaryTenantResponse.statusCode).toBe(200);
+    const primaryCameras = listPrimaryTenantResponse.json<{ data: Array<{ id: string; name: string }> }>().data;
+    expect(primaryCameras.some((camera) => camera.id === scopedCameraId)).toBe(false);
+  });
+});
+
 describe("NH-021 user administration", () => {
   it("allows tenant_admin to create users and assign tenant role", async () => {
     const adminToken = await login("admin@nearhome.dev");

@@ -124,7 +124,7 @@ function Layout({ apiUrl }: { apiUrl: string }) {
       <div className="navbar bg-base-100 shadow-md">
         <div className="flex-1 px-4 font-bold">NearHome Admin</div>
         <div className="flex items-center gap-2 px-4">
-          <Badge>{role ?? "no-role"}</Badge>
+          <Badge data-testid="current-role">{role ?? "no-role"}</Badge>
           <SelectInput
             className="select-sm"
             value={activeTenant ?? ""}

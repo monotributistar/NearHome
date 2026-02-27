@@ -8,6 +8,7 @@
     "setup": "bash scripts/setup.sh",
     "bootstrap": "bash scripts/setup.sh",
     "dev:api": "pnpm --filter @app/api dev",
+    "dev:stream": "pnpm --filter @app/stream-gateway dev",
     "dev:admin": "pnpm --filter @app/admin dev",
     "dev:portal": "pnpm --filter @app/portal dev",
     "db:reset": "pnpm --filter @app/api db:reset",
@@ -18,7 +19,8 @@
     "typecheck": "turbo typecheck",
     "test:e2e": "playwright test -c e2e/playwright.config.ts",
     "test:e2e:admin": "playwright test -c e2e/playwright.config.ts e2e/tests/admin*.spec.ts",
-    "test:e2e:portal": "playwright test -c e2e/playwright.config.ts e2e/tests/portal.smoke.spec.ts"
+    "test:e2e:portal": "playwright test -c e2e/playwright.config.ts e2e/tests/portal*.spec.ts",
+    "test:stream": "pnpm --filter @app/stream-gateway test"
   },
   "devDependencies": {
     "@eslint/js": "^9.22.0",
