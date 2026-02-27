@@ -2,13 +2,14 @@
 
 ## Corte actual
 
-- Fecha de corte: `2026-02-24`
+- Fecha de corte: `2026-02-27`
 - Etapa activa: lifecycle de cámara + validación funcional (API/E2E)
 - Etapa activa: stream sessions + tracking operativo (NH-028) completada
 - Etapa activa: observabilidad base (NH-011) completada
 - Etapa activa: versionado `/v1` (NH-013) + changelog API (NH-014) completadas
 - Etapa activa: readiness operativa (NH-012) completada
 - Etapa activa: auditoría básica de acciones críticas (NH-016) completada
+- Etapa activa: administración completa de tenants (NH-029) completada
 
 ## Progreso completado
 
@@ -38,6 +39,10 @@
    - Nuevo modelo `AuditLog` en DB.
    - Endpoint `GET /audit-logs` (solo `tenant_admin`).
    - Registro de acciones críticas: cámaras (`create/update/delete`, `profile`, lifecycle) y suscripción.
+9. Administración de tenants (NH-029):
+   - `DELETE /tenants/:id` con soft delete.
+   - Admin UI para crear/editar/eliminar tenant.
+   - Cobertura API y E2E para flujo CRUD y RBAC.
 
 ## Cambios técnicos relevantes
 
@@ -69,6 +74,10 @@
   - Nuevo modelo `AuditLog`.
 - `apps/api/src/app.ts`:
   - Endpoint `GET /audit-logs` + escritura de auditoría en mutaciones críticas.
+- `apps/api/src/app.ts`:
+  - Endpoint `DELETE /tenants/:id` y filtros para excluir tenants eliminados en auth/listados.
+- `apps/admin/src/App.tsx`:
+  - Tenants page con acciones inline de update/delete.
 
 ## Problemas encontrados y resolución
 
@@ -91,7 +100,8 @@
 - `pnpm --filter @app/api test`: `23 passed`
 - `pnpm --filter @app/api test`: `25 passed`
 - `pnpm --filter @app/api test`: `27 passed`
-- `pnpm test:e2e:admin`: `6 passed`
+- `pnpm --filter @app/api test`: `29 passed`
+- `pnpm test:e2e:admin`: `7 passed`
 - `pnpm test:e2e:portal`: `1 passed`
 
 ## Próximo bloque recomendado

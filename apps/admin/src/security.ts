@@ -49,7 +49,7 @@ export const authProvider: AuthProvider = {
 
 const ACL: Record<Role, Record<string, string[]>> = {
   tenant_admin: {
-    tenants: ["list", "create", "edit", "show"],
+    tenants: ["list", "create", "edit", "show", "delete"],
     users: ["list", "create", "edit", "show"],
     memberships: ["list", "create", "edit", "show"],
     cameras: ["list", "create", "edit", "show", "delete"],

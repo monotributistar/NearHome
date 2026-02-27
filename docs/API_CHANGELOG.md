@@ -14,6 +14,9 @@
 - NH-016: auditoría básica de acciones críticas:
   - `GET /audit-logs` (tenant-scoped, solo `tenant_admin`).
   - registro de acciones en cámaras y suscripciones.
+- NH-029: administración completa de tenants:
+  - `DELETE /tenants/:id` con soft delete.
+  - tenants eliminados se excluyen de `/auth/me` y `/tenants`.
 - NH-028: ciclo de vida de sesiones de stream:
   - `GET /stream-sessions`
   - `GET /stream-sessions/:id`

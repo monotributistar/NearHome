@@ -135,6 +135,18 @@
   - No puede crear/editar/borrar cámaras.
   - No puede activar plan en subscriptions.
 
+### NH-029 (P0) - Administración de tenants completa (API + Admin + E2E)
+
+- Estado: `done`
+- Scope:
+  - `DELETE /tenants/:id` con soft delete.
+  - Pantalla admin de tenants con create/update/delete.
+  - Cobertura API + E2E para tenant CRUD y RBAC de borrado.
+- Aceptación:
+  - `tenant_admin` crea/edita/elimina tenant.
+  - `monitor` no puede eliminar tenant.
+  - Tenant eliminado deja de listarse en `/tenants`.
+
 ### NH-025 (P0) - Perfil interno de cámara (API + dominio)
 
 - Estado: `done`

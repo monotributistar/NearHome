@@ -7,6 +7,7 @@
 - Admin RBAC: `e2e/tests/admin.rbac.spec.ts`
 - Admin cameras profile: `e2e/tests/admin.cameras-profile.spec.ts`
 - Admin cameras lifecycle: `e2e/tests/admin.cameras-lifecycle.spec.ts`
+- Admin tenants: `e2e/tests/admin.tenants.spec.ts`
 - Portal smoke: `e2e/tests/portal.smoke.spec.ts`
 
 ## Cobertura
@@ -58,6 +59,13 @@
 - Abrir detalle de cámara
 - Ejecutar acción `Validate`
 - Verificar transición de estado `draft -> ready`
+
+### NH-029 Admin Tenants
+
+- Login admin
+- Crear tenant
+- Editar tenant
+- Eliminar tenant
 
 ## Comandos
 

@@ -599,7 +599,11 @@ export async function buildApp() {
     const tenantHeader = request.headers["x-tenant-id"] as string | undefined;
     if (tenantHeader) {
       const membership = await prisma.membership.findFirst({
-        where: { tenantId: tenantHeader, userId: payload.userId }
+        where: {
+          tenantId: tenantHeader,
+          userId: payload.userId,
+          tenant: { deletedAt: null }
+        }
       });
 
       if (!membership) {
@@ -670,7 +674,13 @@ export async function buildApp() {
 
   app.get("/auth/me", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
     const user = await prisma.user.findUniqueOrThrow({ where: { id: request.ctx!.userId } });
-    const memberships = await prisma.membership.findMany({ where: { userId: user.id }, include: { tenant: true } });
+    const memberships = await prisma.membership.findMany({
+      where: {
+        userId: user.id,
+        tenant: { deletedAt: null }
+      },
+      include: { tenant: true }
+    });
 
     const activeTenantId = (request.headers["x-tenant-id"] as string | undefined) ?? memberships[0]?.tenantId;
     const activeTenant = memberships.find((m: any) => m.tenantId === activeTenantId)?.tenant;
@@ -700,7 +710,10 @@ export async function buildApp() {
 
   app.get("/tenants", { preHandler: authPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
     const memberships = await prisma.membership.findMany({
-      where: { userId: request.ctx!.userId },
+      where: {
+        userId: request.ctx!.userId,
+        tenant: { deletedAt: null }
+      },
       include: { tenant: true }
     });
     const data = memberships.map((m: any) => ({
@@ -723,18 +736,60 @@ export async function buildApp() {
 
   app.get("/tenants/:id", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
     const id = (request.params as { id: string }).id;
-    const membership = await prisma.membership.findFirst({ where: { tenantId: id, userId: request.ctx!.userId } });
+    const membership = await prisma.membership.findFirst({
+      where: {
+        tenantId: id,
+        userId: request.ctx!.userId,
+        tenant: { deletedAt: null }
+      }
+    });
     if (!membership) throw app.httpErrors.forbidden();
-    const tenant = await prisma.tenant.findUniqueOrThrow({ where: { id } });
+    const tenant = await prisma.tenant.findFirst({ where: { id, deletedAt: null } });
+    if (!tenant) throw app.httpErrors.notFound();
     return { data: { id: tenant.id, name: tenant.name, createdAt: toISO(tenant.createdAt) } };
   });
 
   app.put("/tenants/:id", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
     const id = (request.params as { id: string }).id;
     const body = z.object({ name: z.string().min(2) }).parse(request.body);
-    const membership = await prisma.membership.findFirst({ where: { tenantId: id, userId: request.ctx!.userId } });
+    const membership = await prisma.membership.findFirst({
+      where: {
+        tenantId: id,
+        userId: request.ctx!.userId,
+        tenant: { deletedAt: null }
+      }
+    });
     if (!membership || membership.role !== "tenant_admin") throw app.httpErrors.forbidden();
     const tenant = await prisma.tenant.update({ where: { id }, data: { name: body.name } });
+    return { data: { id: tenant.id, name: tenant.name, createdAt: toISO(tenant.createdAt) } };
+  });
+
+  app.delete("/tenants/:id", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
+    const id = (request.params as { id: string }).id;
+    const membership = await prisma.membership.findFirst({
+      where: {
+        tenantId: id,
+        userId: request.ctx!.userId,
+        role: "tenant_admin",
+        tenant: { deletedAt: null }
+      }
+    });
+    if (!membership) throw app.httpErrors.forbidden();
+
+    const tenant = await prisma.tenant.update({
+      where: { id },
+      data: { deletedAt: new Date() }
+    });
+
+    await appendAuditLog({
+      tenantId: id,
+      actorUserId: request.ctx!.userId,
+      resource: "tenant",
+      action: "delete",
+      resourceId: id,
+      payload: { name: tenant.name }
+    });
+
     return { data: { id: tenant.id, name: tenant.name, createdAt: toISO(tenant.createdAt) } };
   });
 

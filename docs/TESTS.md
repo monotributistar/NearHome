@@ -19,6 +19,10 @@ Cobertura incluida:
   - `monitor` no puede crear usuarios
   - `tenant_admin` puede editar `name/isActive/role` en `PUT /users/:id`
   - `monitor` no puede editar usuarios
+- NH-029 tenant administration
+  - `tenant_admin` puede crear/editar/eliminar tenant (soft delete)
+  - tenant eliminado no aparece en `/tenants`
+  - `monitor` no puede eliminar tenant
 - NH-025 camera internal profile
   - crear cámara activa genera `profile` interno automáticamente
   - `tenant_admin` puede configurar `PUT /cameras/:id/profile`

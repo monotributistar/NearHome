@@ -73,6 +73,7 @@ Versionado:
 - `POST /tenants`
 - `GET /tenants/:id`
 - `PUT /tenants/:id`
+- `DELETE /tenants/:id` (tenant_admin, soft delete)
 
 - `GET /users` (tenant-scoped)
 - `POST /users` (tenant_admin)

@@ -190,10 +190,21 @@ function Layout({ apiUrl }: { apiUrl: string }) {
 }
 
 function TenantsPage() {
-  const { result } = useList({ resource: "tenants" } as any);
-  const { mutate } = useCreate();
+  const tenantsList = useList({ resource: "tenants" } as any);
+  const { result } = tenantsList;
+  const { mutate: create } = useCreate();
+  const { mutate: update } = useUpdate();
+  const { mutate: remove } = useDelete();
   const [name, setName] = useState("");
   const canCreate = useCan({ resource: "tenants", action: "create" }).data?.can;
+  const canEdit = useCan({ resource: "tenants", action: "edit" }).data?.can;
+  const canDelete = useCan({ resource: "tenants", action: "delete" }).data?.can;
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const nextDrafts = Object.fromEntries((result?.data ?? []).map((t: any) => [t.id, t.name ?? ""]));
+    setDrafts(nextDrafts);
+  }, [result?.data]);
 
   return (
     <PageCard title="Tenants">
@@ -202,7 +213,14 @@ function TenantsPage() {
           className="mb-4 flex gap-2"
           onSubmit={(e) => {
             e.preventDefault();
-            mutate({ resource: "tenants", values: { name } });
+            create(
+              { resource: "tenants", values: { name } },
+              {
+                onSuccess: () => {
+                  (tenantsList as any).query.refetch();
+                }
+              }
+            );
             setName("");
           }}
         >
@@ -216,13 +234,75 @@ function TenantsPage() {
             <tr>
               <th>Name</th>
               <th>Created</th>
+              {(canEdit || canDelete) && <th>Actions</th>}
             </tr>
           </thead>
           <tbody>
             {(result?.data ?? []).map((t: any) => (
               <tr key={t.id}>
-                <td>{t.name}</td>
+                <td>
+                  {canEdit ? (
+                    <TextInput
+                      data-testid={`tenant-name-${t.id}`}
+                      value={drafts[t.id] ?? ""}
+                      onChange={(e) => setDrafts((prev) => ({ ...prev, [t.id]: e.target.value }))}
+                    />
+                  ) : (
+                    t.name
+                  )}
+                </td>
                 <td>{new Date(t.createdAt).toLocaleString()}</td>
+                {(canEdit || canDelete) && (
+                  <td>
+                    <div className="flex flex-wrap gap-2">
+                      {canEdit && (
+                        <PrimaryButton
+                          data-testid={`tenant-save-${t.id}`}
+                          className="btn-sm"
+                          type="button"
+                          onClick={() =>
+                            update(
+                              {
+                                resource: "tenants",
+                                id: t.id,
+                                values: { name: drafts[t.id] ?? t.name }
+                              },
+                              {
+                                onSuccess: () => {
+                                  (tenantsList as any).query.refetch();
+                                }
+                              }
+                            )
+                          }
+                        >
+                          Save
+                        </PrimaryButton>
+                      )}
+                      {canDelete && (
+                        <button
+                          data-testid={`tenant-delete-${t.id}`}
+                          className="btn btn-sm btn-error"
+                          type="button"
+                          onClick={() =>
+                            remove(
+                              {
+                                resource: "tenants",
+                                id: t.id
+                              },
+                              {
+                                onSuccess: () => {
+                                  (tenantsList as any).query.refetch();
+                                }
+                              }
+                            )
+                          }
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
@@ -296,7 +376,7 @@ function UsersPage() {
           <SelectInput value={form.role} onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}>
             <option value="tenant_admin">tenant_admin</option>
             <option value="monitor">monitor</option>
-            <option value="client_user">client_user</option>
+            <option value="client_user">customer</option>
           </SelectInput>
           <PrimaryButton type="submit">Create</PrimaryButton>
         </form>
@@ -346,7 +426,7 @@ function UsersPage() {
                   >
                     <option value="tenant_admin">tenant_admin</option>
                     <option value="monitor">monitor</option>
-                    <option value="client_user">client_user</option>
+                    <option value="client_user">customer</option>
                   </SelectInput>
                 ) : (
                   u.role
@@ -437,7 +517,7 @@ function MembershipsPage() {
           <SelectInput value={role} onChange={(e) => setRole(e.target.value)}>
             <option value="tenant_admin">tenant_admin</option>
             <option value="monitor">monitor</option>
-            <option value="client_user">client_user</option>
+            <option value="client_user">customer</option>
           </SelectInput>
           <PrimaryButton type="submit">Assign role</PrimaryButton>
         </form>

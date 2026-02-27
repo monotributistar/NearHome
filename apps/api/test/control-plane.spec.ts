@@ -201,6 +201,80 @@ describe("NH-005 rbac policy", () => {
   });
 });
 
+describe("NH-029 tenant administration", () => {
+  it("allows tenant_admin to create, update and soft-delete tenant", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+
+    const createResponse = await app.inject({
+      method: "POST",
+      url: "/tenants",
+      headers: {
+        authorization: `Bearer ${adminToken}`
+      },
+      payload: {
+        name: `Tenant E2E ${Date.now()}`
+      }
+    });
+    expect(createResponse.statusCode).toBe(200);
+    const created = createResponse.json<{ data: { id: string; name: string } }>().data;
+
+    const updateResponse = await app.inject({
+      method: "PUT",
+      url: `/tenants/${created.id}`,
+      headers: {
+        authorization: `Bearer ${adminToken}`
+      },
+      payload: {
+        name: `${created.name} Updated`
+      }
+    });
+    expect(updateResponse.statusCode).toBe(200);
+    expect(updateResponse.json()).toMatchObject({
+      data: {
+        id: created.id,
+        name: `${created.name} Updated`
+      }
+    });
+
+    const deleteResponse = await app.inject({
+      method: "DELETE",
+      url: `/tenants/${created.id}`,
+      headers: {
+        authorization: `Bearer ${adminToken}`
+      }
+    });
+    expect(deleteResponse.statusCode).toBe(200);
+
+    const listResponse = await app.inject({
+      method: "GET",
+      url: "/tenants",
+      headers: {
+        authorization: `Bearer ${adminToken}`
+      }
+    });
+    expect(listResponse.statusCode).toBe(200);
+    const tenants = listResponse.json<{ data: Array<{ id: string }> }>().data;
+    expect(tenants.some((t) => t.id === created.id)).toBe(false);
+  });
+
+  it("denies monitor tenant deletion", async () => {
+    const monitorToken = await login("monitor@nearhome.dev");
+    const monitorMe = await me(monitorToken);
+    const tenantId = monitorMe.memberships[0].tenantId;
+
+    const response = await app.inject({
+      method: "DELETE",
+      url: `/tenants/${tenantId}`,
+      headers: {
+        authorization: `Bearer ${monitorToken}`
+      }
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toMatchObject({ code: "FORBIDDEN" });
+  });
+});
+
 describe("NH-021 user administration", () => {
   it("allows tenant_admin to create users and assign tenant role", async () => {
     const adminToken = await login("admin@nearhome.dev");
