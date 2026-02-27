@@ -914,6 +914,39 @@ describe("NH-028 stream sessions lifecycle", () => {
   });
 });
 
+describe("NH-033 data-plane health sync", () => {
+  it("returns 503 when stream gateway is not configured", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const adminMe = await me(adminToken);
+    const tenantId = adminMe.memberships[0].tenantId;
+
+    const camerasResponse = await app.inject({
+      method: "GET",
+      url: "/cameras",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+    expect(camerasResponse.statusCode).toBe(200);
+    const cameraId = camerasResponse.json<{ data: Array<{ id: string }> }>().data[0]?.id;
+    expect(cameraId).toBeTruthy();
+
+    const syncResponse = await app.inject({
+      method: "POST",
+      url: `/cameras/${cameraId}/sync-health`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {}
+    });
+
+    expect(syncResponse.statusCode).toBe(503);
+    expect(syncResponse.json()).toMatchObject({ code: "INTERNAL_SERVER_ERROR" });
+  });
+});
+
 describe("NH-016 audit logs", () => {
   it("stores critical actions and returns them for tenant_admin", async () => {
     const adminToken = await login("admin@nearhome.dev");

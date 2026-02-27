@@ -98,6 +98,12 @@ function canTransitionCameraLifecycle(from: CameraLifecycleStatus, to: CameraLif
   return allowed[from].includes(to);
 }
 
+function lifecycleFromConnectivity(connectivity: "online" | "degraded" | "offline"): CameraLifecycleStatus {
+  if (connectivity === "online") return "ready";
+  if (connectivity === "degraded") return "degraded";
+  return "offline";
+}
+
 function isProfileConfigComplete(profile: {
   proxyPath: string;
   recordingStorageKey: string;
@@ -1762,6 +1768,115 @@ export async function buildApp() {
     });
 
     return { data: cameraResponse(transitioned) };
+  });
+
+  app.post("/cameras/:id/sync-health", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin"]);
+    const id = (request.params as { id: string }).id;
+
+    const camera = await prisma.camera.findFirst({ where: { id, tenantId: ctx.tenantId, deletedAt: null } });
+    if (!camera) throw new Error("CAMERA_NOT_FOUND");
+    if (!streamGatewayUrl) {
+      throw app.httpErrors.serviceUnavailable("STREAM_GATEWAY_URL is not configured");
+    }
+
+    const response = await fetch(`${streamGatewayUrl}/health/${ctx.tenantId}/${id}`);
+    let connectivity: "online" | "degraded" | "offline" = "offline";
+    let latencyMs: number | null = null;
+    let packetLossPct: number | null = null;
+    let jitterMs: number | null = null;
+    let healthError: string | null = null;
+
+    if (response.ok) {
+      const payload = z
+        .object({
+          ok: z.literal(true),
+          data: z.object({
+            status: z.enum(["provisioning", "ready", "stopped"]),
+            health: z.object({
+              connectivity: CameraConnectivitySchema,
+              latencyMs: z.number().nullable(),
+              packetLossPct: z.number().nullable(),
+              jitterMs: z.number().nullable(),
+              error: z.string().nullable(),
+              checkedAt: z.string()
+            })
+          })
+        })
+        .parse(await response.json());
+
+      connectivity = payload.data.status === "provisioning" ? "degraded" : payload.data.health.connectivity;
+      latencyMs = payload.data.health.latencyMs;
+      packetLossPct = payload.data.health.packetLossPct;
+      jitterMs = payload.data.health.jitterMs;
+      healthError = payload.data.health.error;
+    } else {
+      connectivity = "offline";
+      healthError = response.status === 404 ? "not_provisioned" : "stream_gateway_unreachable";
+    }
+
+    await prisma.cameraHealthSnapshot.upsert({
+      where: { cameraId: id },
+      update: {
+        connectivity,
+        latencyMs,
+        packetLossPct,
+        jitterMs,
+        error: healthError,
+        checkedAt: new Date()
+      },
+      create: {
+        tenantId: ctx.tenantId,
+        cameraId: id,
+        connectivity,
+        latencyMs,
+        packetLossPct,
+        jitterMs,
+        error: healthError,
+        checkedAt: new Date()
+      }
+    });
+
+    let nextLifecycle = lifecycleFromConnectivity(connectivity);
+    const currentLifecycle = camera.lifecycleStatus as CameraLifecycleStatus;
+    if (currentLifecycle === "retired") {
+      nextLifecycle = "retired";
+    } else if (currentLifecycle === "draft" && nextLifecycle !== "ready") {
+      nextLifecycle = "error";
+    } else if (!canTransitionCameraLifecycle(currentLifecycle, nextLifecycle)) {
+      nextLifecycle = currentLifecycle;
+    }
+
+    const transitioned = await transitionCameraLifecycle({
+      tenantId: ctx.tenantId,
+      cameraId: id,
+      toStatus: nextLifecycle,
+      event: "camera.health_synced",
+      reason: `source=stream-gateway connectivity=${connectivity}`,
+      actorUserId: ctx.userId
+    });
+
+    await appendAuditLog({
+      tenantId: ctx.tenantId,
+      actorUserId: ctx.userId,
+      resource: "camera",
+      action: "health_sync",
+      resourceId: id,
+      payload: {
+        connectivity,
+        lifecycleStatus: transitioned.lifecycleStatus
+      }
+    });
+
+    return {
+      data: cameraResponse(transitioned),
+      sync: {
+        source: "stream-gateway",
+        connectivity,
+        error: healthError
+      }
+    };
   });
 
   app.get("/plans", { preHandler: authPreHandler }, async (_request: FastifyRequest, reply: FastifyReply) => {

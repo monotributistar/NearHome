@@ -103,6 +103,8 @@ Versionado:
   - aplica transición `retired -> provisioning`
 - `POST /cameras/:id/health` (tenant_admin|monitor)
   - upsert de snapshot de salud para pruebas POC
+- `POST /cameras/:id/sync-health` (tenant_admin)
+  - sincroniza health desde data-plane (`stream-gateway`) y actualiza lifecycle/snapshot
 
 - `GET /plans`
 - `GET /subscriptions` (tenant activo)

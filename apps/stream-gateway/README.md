@@ -16,3 +16,5 @@ Servicio MVP para provisionar playback por cámara.
 
 - En esta iteración genera un manifiesto/segmento mock para validar integración end-to-end.
 - El token de playback es firmado (HMAC SHA-256) y valida `tenantId`, `cameraId`, firma y expiración.
+- Worker interno de probes mock actualiza salud por stream (`online|degraded|offline`) cada `STREAM_PROBE_INTERVAL_MS`.
+- `GET /health/:tenantId/:cameraId` devuelve `status` y `health` para sincronización en control-plane.

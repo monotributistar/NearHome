@@ -250,7 +250,7 @@
 
 ### NH-017 (P2) - Contrato ControlPlane->DataPlane
 
-- Estado: `todo`
+- Estado: `done`
 - Scope:
   - Definir interfaces y payloads de integración futura.
 - Aceptación:

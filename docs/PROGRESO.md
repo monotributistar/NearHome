@@ -12,6 +12,8 @@
 - Etapa activa: administración completa de tenants (NH-029) completada
 - Etapa activa: stream-token firmado (NH-018) completada
 - Etapa activa: métricas base de data-plane (NH-032) completada
+- Etapa activa: contrato ControlPlane/DataPlane (NH-017) completada
+- Etapa activa: sync de salud desde data-plane (NH-033) completada
 
 ## Progreso completado
 
@@ -49,6 +51,10 @@
    - Stream token firmado (HMAC SHA-256) con claims y expiración.
    - Validación en `stream-gateway` por firma + `tenantId` + `cameraId`.
    - Endpoint `GET /metrics` con métricas de estado de streams.
+11. Integración contractual y sync operativo:
+   - Documento técnico de contrato ControlPlane/DataPlane en `docs/CONTROLPLANE_DATAPLANE_CONTRACT.md`.
+   - Endpoint `POST /cameras/:id/sync-health` para sincronizar salud desde data-plane.
+   - Worker de probes mock en `stream-gateway` para estados `online|degraded|offline`.
 
 ## Cambios técnicos relevantes
 
@@ -89,6 +95,10 @@
 - `apps/stream-gateway/src/app.ts`:
   - Verificación criptográfica del token de playback.
   - Endpoint `/metrics` (Prometheus text format).
+- `apps/stream-gateway/src/app.ts`:
+  - Loop de probes mock por stream y health enriquecido por cámara.
+- `apps/api/src/app.ts`:
+  - Endpoint `/cameras/:id/sync-health` para sincronización con data-plane.
 
 ## Problemas encontrados y resolución
 
@@ -114,6 +124,7 @@
 - `pnpm --filter @app/api test`: `29 passed`
 - `pnpm --filter @app/api test`: `30 passed`
 - `pnpm --filter @app/stream-gateway test`: `5 passed`
+- `pnpm --filter @app/stream-gateway test`: `5 passed` (incluye métricas + token firmado + mismatch)
 - `pnpm test:e2e:admin`: `7 passed`
 - `pnpm test:e2e:portal`: `2 passed`
 

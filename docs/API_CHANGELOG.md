@@ -27,6 +27,9 @@
   - `stream-gateway` valida firma, expiración, `tenantId` y `cameraId`.
 - NH-032: métricas básicas de data-plane:
   - `GET /metrics` en `stream-gateway` (formato Prometheus).
+- NH-033: sincronización de salud de cámara desde data-plane:
+  - `POST /cameras/:id/sync-health` (tenant_admin).
+  - aplica update de `CameraHealthSnapshot` + lifecycle basado en health remoto.
 - NH-028: ciclo de vida de sesiones de stream:
   - `GET /stream-sessions`
   - `GET /stream-sessions/:id`

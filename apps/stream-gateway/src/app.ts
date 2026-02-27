@@ -11,12 +11,23 @@ const ProvisionSchema = z.object({
 });
 
 type StreamStatus = "provisioning" | "ready" | "stopped";
+type Connectivity = "online" | "degraded" | "offline";
+
+type StreamHealth = {
+  connectivity: Connectivity;
+  latencyMs: number | null;
+  packetLossPct: number | null;
+  jitterMs: number | null;
+  error: string | null;
+  checkedAt: string;
+};
 
 type StreamEntry = {
   tenantId: string;
   cameraId: string;
   rtspUrl: string;
   status: StreamStatus;
+  health: StreamHealth;
   updatedAt: string;
 };
 
@@ -91,11 +102,96 @@ async function readSegment(storageDir: string, tenantId: string, cameraId: strin
   return fs.readFile(segmentPath);
 }
 
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function randomIn(min: number, max: number) {
+  return Math.round(min + Math.random() * (max - min));
+}
+
+function buildHealth(connectivity: Connectivity, error: string | null = null): StreamHealth {
+  if (connectivity === "online") {
+    return {
+      connectivity,
+      latencyMs: randomIn(70, 130),
+      packetLossPct: Number((Math.random() * 0.3).toFixed(2)),
+      jitterMs: randomIn(3, 12),
+      error,
+      checkedAt: nowIso()
+    };
+  }
+  if (connectivity === "degraded") {
+    return {
+      connectivity,
+      latencyMs: randomIn(160, 320),
+      packetLossPct: Number((1 + Math.random() * 4).toFixed(2)),
+      jitterMs: randomIn(15, 45),
+      error: error ?? "high jitter / packet loss",
+      checkedAt: nowIso()
+    };
+  }
+  return {
+    connectivity,
+    latencyMs: null,
+    packetLossPct: null,
+    jitterMs: null,
+    error: error ?? "stream unreachable",
+    checkedAt: nowIso()
+  };
+}
+
+function runStreamProbe(entry: StreamEntry): StreamEntry {
+  if (entry.status === "stopped") {
+    return { ...entry, health: buildHealth("offline", "deprovisioned"), updatedAt: nowIso() };
+  }
+  if (entry.status === "provisioning") {
+    return {
+      ...entry,
+      status: "ready",
+      health: buildHealth("online"),
+      updatedAt: nowIso()
+    };
+  }
+
+  const roll = Math.random();
+  if (roll < 0.07) {
+    return { ...entry, health: buildHealth("offline"), updatedAt: nowIso() };
+  }
+  if (roll < 0.22) {
+    return { ...entry, health: buildHealth("degraded"), updatedAt: nowIso() };
+  }
+  return { ...entry, health: buildHealth("online"), updatedAt: nowIso() };
+}
+
 export async function buildApp() {
   const app = Fastify({ logger: true });
   const streams = new Map<string, StreamEntry>();
   const storageDir = process.env.STREAM_STORAGE_DIR ?? path.resolve(process.cwd(), "storage");
   const streamTokenSecret = process.env.STREAM_TOKEN_SECRET ?? "dev-stream-token-secret";
+  const probeIntervalMs = Number(process.env.STREAM_PROBE_INTERVAL_MS ?? 5000);
+  let probeTimer: NodeJS.Timeout | null = null;
+
+  const startProbeLoop = () => {
+    if (probeTimer) return;
+    probeTimer = setInterval(() => {
+      for (const [key, entry] of streams.entries()) {
+        streams.set(key, runStreamProbe(entry));
+      }
+    }, probeIntervalMs);
+  };
+
+  const stopProbeLoop = () => {
+    if (!probeTimer) return;
+    clearInterval(probeTimer);
+    probeTimer = null;
+  };
+
+  startProbeLoop();
+
+  app.addHook("onClose", async () => {
+    stopProbeLoop();
+  });
 
   app.get("/health", async () => ({ ok: true, streams: streams.size, storageDir }));
 
@@ -103,10 +199,14 @@ export async function buildApp() {
     const counters = {
       provisioning: 0,
       ready: 0,
-      stopped: 0
+      stopped: 0,
+      online: 0,
+      degraded: 0,
+      offline: 0
     };
     for (const entry of streams.values()) {
       counters[entry.status] += 1;
+      counters[entry.health.connectivity] += 1;
     }
 
     const lines = [
@@ -114,7 +214,12 @@ export async function buildApp() {
       "# TYPE nearhome_streams_total gauge",
       `nearhome_streams_total{status=\"provisioning\"} ${counters.provisioning}`,
       `nearhome_streams_total{status=\"ready\"} ${counters.ready}`,
-      `nearhome_streams_total{status=\"stopped\"} ${counters.stopped}`
+      `nearhome_streams_total{status=\"stopped\"} ${counters.stopped}`,
+      "# HELP nearhome_stream_connectivity_total Number of streams by connectivity",
+      "# TYPE nearhome_stream_connectivity_total gauge",
+      `nearhome_stream_connectivity_total{connectivity=\"online\"} ${counters.online}`,
+      `nearhome_stream_connectivity_total{connectivity=\"degraded\"} ${counters.degraded}`,
+      `nearhome_stream_connectivity_total{connectivity=\"offline\"} ${counters.offline}`
     ];
     reply.header("content-type", "text/plain; version=0.0.4");
     return lines.join("\n");
@@ -140,7 +245,8 @@ export async function buildApp() {
       cameraId: body.cameraId,
       rtspUrl: body.rtspUrl,
       status: "provisioning",
-      updatedAt: new Date().toISOString()
+      health: buildHealth("degraded", "provisioning"),
+      updatedAt: nowIso()
     });
 
     await ensureMockPlaylist(storageDir, body.tenantId, body.cameraId);
@@ -150,7 +256,8 @@ export async function buildApp() {
       cameraId: body.cameraId,
       rtspUrl: body.rtspUrl,
       status: "ready",
-      updatedAt: new Date().toISOString()
+      health: buildHealth("online"),
+      updatedAt: nowIso()
     };
 
     streams.set(key, ready);
@@ -170,7 +277,12 @@ export async function buildApp() {
     if (!existing) {
       return { data: { removed: false } };
     }
-    streams.set(key, { ...existing, status: "stopped", updatedAt: new Date().toISOString() });
+    streams.set(key, {
+      ...existing,
+      status: "stopped",
+      health: buildHealth("offline", "deprovisioned"),
+      updatedAt: nowIso()
+    });
     return { data: { removed: true } };
   });
 
