@@ -22,6 +22,11 @@
   - provision/deprovision best-effort hacia `STREAM_GATEWAY_URL`.
 - NH-030: validación multi-tenant de monitor:
   - cobertura API y E2E de visibilidad de cámaras por tenant seleccionado.
+- NH-018: stream token firmado para playback:
+  - `POST /cameras/:id/stream-token` emite token HMAC SHA-256 con claims.
+  - `stream-gateway` valida firma, expiración, `tenantId` y `cameraId`.
+- NH-032: métricas básicas de data-plane:
+  - `GET /metrics` en `stream-gateway` (formato Prometheus).
 - NH-028: ciclo de vida de sesiones de stream:
   - `GET /stream-sessions`
   - `GET /stream-sessions/:id`

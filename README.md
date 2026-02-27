@@ -64,6 +64,7 @@ pnpm dev
 
 - API: `http://localhost:3001`
 - Stream gateway: `http://localhost:3010`
+- Stream gateway metrics: `http://localhost:3010/metrics`
 - Admin: `http://localhost:5173`
 - Portal: `http://localhost:5174`
 
@@ -90,3 +91,5 @@ pnpm dev
 ## Estado
 
 POC funcional orientado a control-plane + data-plane MVP de playback tokenizado. Streaming productivo de baja latencia y pipeline de detección real quedan para la siguiente etapa.
+
+Nota: `STREAM_TOKEN_SECRET` debe coincidir entre `apps/api` y `apps/stream-gateway` para validar playback.

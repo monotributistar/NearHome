@@ -7,6 +7,7 @@ import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { LoginInputSchema, RoleSchema } from "@app/shared";
 import type { FastifyReply, FastifyRequest } from "fastify";
+import { createHmac } from "node:crypto";
 
 type Role = z.infer<typeof RoleSchema>;
 
@@ -50,6 +51,12 @@ function statusToCode(statusCode: number): string {
 
 function parseJson<T>(value: string): T {
   return JSON.parse(value) as T;
+}
+
+function signStreamToken(payload: Record<string, unknown>, secret: string) {
+  const serializedPayload = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+  const signature = createHmac("sha256", secret).update(serializedPayload).digest("base64url");
+  return `${serializedPayload}.${signature}`;
 }
 
 function toISO(date: Date) {
@@ -464,6 +471,7 @@ async function appendAuditLog(args: {
 export async function buildApp() {
   const app = Fastify({ logger: true });
   const jwtSecret = process.env.JWT_SECRET ?? "dev-super-secret";
+  const streamTokenSecret = process.env.STREAM_TOKEN_SECRET ?? "dev-stream-token-secret";
   const streamGatewayUrl = process.env.STREAM_GATEWAY_URL?.replace(/\/$/, "") ?? null;
   const loginRateLimitMax = Number(process.env.LOGIN_RATE_LIMIT_MAX ?? 20);
   const loginRateLimitWindowMs = Number(process.env.LOGIN_RATE_LIMIT_WINDOW_MS ?? 60_000);
@@ -1205,7 +1213,18 @@ export async function buildApp() {
       event: "stream.requested",
       actorUserId: ctx.userId
     });
-    const token = Buffer.from(`${ctx.userId}:${id}:${requested.id}:${expiresAt.toISOString()}`).toString("base64");
+    const token = signStreamToken(
+      {
+        sub: ctx.userId,
+        tid: ctx.tenantId,
+        cid: id,
+        sid: requested.id,
+        exp: Math.floor(expiresAt.getTime() / 1000),
+        iat: Math.floor(Date.now() / 1000),
+        v: 1
+      },
+      streamTokenSecret
+    );
     const session = await transitionStreamSession({
       tenantId: ctx.tenantId,
       streamSessionId: requested.id,

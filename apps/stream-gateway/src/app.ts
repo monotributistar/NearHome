@@ -2,6 +2,7 @@ import Fastify from "fastify";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { createHmac, timingSafeEqual } from "node:crypto";
 
 const ProvisionSchema = z.object({
   tenantId: z.string().min(1),
@@ -19,8 +20,6 @@ type StreamEntry = {
   updatedAt: string;
 };
 
-const streams = new Map<string, StreamEntry>();
-
 function streamKey(tenantId: string, cameraId: string) {
   return `${tenantId}:${cameraId}`;
 }
@@ -29,18 +28,32 @@ function cameraDir(storageDir: string, tenantId: string, cameraId: string) {
   return path.join(storageDir, tenantId, cameraId);
 }
 
-function parseToken(token: string) {
+const StreamPlaybackTokenSchema = z.object({
+  sub: z.string().min(1),
+  tid: z.string().min(1),
+  cid: z.string().min(1),
+  sid: z.string().min(1),
+  exp: z.number().int().positive(),
+  iat: z.number().int().positive(),
+  v: z.literal(1)
+});
+
+function verifyToken(token: string, secret: string) {
+  const [payloadBase64, signatureBase64] = token.split(".");
+  if (!payloadBase64 || !signatureBase64) return null;
+
+  const expectedSignature = createHmac("sha256", secret).update(payloadBase64).digest("base64url");
+  const expectedBytes = Buffer.from(expectedSignature, "utf8");
+  const providedBytes = Buffer.from(signatureBase64, "utf8");
+  if (expectedBytes.length !== providedBytes.length) return null;
+  if (!timingSafeEqual(expectedBytes, providedBytes)) return null;
+
   try {
-    const decoded = Buffer.from(token, "base64").toString("utf8");
-    const parts = decoded.split(":");
-    if (parts.length < 4) return null;
-    const userId = parts[0];
-    const cameraId = parts[1];
-    const sessionId = parts[2];
-    const expiresAtRaw = parts.slice(3).join(":");
-    const expiresAt = new Date(expiresAtRaw);
-    if (!userId || !cameraId || !sessionId || Number.isNaN(expiresAt.valueOf())) return null;
-    return { userId, cameraId, sessionId, expiresAt };
+    const decodedPayload = JSON.parse(Buffer.from(payloadBase64, "base64url").toString("utf8"));
+    const parsed = StreamPlaybackTokenSchema.safeParse(decodedPayload);
+    if (!parsed.success) return null;
+    if (parsed.data.exp <= Math.floor(Date.now() / 1000)) return null;
+    return parsed.data;
   } catch {
     return null;
   }
@@ -80,9 +93,32 @@ async function readSegment(storageDir: string, tenantId: string, cameraId: strin
 
 export async function buildApp() {
   const app = Fastify({ logger: true });
+  const streams = new Map<string, StreamEntry>();
   const storageDir = process.env.STREAM_STORAGE_DIR ?? path.resolve(process.cwd(), "storage");
+  const streamTokenSecret = process.env.STREAM_TOKEN_SECRET ?? "dev-stream-token-secret";
 
   app.get("/health", async () => ({ ok: true, streams: streams.size, storageDir }));
+
+  app.get("/metrics", async (_request, reply) => {
+    const counters = {
+      provisioning: 0,
+      ready: 0,
+      stopped: 0
+    };
+    for (const entry of streams.values()) {
+      counters[entry.status] += 1;
+    }
+
+    const lines = [
+      "# HELP nearhome_streams_total Number of known streams by status",
+      "# TYPE nearhome_streams_total gauge",
+      `nearhome_streams_total{status=\"provisioning\"} ${counters.provisioning}`,
+      `nearhome_streams_total{status=\"ready\"} ${counters.ready}`,
+      `nearhome_streams_total{status=\"stopped\"} ${counters.stopped}`
+    ];
+    reply.header("content-type", "text/plain; version=0.0.4");
+    return lines.join("\n");
+  });
 
   app.get("/health/:tenantId/:cameraId", async (request, reply) => {
     const { tenantId, cameraId } = request.params as { tenantId: string; cameraId: string };
@@ -147,8 +183,8 @@ export async function buildApp() {
       return { code: "UNAUTHORIZED", message: "Missing playback token" };
     }
 
-    const parsed = parseToken(query.token);
-    if (!parsed || parsed.cameraId !== cameraId || parsed.expiresAt.getTime() <= Date.now()) {
+    const parsed = verifyToken(query.token, streamTokenSecret);
+    if (!parsed || parsed.cid !== cameraId || parsed.tid !== tenantId) {
       reply.status(401);
       return { code: "UNAUTHORIZED", message: "Invalid or expired playback token" };
     }
@@ -177,8 +213,8 @@ export async function buildApp() {
       return { code: "UNAUTHORIZED", message: "Missing playback token" };
     }
 
-    const parsed = parseToken(query.token);
-    if (!parsed || parsed.cameraId !== cameraId || parsed.expiresAt.getTime() <= Date.now()) {
+    const parsed = verifyToken(query.token, streamTokenSecret);
+    if (!parsed || parsed.cid !== cameraId || parsed.tid !== tenantId) {
       reply.status(401);
       return { code: "UNAUTHORIZED", message: "Invalid or expired playback token" };
     }

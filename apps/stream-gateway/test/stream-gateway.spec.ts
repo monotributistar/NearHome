@@ -2,24 +2,40 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { createHmac } from "node:crypto";
 import { buildApp } from "../src/app.js";
 
 const createdDirs: string[] = [];
 
-function createPlaybackToken(cameraId: string, expiresAt: Date) {
-  return Buffer.from(`test-user:${cameraId}:test-session:${expiresAt.toISOString()}`, "utf8").toString("base64");
+const STREAM_TOKEN_SECRET = "test-stream-secret";
+
+function createPlaybackToken(args: { tenantId: string; cameraId: string; expiresAt: Date }) {
+  const payload = {
+    sub: "test-user",
+    tid: args.tenantId,
+    cid: args.cameraId,
+    sid: "test-session",
+    exp: Math.floor(args.expiresAt.getTime() / 1000),
+    iat: Math.floor(Date.now() / 1000),
+    v: 1 as const
+  };
+  const payloadBase64 = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+  const signature = createHmac("sha256", STREAM_TOKEN_SECRET).update(payloadBase64).digest("base64url");
+  return `${payloadBase64}.${signature}`;
 }
 
 async function setupApp() {
   const dir = await mkdtemp(path.join(tmpdir(), "nearhome-stream-"));
   createdDirs.push(dir);
   process.env.STREAM_STORAGE_DIR = dir;
+  process.env.STREAM_TOKEN_SECRET = STREAM_TOKEN_SECRET;
   const app = await buildApp();
   return { app, dir };
 }
 
 afterEach(async () => {
   delete process.env.STREAM_STORAGE_DIR;
+  delete process.env.STREAM_TOKEN_SECRET;
   while (createdDirs.length) {
     const dir = createdDirs.pop();
     if (dir) {
@@ -49,7 +65,7 @@ describe("stream-gateway", () => {
       }
     });
 
-    const token = createPlaybackToken(cameraId, new Date(Date.now() + 60_000));
+    const token = createPlaybackToken({ tenantId, cameraId, expiresAt: new Date(Date.now() + 60_000) });
     const manifestRes = await app.inject({
       method: "GET",
       url: `/playback/${tenantId}/${cameraId}/index.m3u8?token=${encodeURIComponent(token)}`
@@ -88,7 +104,7 @@ describe("stream-gateway", () => {
     });
     expect(missingTokenRes.statusCode).toBe(401);
 
-    const expiredToken = createPlaybackToken(cameraId, new Date(Date.now() - 60_000));
+    const expiredToken = createPlaybackToken({ tenantId, cameraId, expiresAt: new Date(Date.now() - 60_000) });
     const expiredRes = await app.inject({
       method: "GET",
       url: `/playback/${tenantId}/${cameraId}/index.m3u8?token=${encodeURIComponent(expiredToken)}`
@@ -117,12 +133,63 @@ describe("stream-gateway", () => {
     expect(deprovisionRes.statusCode).toBe(200);
     expect(deprovisionRes.json()).toEqual({ data: { removed: true } });
 
-    const token = createPlaybackToken(cameraId, new Date(Date.now() + 60_000));
+    const token = createPlaybackToken({ tenantId, cameraId, expiresAt: new Date(Date.now() + 60_000) });
     const playbackRes = await app.inject({
       method: "GET",
       url: `/playback/${tenantId}/${cameraId}/index.m3u8?token=${encodeURIComponent(token)}`
     });
     expect(playbackRes.statusCode).toBe(404);
+
+    await app.close();
+  });
+
+  it("rejects token with invalid signature or tenant mismatch", async () => {
+    const { app } = await setupApp();
+    const tenantId = "tenant-d";
+    const cameraId = "camera-d";
+
+    await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: { tenantId, cameraId, rtspUrl: "rtsp://demo/camera-d" }
+    });
+
+    const valid = createPlaybackToken({ tenantId, cameraId, expiresAt: new Date(Date.now() + 60_000) });
+    const tampered = `${valid.slice(0, -1)}x`;
+    const tamperedRes = await app.inject({
+      method: "GET",
+      url: `/playback/${tenantId}/${cameraId}/index.m3u8?token=${encodeURIComponent(tampered)}`
+    });
+    expect(tamperedRes.statusCode).toBe(401);
+
+    const otherTenantToken = createPlaybackToken({ tenantId: "tenant-other", cameraId, expiresAt: new Date(Date.now() + 60_000) });
+    const mismatchRes = await app.inject({
+      method: "GET",
+      url: `/playback/${tenantId}/${cameraId}/index.m3u8?token=${encodeURIComponent(otherTenantToken)}`
+    });
+    expect(mismatchRes.statusCode).toBe(401);
+
+    await app.close();
+  });
+
+  it("exposes stream status metrics", async () => {
+    const { app } = await setupApp();
+    const tenantId = "tenant-metrics";
+    const cameraId = "camera-metrics";
+
+    await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: { tenantId, cameraId, rtspUrl: "rtsp://demo/camera-metrics" }
+    });
+
+    const metricsRes = await app.inject({
+      method: "GET",
+      url: "/metrics"
+    });
+    expect(metricsRes.statusCode).toBe(200);
+    expect(metricsRes.headers["content-type"]).toContain("text/plain");
+    expect(metricsRes.body).toContain("nearhome_streams_total{status=\"ready\"} 1");
 
     await app.close();
   });

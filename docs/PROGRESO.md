@@ -10,6 +10,8 @@
 - Etapa activa: readiness operativa (NH-012) completada
 - Etapa activa: auditoría básica de acciones críticas (NH-016) completada
 - Etapa activa: administración completa de tenants (NH-029) completada
+- Etapa activa: stream-token firmado (NH-018) completada
+- Etapa activa: métricas base de data-plane (NH-032) completada
 
 ## Progreso completado
 
@@ -43,6 +45,10 @@
    - `DELETE /tenants/:id` con soft delete.
    - Admin UI para crear/editar/eliminar tenant.
    - Cobertura API y E2E para flujo CRUD y RBAC.
+10. Data-plane hardening inicial:
+   - Stream token firmado (HMAC SHA-256) con claims y expiración.
+   - Validación en `stream-gateway` por firma + `tenantId` + `cameraId`.
+   - Endpoint `GET /metrics` con métricas de estado de streams.
 
 ## Cambios técnicos relevantes
 
@@ -78,6 +84,11 @@
   - Endpoint `DELETE /tenants/:id` y filtros para excluir tenants eliminados en auth/listados.
 - `apps/admin/src/App.tsx`:
   - Tenants page con acciones inline de update/delete.
+- `apps/api/src/app.ts`:
+  - Emisión de stream token firmado con claims (`sub`, `tid`, `cid`, `sid`, `exp`, `iat`, `v`).
+- `apps/stream-gateway/src/app.ts`:
+  - Verificación criptográfica del token de playback.
+  - Endpoint `/metrics` (Prometheus text format).
 
 ## Problemas encontrados y resolución
 
@@ -101,8 +112,10 @@
 - `pnpm --filter @app/api test`: `25 passed`
 - `pnpm --filter @app/api test`: `27 passed`
 - `pnpm --filter @app/api test`: `29 passed`
+- `pnpm --filter @app/api test`: `30 passed`
+- `pnpm --filter @app/stream-gateway test`: `5 passed`
 - `pnpm test:e2e:admin`: `7 passed`
-- `pnpm test:e2e:portal`: `1 passed`
+- `pnpm test:e2e:portal`: `2 passed`
 
 ## Próximo bloque recomendado
 

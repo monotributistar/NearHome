@@ -258,7 +258,7 @@
 
 ### NH-018 (P2) - Stream-token firmado
 
-- Estado: `todo`
+- Estado: `done`
 - Scope:
   - Reemplazar token mock por token firmado con expiración y claims.
 - Aceptación:

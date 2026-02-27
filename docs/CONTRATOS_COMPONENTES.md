@@ -112,6 +112,7 @@ Versionado:
 - `POST /cameras/:id/stream-token`
   - out: `{ token, expiresAt, session, playbackUrl? }`
   - crea sesión de stream con tracking (`requested -> issued`)
+  - token firmado HMAC SHA-256 con claims: `sub`, `tid`, `cid`, `sid`, `exp`, `iat`, `v`
 - `GET /stream-sessions` (tenant-scoped)
   - filtros: `cameraId`, `status`, `_start`, `_end`, `_sort`, `_order`
   - `client_user` solo ve sesiones propias

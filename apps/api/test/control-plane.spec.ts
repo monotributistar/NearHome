@@ -808,6 +808,8 @@ describe("NH-028 stream sessions lifecycle", () => {
       token: expect.any(String),
       session: { id: expect.any(String), status: "issued", cameraId }
     });
+    const issuedToken = tokenResponse.json<{ token: string }>().token;
+    expect(issuedToken.split(".")).toHaveLength(2);
 
     const listResponse = await app.inject({
       method: "GET",
