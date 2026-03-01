@@ -9,14 +9,22 @@ const createdDirs: string[] = [];
 
 const STREAM_TOKEN_SECRET = "test-stream-secret";
 
-function createPlaybackToken(args: { tenantId: string; cameraId: string; expiresAt: Date }) {
+function createPlaybackToken(args: {
+  tenantId: string;
+  cameraId: string;
+  expiresAt: Date;
+  sid?: string;
+  sub?: string;
+  issuedAt?: Date;
+}) {
+  const issuedAt = args.issuedAt ?? new Date();
   const payload = {
-    sub: "test-user",
+    sub: args.sub ?? "test-user",
     tid: args.tenantId,
     cid: args.cameraId,
-    sid: "test-session",
+    sid: args.sid ?? "test-session",
     exp: Math.floor(args.expiresAt.getTime() / 1000),
-    iat: Math.floor(Date.now() / 1000),
+    iat: Math.floor(issuedAt.getTime() / 1000),
     v: 1 as const
   };
   const payloadBase64 = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
@@ -29,6 +37,8 @@ async function setupApp() {
   createdDirs.push(dir);
   process.env.STREAM_STORAGE_DIR = dir;
   process.env.STREAM_TOKEN_SECRET = STREAM_TOKEN_SECRET;
+  process.env.STREAM_SESSION_IDLE_TTL_MS = "1000";
+  process.env.STREAM_SESSION_SWEEP_MS = "60000";
   const app = await buildApp();
   return { app, dir };
 }
@@ -36,6 +46,8 @@ async function setupApp() {
 afterEach(async () => {
   delete process.env.STREAM_STORAGE_DIR;
   delete process.env.STREAM_TOKEN_SECRET;
+  delete process.env.STREAM_SESSION_IDLE_TTL_MS;
+  delete process.env.STREAM_SESSION_SWEEP_MS;
   while (createdDirs.length) {
     const dir = createdDirs.pop();
     if (dir) {
@@ -263,6 +275,203 @@ describe("stream-gateway", () => {
       code: "NOT_FOUND",
       message: "Route not found"
     });
+
+    await app.close();
+  });
+
+  it("supports idempotent reprovision and source profile updates", async () => {
+    const { app } = await setupApp();
+    const tenantId = "tenant-reprovision";
+    const cameraId = "camera-reprovision";
+
+    const first = await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: {
+        tenantId,
+        cameraId,
+        rtspUrl: "rtsp://demo/reprovision",
+        transport: "tcp",
+        codecHint: "h264",
+        targetProfiles: ["main", "sub"]
+      }
+    });
+    expect(first.statusCode).toBe(200);
+    expect(first.json()).toMatchObject({
+      data: {
+        version: 1,
+        reprovisioned: true,
+        source: {
+          transport: "tcp",
+          codecHint: "h264",
+          targetProfiles: ["main", "sub"]
+        }
+      }
+    });
+
+    const second = await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: {
+        tenantId,
+        cameraId,
+        rtspUrl: "rtsp://demo/reprovision",
+        transport: "tcp",
+        codecHint: "h264",
+        targetProfiles: ["main", "sub"]
+      }
+    });
+    expect(second.statusCode).toBe(200);
+    expect(second.json()).toMatchObject({
+      data: {
+        version: 1,
+        reprovisioned: false
+      }
+    });
+
+    const third = await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: {
+        tenantId,
+        cameraId,
+        rtspUrl: "rtsp://demo/reprovision-v2",
+        transport: "udp",
+        codecHint: "h265",
+        targetProfiles: ["low", "main"]
+      }
+    });
+    expect(third.statusCode).toBe(200);
+    expect(third.json()).toMatchObject({
+      data: {
+        version: 2,
+        reprovisioned: true,
+        rtspUrl: "rtsp://demo/reprovision-v2",
+        source: {
+          transport: "udp",
+          codecHint: "h265",
+          targetProfiles: ["low", "main"]
+        }
+      }
+    });
+
+    await app.close();
+  });
+
+  it("tracks playback sessions by sid and expires them deterministically", async () => {
+    const { app } = await setupApp();
+    const tenantId = "tenant-sessions";
+    const cameraId = "camera-sessions";
+    const sid = "sid-expire-1";
+
+    await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: { tenantId, cameraId, rtspUrl: "rtsp://demo/sessions" }
+    });
+
+    const token = createPlaybackToken({
+      tenantId,
+      cameraId,
+      sid,
+      expiresAt: new Date(Date.now() + 1_000)
+    });
+    const playback = await app.inject({
+      method: "GET",
+      url: `/playback/${tenantId}/${cameraId}/index.m3u8?token=${encodeURIComponent(token)}`
+    });
+    expect(playback.statusCode).toBe(200);
+
+    const listActive = await app.inject({
+      method: "GET",
+      url: `/sessions?tenantId=${tenantId}&cameraId=${cameraId}&sid=${sid}`
+    });
+    expect(listActive.statusCode).toBe(200);
+    expect(listActive.json()).toMatchObject({
+      total: 1,
+      data: [
+        {
+          sid,
+          tenantId,
+          cameraId,
+          status: "active"
+        }
+      ]
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 1_200));
+
+    const sweep = await app.inject({
+      method: "POST",
+      url: "/sessions/sweep"
+    });
+    expect(sweep.statusCode).toBe(200);
+    expect(sweep.json<{ data: { expired: number; ended: number } }>().data.expired).toBe(1);
+
+    const sessionsExpired = await app.inject({
+      method: "GET",
+      url: `/sessions?tenantId=${tenantId}&cameraId=${cameraId}`
+    });
+    expect(sessionsExpired.statusCode).toBe(200);
+    const body = sessionsExpired.json<{ data: Array<{ sid: string; status: string }> }>();
+    expect(body.data.some((session) => session.sid === sid && session.status === "expired")).toBe(true);
+
+    await app.close();
+  });
+
+  it("closes active sessions when camera is deprovisioned and reports in metrics", async () => {
+    const { app } = await setupApp();
+    const tenantId = "tenant-session-close";
+    const cameraId = "camera-session-close";
+    const sid = "sid-close-1";
+
+    await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: { tenantId, cameraId, rtspUrl: "rtsp://demo/session-close" }
+    });
+
+    const token = createPlaybackToken({
+      tenantId,
+      cameraId,
+      sid,
+      expiresAt: new Date(Date.now() + 60_000)
+    });
+    const playback = await app.inject({
+      method: "GET",
+      url: `/playback/${tenantId}/${cameraId}/index.m3u8?token=${encodeURIComponent(token)}`
+    });
+    expect(playback.statusCode).toBe(200);
+
+    const deprovision = await app.inject({
+      method: "POST",
+      url: "/deprovision",
+      payload: { tenantId, cameraId }
+    });
+    expect(deprovision.statusCode).toBe(200);
+
+    const sessions = await app.inject({
+      method: "GET",
+      url: `/sessions?tenantId=${tenantId}&cameraId=${cameraId}&sid=${sid}`
+    });
+    expect(sessions.statusCode).toBe(200);
+    expect(sessions.json()).toMatchObject({
+      total: 1,
+      data: [
+        {
+          sid,
+          status: "ended",
+          endReason: "deprovisioned"
+        }
+      ]
+    });
+
+    const metrics = await app.inject({
+      method: "GET",
+      url: "/metrics"
+    });
+    expect(metrics.statusCode).toBe(200);
+    expect(metrics.body).toContain("nearhome_stream_sessions_total{status=\"ended\"} 1");
 
     await app.close();
   });

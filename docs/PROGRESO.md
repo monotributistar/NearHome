@@ -65,6 +65,11 @@
    - Límite de concurrencia de streams por plan en `POST /cameras/:id/stream-token`.
    - Ventana de retención por plan en `GET /events`.
    - Contrato explícito en `docs/ENTITLEMENTS_CONTRACT.md`.
+14. Data-plane cameras + sessions (NH-DP-01/NH-DP-02):
+   - Provisioning idempotente por cámara con source profile (`transport`, `codecHint`, `targetProfiles`) y `version`.
+   - Session manager por `sid` en data-plane con estados `issued|active|ended|expired`.
+   - Sweep de TTL/idle configurable y endpoint de ejecución manual.
+   - Métricas de sesiones expuestas en `GET /metrics`.
 
 ## Cambios técnicos relevantes
 
@@ -122,6 +127,15 @@
   - suite NH-035 con casos de límites y retención.
 - `docs/ENTITLEMENTS_CONTRACT.md`:
   - contrato técnico de cálculo y enforcement.
+- `apps/stream-gateway/src/app.ts`:
+  - source profile en `/provision` + idempotencia/versionado.
+  - tracking de sesiones playback por `sid` + TTL/idle sweep.
+  - endpoints `/sessions` y `/sessions/sweep`.
+  - nuevas métricas de sesiones.
+- `apps/stream-gateway/test/stream-gateway.spec.ts`:
+  - cobertura NH-DP-01/NH-DP-02 (idempotencia, TTL, deprovision cierra sesiones).
+- `docs/CONTROLPLANE_DATAPLANE_CONTRACT.md`:
+  - contrato actualizado de provision y session tracking.
 
 ## Problemas encontrados y resolución
 
@@ -154,6 +168,7 @@
 - `pnpm --filter @app/stream-gateway test`: `5 passed`
 - `pnpm --filter @app/stream-gateway test`: `5 passed` (incluye métricas + token firmado + mismatch)
 - `pnpm --filter @app/stream-gateway test`: `7 passed` (incluye aislamiento + errores claros)
+- `pnpm --filter @app/stream-gateway test`: `10 passed` (incluye NH-DP-01/NH-DP-02)
 - `pnpm test:e2e:admin`: `7 passed`
 - `pnpm test:e2e:portal`: `2 passed`
 

@@ -22,7 +22,10 @@ Definir contrato mínimo y versionable entre:
 {
   "tenantId": "string",
   "cameraId": "string",
-  "rtspUrl": "string"
+  "rtspUrl": "string",
+  "transport": "auto|tcp|udp",
+  "codecHint": "h264|h265|mpeg4|unknown",
+  "targetProfiles": ["main", "sub"]
 }
 ```
 
@@ -34,6 +37,13 @@ Definir contrato mínimo y versionable entre:
     "tenantId": "string",
     "cameraId": "string",
     "rtspUrl": "string",
+    "source": {
+      "transport": "auto|tcp|udp",
+      "codecHint": "h264|h265|mpeg4|unknown",
+      "targetProfiles": ["main"]
+    },
+    "version": 1,
+    "reprovisioned": true,
     "status": "provisioning|ready|stopped",
     "health": {
       "connectivity": "online|degraded|offline",
@@ -129,6 +139,16 @@ Validación:
 - firma válida
 - no expirado
 - `tid` y `cid` coinciden con path
+- sesión (`sid`) activa para `tenantId+cameraId`
+
+### 5) Session tracking (Data Plane)
+
+- `GET /sessions`
+  - filtros opcionales: `tenantId`, `cameraId`, `status`, `sid`
+  - out: `{ data: StreamSession[], total }`
+- `POST /sessions/sweep`
+  - ejecuta sweep inmediato de TTL/idle
+  - out: `{ data: { expired: number, ended: number } }`
 
 ## Sincronización Data Plane -> Control Plane
 
@@ -153,6 +173,8 @@ Métricas actuales:
 
 - `nearhome_streams_total{status=...}`
 - `nearhome_stream_connectivity_total{connectivity=...}`
+- `nearhome_stream_sessions_total{status=...}`
+- `nearhome_stream_session_sweeps_total`
 
 ## Variables de entorno relevantes
 
@@ -165,6 +187,8 @@ Data Plane:
 
 - `STREAM_TOKEN_SECRET`
 - `STREAM_PROBE_INTERVAL_MS`
+- `STREAM_SESSION_IDLE_TTL_MS`
+- `STREAM_SESSION_SWEEP_MS`
 
 ## Versionado sugerido
 

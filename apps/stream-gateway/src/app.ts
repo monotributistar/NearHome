@@ -7,7 +7,10 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 const ProvisionSchema = z.object({
   tenantId: z.string().min(1),
   cameraId: z.string().min(1),
-  rtspUrl: z.string().min(4)
+  rtspUrl: z.string().min(4),
+  transport: z.enum(["auto", "tcp", "udp"]).default("auto"),
+  codecHint: z.enum(["h264", "h265", "mpeg4", "unknown"]).default("unknown"),
+  targetProfiles: z.array(z.string().min(1)).default(["main"])
 });
 
 type StreamStatus = "provisioning" | "ready" | "stopped";
@@ -22,13 +25,37 @@ type StreamHealth = {
   checkedAt: string;
 };
 
+type StreamSource = {
+  transport: "auto" | "tcp" | "udp";
+  codecHint: "h264" | "h265" | "mpeg4" | "unknown";
+  targetProfiles: string[];
+};
+
 type StreamEntry = {
   tenantId: string;
   cameraId: string;
   rtspUrl: string;
+  source: StreamSource;
+  version: number;
   status: StreamStatus;
   health: StreamHealth;
   updatedAt: string;
+};
+
+type SessionStatus = "issued" | "active" | "ended" | "expired";
+
+type StreamSessionEntry = {
+  tenantId: string;
+  cameraId: string;
+  sid: string;
+  sub: string;
+  status: SessionStatus;
+  issuedAt: string;
+  activatedAt: string | null;
+  endedAt: string | null;
+  expiresAt: string;
+  lastSeenAt: string;
+  endReason: string | null;
 };
 
 type ApiErrorBody = {
@@ -50,6 +77,10 @@ function statusToCode(statusCode: number) {
 
 function streamKey(tenantId: string, cameraId: string) {
   return `${tenantId}:${cameraId}`;
+}
+
+function streamSessionKey(tenantId: string, cameraId: string, sid: string) {
+  return `${tenantId}:${cameraId}:${sid}`;
 }
 
 function cameraDir(storageDir: string, tenantId: string, cameraId: string) {
@@ -184,10 +215,15 @@ function runStreamProbe(entry: StreamEntry): StreamEntry {
 export async function buildApp() {
   const app = Fastify({ logger: true });
   const streams = new Map<string, StreamEntry>();
+  const streamSessions = new Map<string, StreamSessionEntry>();
   const storageDir = process.env.STREAM_STORAGE_DIR ?? path.resolve(process.cwd(), "storage");
   const streamTokenSecret = process.env.STREAM_TOKEN_SECRET ?? "dev-stream-token-secret";
   const probeIntervalMs = Number(process.env.STREAM_PROBE_INTERVAL_MS ?? 5000);
+  const sessionIdleTtlMs = Number(process.env.STREAM_SESSION_IDLE_TTL_MS ?? 60_000);
+  const sessionSweepIntervalMs = Number(process.env.STREAM_SESSION_SWEEP_MS ?? 5_000);
   let probeTimer: NodeJS.Timeout | null = null;
+  let sessionSweepTimer: NodeJS.Timeout | null = null;
+  let sessionSweepCount = 0;
 
   const startProbeLoop = () => {
     if (probeTimer) return;
@@ -204,10 +240,54 @@ export async function buildApp() {
     probeTimer = null;
   };
 
+  const sweepSessions = () => {
+    const now = Date.now();
+    let expired = 0;
+    let ended = 0;
+    for (const [key, session] of streamSessions.entries()) {
+      if ((session.status === "issued" || session.status === "active") && Date.parse(session.expiresAt) <= now) {
+        streamSessions.set(key, {
+          ...session,
+          status: "expired",
+          endedAt: nowIso(),
+          endReason: "token_expired"
+        });
+        expired += 1;
+        continue;
+      }
+      if (session.status === "active" && now - Date.parse(session.lastSeenAt) > sessionIdleTtlMs) {
+        streamSessions.set(key, {
+          ...session,
+          status: "ended",
+          endedAt: nowIso(),
+          endReason: "idle_timeout"
+        });
+        ended += 1;
+      }
+    }
+    sessionSweepCount += 1;
+    return { expired, ended };
+  };
+
+  const startSessionSweepLoop = () => {
+    if (sessionSweepTimer) return;
+    sessionSweepTimer = setInterval(() => {
+      sweepSessions();
+    }, sessionSweepIntervalMs);
+  };
+
+  const stopSessionSweepLoop = () => {
+    if (!sessionSweepTimer) return;
+    clearInterval(sessionSweepTimer);
+    sessionSweepTimer = null;
+  };
+
   startProbeLoop();
+  startSessionSweepLoop();
 
   app.addHook("onClose", async () => {
     stopProbeLoop();
+    stopSessionSweepLoop();
   });
 
   app.setNotFoundHandler((_request, reply) => {
@@ -237,7 +317,7 @@ export async function buildApp() {
     reply.status(statusCode).send(body);
   });
 
-  app.get("/health", async () => ({ ok: true, streams: streams.size, storageDir }));
+  app.get("/health", async () => ({ ok: true, streams: streams.size, sessions: streamSessions.size, storageDir }));
 
   app.get("/metrics", async (_request, reply) => {
     const counters = {
@@ -248,9 +328,18 @@ export async function buildApp() {
       degraded: 0,
       offline: 0
     };
+    const sessionCounters: Record<SessionStatus, number> = {
+      issued: 0,
+      active: 0,
+      ended: 0,
+      expired: 0
+    };
     for (const entry of streams.values()) {
       counters[entry.status] += 1;
       counters[entry.health.connectivity] += 1;
+    }
+    for (const session of streamSessions.values()) {
+      sessionCounters[session.status] += 1;
     }
 
     const lines = [
@@ -263,7 +352,16 @@ export async function buildApp() {
       "# TYPE nearhome_stream_connectivity_total gauge",
       `nearhome_stream_connectivity_total{connectivity=\"online\"} ${counters.online}`,
       `nearhome_stream_connectivity_total{connectivity=\"degraded\"} ${counters.degraded}`,
-      `nearhome_stream_connectivity_total{connectivity=\"offline\"} ${counters.offline}`
+      `nearhome_stream_connectivity_total{connectivity=\"offline\"} ${counters.offline}`,
+      "# HELP nearhome_stream_sessions_total Number of tracked stream sessions by status",
+      "# TYPE nearhome_stream_sessions_total gauge",
+      `nearhome_stream_sessions_total{status=\"issued\"} ${sessionCounters.issued}`,
+      `nearhome_stream_sessions_total{status=\"active\"} ${sessionCounters.active}`,
+      `nearhome_stream_sessions_total{status=\"ended\"} ${sessionCounters.ended}`,
+      `nearhome_stream_sessions_total{status=\"expired\"} ${sessionCounters.expired}`,
+      "# HELP nearhome_stream_session_sweeps_total Number of session sweep cycles",
+      "# TYPE nearhome_stream_session_sweeps_total counter",
+      `nearhome_stream_session_sweeps_total ${sessionSweepCount}`
     ];
     reply.header("content-type", "text/plain; version=0.0.4");
     return lines.join("\n");
@@ -283,11 +381,35 @@ export async function buildApp() {
   app.post("/provision", async (request) => {
     const body = ProvisionSchema.parse(request.body);
     const key = streamKey(body.tenantId, body.cameraId);
+    const source: StreamSource = {
+      transport: body.transport,
+      codecHint: body.codecHint,
+      targetProfiles: body.targetProfiles
+    };
+    const existing = streams.get(key);
+
+    if (
+      existing &&
+      existing.rtspUrl === body.rtspUrl &&
+      existing.source.transport === source.transport &&
+      existing.source.codecHint === source.codecHint &&
+      JSON.stringify(existing.source.targetProfiles) === JSON.stringify(source.targetProfiles)
+    ) {
+      return {
+        data: {
+          ...existing,
+          playbackPath: `/playback/${body.tenantId}/${body.cameraId}/index.m3u8`,
+          reprovisioned: false
+        }
+      };
+    }
 
     streams.set(key, {
       tenantId: body.tenantId,
       cameraId: body.cameraId,
       rtspUrl: body.rtspUrl,
+      source,
+      version: existing ? existing.version + 1 : 1,
       status: "provisioning",
       health: buildHealth("degraded", "provisioning"),
       updatedAt: nowIso()
@@ -299,6 +421,8 @@ export async function buildApp() {
       tenantId: body.tenantId,
       cameraId: body.cameraId,
       rtspUrl: body.rtspUrl,
+      source,
+      version: existing ? existing.version + 1 : 1,
       status: "ready",
       health: buildHealth("online"),
       updatedAt: nowIso()
@@ -309,7 +433,8 @@ export async function buildApp() {
     return {
       data: {
         ...ready,
-        playbackPath: `/playback/${body.tenantId}/${body.cameraId}/index.m3u8`
+        playbackPath: `/playback/${body.tenantId}/${body.cameraId}/index.m3u8`,
+        reprovisioned: true
       }
     };
   });
@@ -327,6 +452,20 @@ export async function buildApp() {
       health: buildHealth("offline", "deprovisioned"),
       updatedAt: nowIso()
     });
+    for (const [sessionKey, session] of streamSessions.entries()) {
+      if (
+        session.tenantId === body.tenantId &&
+        session.cameraId === body.cameraId &&
+        (session.status === "issued" || session.status === "active")
+      ) {
+        streamSessions.set(sessionKey, {
+          ...session,
+          status: "ended",
+          endedAt: nowIso(),
+          endReason: "deprovisioned"
+        });
+      }
+    }
     return { data: { removed: true } };
   });
 
@@ -351,6 +490,27 @@ export async function buildApp() {
       reply.status(404);
       return { code: "NOT_FOUND", message: "Stream not provisioned" };
     }
+    const sessionKey = streamSessionKey(tenantId, cameraId, parsed.sid);
+    const existingSession = streamSessions.get(sessionKey);
+    if (existingSession?.status === "ended" || existingSession?.status === "expired") {
+      reply.status(401);
+      return { code: "UNAUTHORIZED", message: "Stream session is no longer active" };
+    }
+    const issuedAt = new Date(parsed.iat * 1000).toISOString();
+    const expiresAt = new Date(parsed.exp * 1000).toISOString();
+    streamSessions.set(sessionKey, {
+      tenantId,
+      cameraId,
+      sid: parsed.sid,
+      sub: parsed.sub,
+      status: "active",
+      issuedAt: existingSession?.issuedAt ?? issuedAt,
+      activatedAt: existingSession?.activatedAt ?? nowIso(),
+      endedAt: null,
+      expiresAt,
+      lastSeenAt: nowIso(),
+      endReason: null
+    });
 
     const manifest = await readManifest(storageDir, tenantId, cameraId);
     const tokenQuery = `?token=${encodeURIComponent(query.token)}`;
@@ -381,10 +541,52 @@ export async function buildApp() {
       reply.status(404);
       return { code: "NOT_FOUND", message: "Stream not provisioned" };
     }
+    const sessionKey = streamSessionKey(tenantId, cameraId, parsed.sid);
+    const existingSession = streamSessions.get(sessionKey);
+    if (existingSession?.status === "ended" || existingSession?.status === "expired") {
+      reply.status(401);
+      return { code: "UNAUTHORIZED", message: "Stream session is no longer active" };
+    }
+    const issuedAt = new Date(parsed.iat * 1000).toISOString();
+    const expiresAt = new Date(parsed.exp * 1000).toISOString();
+    streamSessions.set(sessionKey, {
+      tenantId,
+      cameraId,
+      sid: parsed.sid,
+      sub: parsed.sub,
+      status: "active",
+      issuedAt: existingSession?.issuedAt ?? issuedAt,
+      activatedAt: existingSession?.activatedAt ?? nowIso(),
+      endedAt: null,
+      expiresAt,
+      lastSeenAt: nowIso(),
+      endReason: null
+    });
 
     const segment = await readSegment(storageDir, tenantId, cameraId);
     reply.header("content-type", "video/MP2T");
     return reply.send(segment);
+  });
+
+  app.get("/sessions", async (request) => {
+    const q = request.query as {
+      tenantId?: string;
+      cameraId?: string;
+      status?: SessionStatus;
+      sid?: string;
+    };
+    const data = Array.from(streamSessions.values())
+      .filter((session) => (q.tenantId ? session.tenantId === q.tenantId : true))
+      .filter((session) => (q.cameraId ? session.cameraId === q.cameraId : true))
+      .filter((session) => (q.status ? session.status === q.status : true))
+      .filter((session) => (q.sid ? session.sid === q.sid : true))
+      .sort((a, b) => (a.lastSeenAt < b.lastSeenAt ? 1 : -1));
+
+    return { data, total: data.length };
+  });
+
+  app.post("/sessions/sweep", async () => {
+    return { data: sweepSessions() };
   });
 
   return app;

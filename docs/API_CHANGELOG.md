@@ -38,6 +38,12 @@
   - `POST /cameras/:id/stream-token` aplica `limits.maxConcurrentStreams`.
   - `GET /events` aplica `limits.retentionDays`.
   - nuevos códigos de error: `ENTITLEMENT_LIMIT_EXCEEDED`, `ENTITLEMENT_RETENTION_EXCEEDED`.
+- NH-DP-01/NH-DP-02: evolución de data-plane para streams:
+  - `POST /provision` soporta `transport`, `codecHint`, `targetProfiles`.
+  - provisioning idempotente por `tenantId+cameraId` (`version`, `reprovisioned`).
+  - session manager por `sid` con estado `issued|active|ended|expired`.
+  - nuevos endpoints `GET /sessions` y `POST /sessions/sweep`.
+  - métricas agregadas: `nearhome_stream_sessions_total`, `nearhome_stream_session_sweeps_total`.
 - NH-028: ciclo de vida de sesiones de stream:
   - `GET /stream-sessions`
   - `GET /stream-sessions/:id`
