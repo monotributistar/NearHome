@@ -17,6 +17,7 @@ Monorepo PNPM + Turborepo con:
 - Plan general por etapas: `/Users/monotributistar/SOURCES/NearHome/docs/PLAN_GENERAL.md`
 - Contratos por componente/interfaz: `/Users/monotributistar/SOURCES/NearHome/docs/CONTRATOS_COMPONENTES.md`
 - Contrato ControlPlane/DataPlane: `/Users/monotributistar/SOURCES/NearHome/docs/CONTROLPLANE_DATAPLANE_CONTRACT.md`
+- Contrato de Entitlements: `/Users/monotributistar/SOURCES/NearHome/docs/ENTITLEMENTS_CONTRACT.md`
 - Plan de evolución a streaming sólido (TDD): `/Users/monotributistar/SOURCES/NearHome/docs/PLAN_STREAMING_TDD.md`
 - Backlog ejecutable (issues locales): `/Users/monotributistar/SOURCES/NearHome/docs/BACKLOG.md`
 - Changelog de contratos API: `/Users/monotributistar/SOURCES/NearHome/docs/API_CHANGELOG.md`
@@ -79,7 +80,7 @@ pnpm dev
 
 ## Usuarios seed (password: `demo1234`)
 
-- `admin@nearhome.dev` (`tenant_admin` en tenant A y B)
+- `admin@nearhome.dev` (`tenant_admin` en tenant A, B y C)
 - `monitor@nearhome.dev` (`monitor` en tenant A)
 - `client@nearhome.dev` (`client_user` en tenant A)
 

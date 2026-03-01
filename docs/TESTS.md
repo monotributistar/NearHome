@@ -35,6 +35,11 @@ Cobertura incluida:
   - emisión de token crea sesión `issued`
   - transición `issued -> active -> ended`
   - `client_user` no puede finalizar sesiones ajenas
+- NH-035 entitlement enforcement
+  - `/tenants/:id/entitlements` devuelve límites por plan real de cada tenant
+  - `POST /cameras` bloquea cuando excede `maxCameras` (`409 ENTITLEMENT_LIMIT_EXCEEDED`)
+  - `POST /cameras/:id/stream-token` bloquea cuando excede `maxConcurrentStreams` (`409 ENTITLEMENT_LIMIT_EXCEEDED`)
+  - `GET /events` bloquea `from` fuera de `retentionDays` (`422 ENTITLEMENT_RETENTION_EXCEEDED`)
 - NH-016 auditoría básica
   - `tenant_admin` obtiene logs en `GET /audit-logs`
   - se registran acciones críticas (`camera.create`, `subscription.set_plan`)

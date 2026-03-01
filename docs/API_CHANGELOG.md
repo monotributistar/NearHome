@@ -33,6 +33,11 @@
 - NH-034: scheduler automático de sync-health:
   - loop configurable por env en control-plane para cámaras activas.
   - tolerancia a fallos por cámara (no interrumpe sync global).
+- NH-035: enforcement de entitlements en runtime:
+  - `POST /cameras` aplica `limits.maxCameras`.
+  - `POST /cameras/:id/stream-token` aplica `limits.maxConcurrentStreams`.
+  - `GET /events` aplica `limits.retentionDays`.
+  - nuevos códigos de error: `ENTITLEMENT_LIMIT_EXCEEDED`, `ENTITLEMENT_RETENTION_EXCEEDED`.
 - NH-028: ciclo de vida de sesiones de stream:
   - `GET /stream-sessions`
   - `GET /stream-sessions/:id`

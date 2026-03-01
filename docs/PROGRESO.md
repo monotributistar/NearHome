@@ -60,6 +60,11 @@
    - Loop automático configurable por env para cámaras activas.
    - Reutiliza la misma lógica de `sync-health` manual.
    - Test de integración validando actualización automática de snapshot + lifecycle.
+13. Enforcement de entitlements (NH-035):
+   - Límite de cámaras por plan en `POST /cameras`.
+   - Límite de concurrencia de streams por plan en `POST /cameras/:id/stream-token`.
+   - Ventana de retención por plan en `GET /events`.
+   - Contrato explícito en `docs/ENTITLEMENTS_CONTRACT.md`.
 
 ## Cambios técnicos relevantes
 
@@ -108,6 +113,15 @@
   - Scheduler de sync health con `STREAM_HEALTH_SYNC_*`.
 - `apps/api/test/stream-health-sync.scheduler.spec.ts`:
   - Test de integración del loop automático.
+- `apps/api/src/app.ts`:
+  - `ApiDomainError` para errores de dominio de entitlements.
+  - enforcement de `maxCameras`, `maxConcurrentStreams`, `retentionDays`.
+- `apps/api/prisma/seed.ts`:
+  - expansión de seed a 3 tenants con planes `starter/basic/pro`.
+- `apps/api/test/control-plane.spec.ts`:
+  - suite NH-035 con casos de límites y retención.
+- `docs/ENTITLEMENTS_CONTRACT.md`:
+  - contrato técnico de cálculo y enforcement.
 
 ## Problemas encontrados y resolución
 
@@ -120,6 +134,9 @@
 3. `2026-02-24` - API tests de NH-028 disparaban `429` por rate limit de login durante la suite.
    - Causa: demasiados logins acumulados sobre la misma IP de test.
    - Resolución: `x-forwarded-for` único por request en helper de tests.
+4. `2026-03-01` - flakiness en suite API por SQLite compartido entre archivos.
+   - Causa: ejecución paralela de archivos de Vitest con mutaciones concurrentes de DB.
+   - Resolución: `apps/api/vitest.config.ts` con `fileParallelism: false`.
 
 ## Estado de validación (última corrida)
 
@@ -133,6 +150,7 @@
 - `pnpm --filter @app/api test`: `29 passed`
 - `pnpm --filter @app/api test`: `30 passed`
 - `pnpm --filter @app/api test`: `32 passed`
+- `pnpm --filter @app/api test`: `36 passed` (incluye NH-035 + scheduler)
 - `pnpm --filter @app/stream-gateway test`: `5 passed`
 - `pnpm --filter @app/stream-gateway test`: `5 passed` (incluye métricas + token firmado + mismatch)
 - `pnpm --filter @app/stream-gateway test`: `7 passed` (incluye aislamiento + errores claros)

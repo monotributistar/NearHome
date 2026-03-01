@@ -5,7 +5,7 @@ import sensible from "@fastify/sensible";
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
-import { LoginInputSchema, RoleSchema } from "@app/shared";
+import { EntitlementsSchema, LoginInputSchema, RoleSchema } from "@app/shared";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { createHmac } from "node:crypto";
 
@@ -22,6 +22,20 @@ type ApiErrorBody = {
   message: string;
   details?: unknown;
 };
+
+class ApiDomainError extends Error {
+  statusCode: number;
+  apiCode: string;
+  details?: unknown;
+
+  constructor(args: { statusCode: number; apiCode: string; message: string; details?: unknown }) {
+    super(args.message);
+    this.name = "ApiDomainError";
+    this.statusCode = args.statusCode;
+    this.apiCode = args.apiCode;
+    this.details = args.details;
+  }
+}
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -290,11 +304,83 @@ async function computeEntitlements(tenantId: string) {
 
   if (!subscription) return null;
 
-  return {
+  return EntitlementsSchema.parse({
     planCode: subscription.plan.code,
     limits: parseJson(subscription.plan.limits),
     features: parseJson(subscription.plan.features)
-  };
+  });
+}
+
+async function getEntitlementsForTenant(tenantId: string) {
+  return computeEntitlements(tenantId);
+}
+
+async function enforceCameraLimit(tenantId: string) {
+  const entitlements = await getEntitlementsForTenant(tenantId);
+  if (!entitlements) return;
+
+  const current = await prisma.camera.count({
+    where: {
+      tenantId,
+      deletedAt: null
+    }
+  });
+  const maxAllowed = entitlements.limits.maxCameras;
+  if (current >= maxAllowed) {
+    throw new ApiDomainError({
+      statusCode: 409,
+      apiCode: "ENTITLEMENT_LIMIT_EXCEEDED",
+      message: "Camera limit reached for active plan",
+      details: { limit: "maxCameras", current, maxAllowed, tenantId, planCode: entitlements.planCode }
+    });
+  }
+}
+
+async function enforceStreamConcurrencyLimit(tenantId: string) {
+  const entitlements = await getEntitlementsForTenant(tenantId);
+  if (!entitlements) return;
+
+  const now = new Date();
+  const inUse = await prisma.streamSession.count({
+    where: {
+      tenantId,
+      status: { in: ["requested", "issued", "active"] },
+      expiresAt: { gte: now }
+    }
+  });
+  const maxAllowed = entitlements.limits.maxConcurrentStreams;
+  if (inUse >= maxAllowed) {
+    throw new ApiDomainError({
+      statusCode: 409,
+      apiCode: "ENTITLEMENT_LIMIT_EXCEEDED",
+      message: "Concurrent stream limit reached for active plan",
+      details: { limit: "maxConcurrentStreams", current: inUse, maxAllowed, tenantId, planCode: entitlements.planCode }
+    });
+  }
+}
+
+async function resolveEventsFromDate(tenantId: string, requestedFrom?: Date) {
+  const entitlements = await getEntitlementsForTenant(tenantId);
+  if (!entitlements) return requestedFrom;
+
+  const minAllowedFrom = new Date(Date.now() - entitlements.limits.retentionDays * 24 * 60 * 60 * 1000);
+  if (requestedFrom && requestedFrom < minAllowedFrom) {
+    throw new ApiDomainError({
+      statusCode: 422,
+      apiCode: "ENTITLEMENT_RETENTION_EXCEEDED",
+      message: "Requested date range exceeds plan retention window",
+      details: {
+        limit: "retentionDays",
+        maxAllowedDays: entitlements.limits.retentionDays,
+        minAllowedFrom: minAllowedFrom.toISOString(),
+        requestedFrom: requestedFrom.toISOString(),
+        tenantId,
+        planCode: entitlements.planCode
+      }
+    });
+  }
+
+  return requestedFrom ?? minAllowedFrom;
 }
 
 function assertRole(request: FastifyRequest, roles: Role[]) {
@@ -733,8 +819,11 @@ export async function buildApp() {
     if (err.message === "INVALID_STREAM_SESSION_TRANSITION") {
       statusCode = 400;
     }
+    if (error instanceof ApiDomainError) {
+      statusCode = error.statusCode;
+    }
 
-    const code = error instanceof z.ZodError ? "VALIDATION_ERROR" : statusToCode(statusCode);
+    const code = error instanceof z.ZodError ? "VALIDATION_ERROR" : error instanceof ApiDomainError ? error.apiCode : statusToCode(statusCode);
     const defaultMessage = statusCode >= 500 ? "Internal server error" : "Request failed";
 
     const body: ApiErrorBody = {
@@ -748,10 +837,12 @@ export async function buildApp() {
               ? "Invalid camera lifecycle transition"
               : err.message === "CAMERA_NOT_FOUND"
                 ? "Camera not found"
-                : err.message === "STREAM_SESSION_NOT_FOUND"
+              : err.message === "STREAM_SESSION_NOT_FOUND"
                   ? "Stream session not found"
                   : err.message === "INVALID_STREAM_SESSION_TRANSITION"
                     ? "Invalid stream session transition"
+                    : error instanceof ApiDomainError
+                      ? error.message
             : error instanceof z.ZodError
               ? "Validation failed"
               : err.message || defaultMessage
@@ -759,6 +850,8 @@ export async function buildApp() {
 
     if (error instanceof z.ZodError) {
       body.details = error.flatten();
+    } else if (error instanceof ApiDomainError) {
+      body.details = error.details;
     } else if (err.code === "P2025") {
       body.code = "NOT_FOUND";
       body.message = "Resource not found";
@@ -855,7 +948,8 @@ export async function buildApp() {
         userId: user.id,
         tenant: { deletedAt: null }
       },
-      include: { tenant: true }
+      include: { tenant: true },
+      orderBy: { createdAt: "asc" }
     });
 
     const activeTenantId = (request.headers["x-tenant-id"] as string | undefined) ?? memberships[0]?.tenantId;
@@ -1171,6 +1265,7 @@ export async function buildApp() {
   app.post("/cameras", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
     const ctx = getTenantContext(request);
     assertRole(request, ["tenant_admin"]);
+    await enforceCameraLimit(ctx.tenantId);
     const body = z
       .object({
         name: z.string().min(2),
@@ -1359,6 +1454,7 @@ export async function buildApp() {
     if (!camera) throw app.httpErrors.notFound();
 
     await expireStaleStreamSessions(ctx.tenantId);
+    await enforceStreamConcurrencyLimit(ctx.tenantId);
 
     const expiresAt = new Date(Date.now() + 1000 * 60 * 5);
     const requested = await prisma.streamSession.create({
@@ -2021,7 +2117,7 @@ export async function buildApp() {
     const membership = await prisma.membership.findFirst({ where: { userId: request.ctx!.userId, tenantId } });
     if (!membership) throw app.httpErrors.forbidden();
 
-    const entitlements = await computeEntitlements(tenantId);
+    const entitlements = await getEntitlementsForTenant(tenantId);
     return { data: entitlements };
   });
 
@@ -2064,15 +2160,16 @@ export async function buildApp() {
     const q = request.query as Record<string, string | undefined>;
     const from = q.from ? new Date(q.from) : undefined;
     const to = q.to ? new Date(q.to) : undefined;
+    const effectiveFrom = await resolveEventsFromDate(tenantId, from);
 
     const rows = await prisma.event.findMany({
       where: {
         tenantId,
         ...(q.cameraId ? { cameraId: q.cameraId } : {}),
-        ...(from || to
+        ...(effectiveFrom || to
           ? {
               timestamp: {
-                ...(from ? { gte: from } : {}),
+                ...(effectiveFrom ? { gte: effectiveFrom } : {}),
                 ...(to ? { lte: to } : {})
               }
             }

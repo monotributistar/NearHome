@@ -18,9 +18,10 @@ async function main() {
   await prisma.user.deleteMany();
   await prisma.tenant.deleteMany();
 
-  const [tenantA, tenantB] = await Promise.all([
+  const [tenantA, tenantB, tenantC] = await Promise.all([
     prisma.tenant.create({ data: { name: "Acme Retail" } }),
-    prisma.tenant.create({ data: { name: "Beta Logistics" } })
+    prisma.tenant.create({ data: { name: "Beta Logistics" } }),
+    prisma.tenant.create({ data: { name: "Gamma Clinics" } })
   ]);
 
   const passwordHash = await bcrypt.hash("demo1234", 10);
@@ -36,7 +37,8 @@ async function main() {
       { tenantId: tenantA.id, userId: admin.id, role: "tenant_admin" },
       { tenantId: tenantA.id, userId: monitor.id, role: "monitor" },
       { tenantId: tenantA.id, userId: clientUser.id, role: "client_user" },
-      { tenantId: tenantB.id, userId: admin.id, role: "tenant_admin" }
+      { tenantId: tenantB.id, userId: admin.id, role: "tenant_admin" },
+      { tenantId: tenantC.id, userId: admin.id, role: "tenant_admin" }
     ]
   });
 
@@ -194,12 +196,20 @@ async function main() {
     )
   );
 
-  const [basic, pro] = await Promise.all([
+  const [starter, basic, pro] = await Promise.all([
+    prisma.plan.create({
+      data: {
+        code: "starter",
+        name: "Starter",
+        limits: JSON.stringify({ maxCameras: 2, retentionDays: 1, maxConcurrentStreams: 1 }),
+        features: JSON.stringify({ mediapipe: true, yolo: false, lpr: false })
+      }
+    }),
     prisma.plan.create({
       data: {
         code: "basic",
         name: "Basic",
-        limits: JSON.stringify({ maxCameras: 5, retentionDays: 7, maxConcurrentStreams: 2 }),
+        limits: JSON.stringify({ maxCameras: 10, retentionDays: 7, maxConcurrentStreams: 2 }),
         features: JSON.stringify({ mediapipe: true, yolo: false, lpr: false })
       }
     }),
@@ -222,6 +232,24 @@ async function main() {
       currentPeriodEnd: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30)
     }
   });
+  await prisma.subscription.create({
+    data: {
+      tenantId: tenantB.id,
+      planId: starter.id,
+      status: "active",
+      currentPeriodStart: new Date(),
+      currentPeriodEnd: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30)
+    }
+  });
+  await prisma.subscription.create({
+    data: {
+      tenantId: tenantC.id,
+      planId: basic.id,
+      status: "active",
+      currentPeriodStart: new Date(),
+      currentPeriodEnd: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30)
+    }
+  });
 
   const camerasA = [camA1, camA2, camA3, camA4, camA5];
   const camerasB = [camB1, camB2];
@@ -235,7 +263,10 @@ async function main() {
         cameraId: camera.id,
         type: i % 3 === 0 ? "intrusion" : "motion",
         severity: i % 5 === 0 ? "high" : i % 2 === 0 ? "medium" : "low",
-        timestamp: new Date(Date.now() - i * 1000 * 60 * 15),
+        timestamp:
+          tenantId === tenantB.id && i >= 15
+            ? new Date(Date.now() - (2 + i) * 1000 * 60 * 60 * 24)
+            : new Date(Date.now() - i * 1000 * 60 * 15),
         payload: JSON.stringify({ score: Math.random().toFixed(2), frameId: i })
       }
     });
@@ -278,7 +309,7 @@ async function main() {
   console.log("Seed ready");
   console.log("Users: admin@nearhome.dev / monitor@nearhome.dev / client@nearhome.dev");
   console.log("Password for all: demo1234");
-  console.log("Plans:", basic.code, pro.code);
+  console.log("Plans:", starter.code, basic.code, pro.code);
 }
 
 main()

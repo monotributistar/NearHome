@@ -50,6 +50,7 @@ Versionado:
   - `{ code: string, message: string, details?: unknown }`
 - Ejemplos de `code`:
   - `VALIDATION_ERROR`, `BAD_REQUEST`, `UNAUTHORIZED`, `FORBIDDEN`, `NOT_FOUND`, `INTERNAL_SERVER_ERROR`
+  - `ENTITLEMENT_LIMIT_EXCEEDED`, `ENTITLEMENT_RETENTION_EXCEEDED`
 
 ### Formato refine-compatible (listas)
 
@@ -110,11 +111,13 @@ Versionado:
 - `GET /subscriptions` (tenant activo)
 - `POST /tenants/:id/subscription` (tenant_admin)
 - `GET /tenants/:id/entitlements`
+  - contrato detallado en `docs/ENTITLEMENTS_CONTRACT.md`
 
 - `POST /cameras/:id/stream-token`
   - out: `{ token, expiresAt, session, playbackUrl? }`
   - crea sesión de stream con tracking (`requested -> issued`)
   - token firmado HMAC SHA-256 con claims: `sub`, `tid`, `cid`, `sid`, `exp`, `iat`, `v`
+  - aplica límite por plan `limits.maxConcurrentStreams` (error `409 ENTITLEMENT_LIMIT_EXCEEDED`)
 - `GET /stream-sessions` (tenant-scoped)
   - filtros: `cameraId`, `status`, `_start`, `_end`, `_sort`, `_order`
   - `client_user` solo ve sesiones propias
@@ -128,6 +131,8 @@ Versionado:
 
 - `GET /events?cameraId=&from=&to=`
   - out: `{ data: Event[], total }`
+  - aplica ventana de retención por plan `limits.retentionDays`
+  - si `from` queda fuera de ventana: `422 ENTITLEMENT_RETENTION_EXCEEDED`
 
 - `GET /readiness`
   - out ok: `{ ok: true, db: "up", timestamp, requestId }`
@@ -145,6 +150,7 @@ Roles:
 Matriz mínima:
 
 - `cameras.create|edit|delete`: solo `tenant_admin`.
+- `cameras.create`: además sujeto a `limits.maxCameras`.
 - `cameras.profile.update`: solo `tenant_admin`.
 - `cameras.lifecycle.validate|retire|reactivate`: solo `tenant_admin`.
 - `cameras.lifecycle.read`: todos los roles del tenant.
@@ -190,11 +196,14 @@ Matriz mínima:
 
 ## 7) Contrato de datos semilla
 
-- 2 tenants
+- 3 tenants
 - 3 usuarios
 - memberships (admin/monitor/client_user)
 - 7 cámaras total
 - perfil interno para cada cámara activa
-- planes basic/pro
-- suscripción activa en tenant A
+- planes starter/basic/pro
+- suscripciones activas:
+  - tenant A -> pro
+  - tenant B -> starter
+  - tenant C -> basic
 - 20 eventos mock

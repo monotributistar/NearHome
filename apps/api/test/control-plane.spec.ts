@@ -914,6 +914,174 @@ describe("NH-028 stream sessions lifecycle", () => {
   });
 });
 
+describe("NH-035 entitlement enforcement", () => {
+  it("returns entitlements per tenant plan", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const adminMe = await me(adminToken);
+    const tenantB = adminMe.memberships.find((m) => m.tenant.name === "Beta Logistics");
+    const tenantC = adminMe.memberships.find((m) => m.tenant.name === "Gamma Clinics");
+    expect(tenantB).toBeTruthy();
+    expect(tenantC).toBeTruthy();
+
+    const tenantBEntitlements = await app.inject({
+      method: "GET",
+      url: `/tenants/${tenantB!.tenantId}/entitlements`,
+      headers: { authorization: `Bearer ${adminToken}` }
+    });
+    expect(tenantBEntitlements.statusCode).toBe(200);
+    expect(tenantBEntitlements.json()).toMatchObject({
+      data: {
+        planCode: "starter",
+        limits: { maxCameras: 2, retentionDays: 1, maxConcurrentStreams: 1 }
+      }
+    });
+
+    const tenantCEntitlements = await app.inject({
+      method: "GET",
+      url: `/tenants/${tenantC!.tenantId}/entitlements`,
+      headers: { authorization: `Bearer ${adminToken}` }
+    });
+    expect(tenantCEntitlements.statusCode).toBe(200);
+    expect(tenantCEntitlements.json()).toMatchObject({
+      data: {
+        planCode: "basic",
+        limits: { maxCameras: 10, retentionDays: 7, maxConcurrentStreams: 2 }
+      }
+    });
+  });
+
+  it("blocks camera creation when maxCameras limit is reached", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const adminMe = await me(adminToken);
+    const tenantB = adminMe.memberships.find((m) => m.tenant.name === "Beta Logistics");
+    expect(tenantB).toBeTruthy();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/cameras",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantB!.tenantId
+      },
+      payload: {
+        name: `Overflow Cam ${Date.now()}`,
+        rtspUrl: "rtsp://demo/overflow",
+        isActive: true
+      }
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({
+      code: "ENTITLEMENT_LIMIT_EXCEEDED",
+      message: "Camera limit reached for active plan",
+      details: {
+        limit: "maxCameras",
+        maxAllowed: 2
+      }
+    });
+  });
+
+  it("blocks issuing a second concurrent stream beyond plan limit", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const adminMe = await me(adminToken);
+    const tenantB = adminMe.memberships.find((m) => m.tenant.name === "Beta Logistics");
+    expect(tenantB).toBeTruthy();
+
+    const tenantId = tenantB!.tenantId;
+    const sessionsResponse = await app.inject({
+      method: "GET",
+      url: "/stream-sessions",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+    expect(sessionsResponse.statusCode).toBe(200);
+    const sessions = sessionsResponse.json<{ data: Array<{ id: string; status: string }> }>().data;
+    for (const session of sessions.filter((entry) => ["requested", "issued", "active"].includes(entry.status))) {
+      const endResponse = await app.inject({
+        method: "POST",
+        url: `/stream-sessions/${session.id}/end`,
+        headers: {
+          authorization: `Bearer ${adminToken}`,
+          "x-tenant-id": tenantId
+        },
+        payload: { reason: "test cleanup" }
+      });
+      expect(endResponse.statusCode).toBe(200);
+    }
+
+    const camerasResponse = await app.inject({
+      method: "GET",
+      url: "/cameras",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+    expect(camerasResponse.statusCode).toBe(200);
+    const cameraId = camerasResponse.json<{ data: Array<{ id: string }> }>().data[0]?.id;
+    expect(cameraId).toBeTruthy();
+
+    const first = await app.inject({
+      method: "POST",
+      url: `/cameras/${cameraId}/stream-token`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {}
+    });
+    expect(first.statusCode).toBe(200);
+
+    const second = await app.inject({
+      method: "POST",
+      url: `/cameras/${cameraId}/stream-token`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {}
+    });
+    expect(second.statusCode).toBe(409);
+    expect(second.json()).toMatchObject({
+      code: "ENTITLEMENT_LIMIT_EXCEEDED",
+      message: "Concurrent stream limit reached for active plan",
+      details: {
+        limit: "maxConcurrentStreams",
+        maxAllowed: 1
+      }
+    });
+  });
+
+  it("enforces retentionDays in events queries", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const adminMe = await me(adminToken);
+    const tenantB = adminMe.memberships.find((m) => m.tenant.name === "Beta Logistics");
+    expect(tenantB).toBeTruthy();
+
+    const tooOldFrom = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString();
+    const response = await app.inject({
+      method: "GET",
+      url: `/events?from=${encodeURIComponent(tooOldFrom)}`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantB!.tenantId
+      }
+    });
+
+    expect(response.statusCode).toBe(422);
+    expect(response.json()).toMatchObject({
+      code: "ENTITLEMENT_RETENTION_EXCEEDED",
+      message: "Requested date range exceeds plan retention window",
+      details: {
+        limit: "retentionDays",
+        maxAllowedDays: 1
+      }
+    });
+  });
+});
+
 describe("NH-033 data-plane health sync", () => {
   it("returns 503 when stream gateway is not configured", async () => {
     const adminToken = await login("admin@nearhome.dev");
@@ -977,7 +1145,9 @@ describe("NH-016 audit logs", () => {
       headers: { authorization: `Bearer ${adminToken}` }
     });
     expect(plansResponse.statusCode).toBe(200);
-    const planId = plansResponse.json<{ data: Array<{ id: string }> }>().data[0]?.id;
+    const planId = plansResponse
+      .json<{ data: Array<{ id: string; code: string }> }>()
+      .data.find((plan) => plan.code === "pro")?.id;
     expect(planId).toBeTruthy();
 
     const subscriptionSet = await app.inject({

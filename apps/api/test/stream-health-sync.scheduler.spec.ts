@@ -13,6 +13,7 @@ const originalEnv = {
 
 type LoginResult = { accessToken: string };
 type MeResult = { memberships: Array<{ tenantId: string }> };
+type TenantListResult = { data: Array<{ id: string; name: string }> };
 
 async function login(email: string, password = "demo1234"): Promise<string> {
   const response = await app.inject({
@@ -104,15 +105,24 @@ afterAll(async () => {
 describe("stream health scheduler", () => {
   it("syncs active camera health automatically and updates lifecycle snapshot", async () => {
     const adminToken = await login("admin@nearhome.dev");
-    const adminMe = await me(adminToken);
-    const tenantId = adminMe.memberships[0].tenantId;
+    await me(adminToken);
+    const tenantsResponse = await app.inject({
+      method: "GET",
+      url: "/tenants",
+      headers: { authorization: `Bearer ${adminToken}` }
+    });
+    expect(tenantsResponse.statusCode).toBe(200);
+    const tenantId = tenantsResponse
+      .json<TenantListResult>()
+      .data.find((tenant) => tenant.name === "Acme Retail")?.id;
+    expect(tenantId).toBeTruthy();
 
     const created = await app.inject({
       method: "POST",
       url: "/cameras",
       headers: {
         authorization: `Bearer ${adminToken}`,
-        "x-tenant-id": tenantId
+        "x-tenant-id": tenantId!
       },
       payload: {
         name: `Scheduler Cam ${Date.now()}`,
@@ -129,7 +139,7 @@ describe("stream health scheduler", () => {
         url: `/cameras/${cameraId}/lifecycle`,
         headers: {
           authorization: `Bearer ${adminToken}`,
-          "x-tenant-id": tenantId
+          "x-tenant-id": tenantId!
         }
       });
       if (lifecycle.statusCode !== 200) return false;
@@ -141,6 +151,6 @@ describe("stream health scheduler", () => {
 
     const fetchMock = vi.mocked(global.fetch);
     expect(fetchMock).toHaveBeenCalled();
-    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes(`/health/${tenantId}/${cameraId}`))).toBe(true);
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes(`/health/${tenantId!}/${cameraId}`))).toBe(true);
   });
 });
