@@ -64,6 +64,20 @@ type ApiErrorBody = {
   details?: unknown;
 };
 
+class ApiDomainError extends Error {
+  statusCode: number;
+  apiCode: string;
+  details?: unknown;
+
+  constructor(args: { statusCode: number; apiCode: string; message: string; details?: unknown }) {
+    super(args.message);
+    this.name = "ApiDomainError";
+    this.statusCode = args.statusCode;
+    this.apiCode = args.apiCode;
+    this.details = args.details;
+  }
+}
+
 function statusToCode(statusCode: number) {
   if (statusCode === 400) return "BAD_REQUEST";
   if (statusCode === 401) return "UNAUTHORIZED";
@@ -97,24 +111,24 @@ const StreamPlaybackTokenSchema = z.object({
   v: z.literal(1)
 });
 
-function verifyToken(token: string, secret: string) {
+function verifyTokenDetailed(token: string, secret: string) {
   const [payloadBase64, signatureBase64] = token.split(".");
-  if (!payloadBase64 || !signatureBase64) return null;
+  if (!payloadBase64 || !signatureBase64) return { ok: false as const, reason: "format_invalid" as const };
 
   const expectedSignature = createHmac("sha256", secret).update(payloadBase64).digest("base64url");
   const expectedBytes = Buffer.from(expectedSignature, "utf8");
   const providedBytes = Buffer.from(signatureBase64, "utf8");
-  if (expectedBytes.length !== providedBytes.length) return null;
-  if (!timingSafeEqual(expectedBytes, providedBytes)) return null;
+  if (expectedBytes.length !== providedBytes.length) return { ok: false as const, reason: "signature_invalid" as const };
+  if (!timingSafeEqual(expectedBytes, providedBytes)) return { ok: false as const, reason: "signature_invalid" as const };
 
   try {
     const decodedPayload = JSON.parse(Buffer.from(payloadBase64, "base64url").toString("utf8"));
     const parsed = StreamPlaybackTokenSchema.safeParse(decodedPayload);
-    if (!parsed.success) return null;
-    if (parsed.data.exp <= Math.floor(Date.now() / 1000)) return null;
-    return parsed.data;
+    if (!parsed.success) return { ok: false as const, reason: "payload_invalid" as const };
+    if (parsed.data.exp <= Math.floor(Date.now() / 1000)) return { ok: false as const, reason: "token_expired" as const };
+    return { ok: true as const, payload: parsed.data };
   } catch {
-    return null;
+    return { ok: false as const, reason: "payload_invalid" as const };
   }
 }
 
@@ -305,6 +319,15 @@ export async function buildApp() {
       message: statusCode >= 500 ? "Internal server error" : "Request failed"
     };
 
+    if (error instanceof ApiDomainError) {
+      statusCode = error.statusCode;
+      body = {
+        code: error.apiCode,
+        message: error.message,
+        ...(error.details !== undefined ? { details: error.details } : {})
+      };
+    }
+
     if (error instanceof z.ZodError) {
       statusCode = 400;
       body = {
@@ -316,6 +339,128 @@ export async function buildApp() {
 
     reply.status(statusCode).send(body);
   });
+
+  function parseAndValidatePlaybackToken(args: { token?: string; tenantId: string; cameraId: string }) {
+    if (!args.token) {
+      throw new ApiDomainError({
+        statusCode: 401,
+        apiCode: "PLAYBACK_TOKEN_MISSING",
+        message: "Missing playback token"
+      });
+    }
+    const validation = verifyTokenDetailed(args.token, streamTokenSecret);
+    if (!validation.ok) {
+      const reasonMap: Record<string, { statusCode: number; code: string; message: string }> = {
+        format_invalid: {
+          statusCode: 401,
+          code: "PLAYBACK_TOKEN_FORMAT_INVALID",
+          message: "Playback token format is invalid"
+        },
+        signature_invalid: {
+          statusCode: 401,
+          code: "PLAYBACK_TOKEN_SIGNATURE_INVALID",
+          message: "Playback token signature is invalid"
+        },
+        payload_invalid: {
+          statusCode: 401,
+          code: "PLAYBACK_TOKEN_PAYLOAD_INVALID",
+          message: "Playback token payload is invalid"
+        },
+        token_expired: {
+          statusCode: 401,
+          code: "PLAYBACK_TOKEN_EXPIRED",
+          message: "Playback token has expired"
+        }
+      };
+      const mapped = reasonMap[validation.reason];
+      throw new ApiDomainError({
+        statusCode: mapped.statusCode,
+        apiCode: mapped.code,
+        message: mapped.message
+      });
+    }
+    const parsed = validation.payload;
+    if (parsed.cid !== args.cameraId || parsed.tid !== args.tenantId) {
+      throw new ApiDomainError({
+        statusCode: 403,
+        apiCode: "PLAYBACK_TOKEN_SCOPE_MISMATCH",
+        message: "Playback token scope does not match requested stream",
+        details: {
+          tokenTenantId: parsed.tid,
+          tokenCameraId: parsed.cid,
+          requestTenantId: args.tenantId,
+          requestCameraId: args.cameraId
+        }
+      });
+    }
+    return parsed;
+  }
+
+  function assertStreamReady(entry: StreamEntry | undefined, tenantId: string, cameraId: string) {
+    if (!entry) {
+      throw new ApiDomainError({
+        statusCode: 404,
+        apiCode: "PLAYBACK_STREAM_NOT_FOUND",
+        message: "Stream is not provisioned",
+        details: { tenantId, cameraId }
+      });
+    }
+    if (entry.status === "provisioning") {
+      throw new ApiDomainError({
+        statusCode: 409,
+        apiCode: "PLAYBACK_STREAM_NOT_READY",
+        message: "Stream is provisioning",
+        details: { tenantId, cameraId, status: entry.status }
+      });
+    }
+    if (entry.status === "stopped") {
+      throw new ApiDomainError({
+        statusCode: 410,
+        apiCode: "PLAYBACK_STREAM_STOPPED",
+        message: "Stream has been deprovisioned",
+        details: { tenantId, cameraId, status: entry.status }
+      });
+    }
+  }
+
+  function upsertActiveSession(args: {
+    tenantId: string;
+    cameraId: string;
+    sid: string;
+    sub: string;
+    exp: number;
+    iat: number;
+  }) {
+    const sessionKey = streamSessionKey(args.tenantId, args.cameraId, args.sid);
+    const existingSession = streamSessions.get(sessionKey);
+    if (existingSession?.status === "ended" || existingSession?.status === "expired") {
+      throw new ApiDomainError({
+        statusCode: 401,
+        apiCode: "PLAYBACK_SESSION_CLOSED",
+        message: "Playback session is no longer active",
+        details: {
+          sid: args.sid,
+          status: existingSession.status,
+          endReason: existingSession.endReason
+        }
+      });
+    }
+    const issuedAt = new Date(args.iat * 1000).toISOString();
+    const expiresAt = new Date(args.exp * 1000).toISOString();
+    streamSessions.set(sessionKey, {
+      tenantId: args.tenantId,
+      cameraId: args.cameraId,
+      sid: args.sid,
+      sub: args.sub,
+      status: "active",
+      issuedAt: existingSession?.issuedAt ?? issuedAt,
+      activatedAt: existingSession?.activatedAt ?? nowIso(),
+      endedAt: null,
+      expiresAt,
+      lastSeenAt: nowIso(),
+      endReason: null
+    });
+  }
 
   app.get("/health", async () => ({ ok: true, streams: streams.size, sessions: streamSessions.size, storageDir }));
 
@@ -472,48 +617,25 @@ export async function buildApp() {
   app.get("/playback/:tenantId/:cameraId/index.m3u8", async (request, reply) => {
     const { tenantId, cameraId } = request.params as { tenantId: string; cameraId: string };
     const query = request.query as { token?: string };
-
-    if (!query.token) {
-      reply.status(401);
-      return { code: "UNAUTHORIZED", message: "Missing playback token" };
-    }
-
-    const parsed = verifyToken(query.token, streamTokenSecret);
-    if (!parsed || parsed.cid !== cameraId || parsed.tid !== tenantId) {
-      reply.status(401);
-      return { code: "UNAUTHORIZED", message: "Invalid or expired playback token" };
-    }
+    const parsed = parseAndValidatePlaybackToken({ token: query.token, tenantId, cameraId });
 
     const key = streamKey(tenantId, cameraId);
     const entry = streams.get(key);
-    if (!entry || entry.status !== "ready") {
-      reply.status(404);
-      return { code: "NOT_FOUND", message: "Stream not provisioned" };
-    }
-    const sessionKey = streamSessionKey(tenantId, cameraId, parsed.sid);
-    const existingSession = streamSessions.get(sessionKey);
-    if (existingSession?.status === "ended" || existingSession?.status === "expired") {
-      reply.status(401);
-      return { code: "UNAUTHORIZED", message: "Stream session is no longer active" };
-    }
-    const issuedAt = new Date(parsed.iat * 1000).toISOString();
-    const expiresAt = new Date(parsed.exp * 1000).toISOString();
-    streamSessions.set(sessionKey, {
-      tenantId,
-      cameraId,
-      sid: parsed.sid,
-      sub: parsed.sub,
-      status: "active",
-      issuedAt: existingSession?.issuedAt ?? issuedAt,
-      activatedAt: existingSession?.activatedAt ?? nowIso(),
-      endedAt: null,
-      expiresAt,
-      lastSeenAt: nowIso(),
-      endReason: null
-    });
+    assertStreamReady(entry, tenantId, cameraId);
+    upsertActiveSession({ tenantId, cameraId, sid: parsed.sid, sub: parsed.sub, exp: parsed.exp, iat: parsed.iat });
 
-    const manifest = await readManifest(storageDir, tenantId, cameraId);
-    const tokenQuery = `?token=${encodeURIComponent(query.token)}`;
+    let manifest: string;
+    try {
+      manifest = await readManifest(storageDir, tenantId, cameraId);
+    } catch {
+      throw new ApiDomainError({
+        statusCode: 404,
+        apiCode: "PLAYBACK_MANIFEST_NOT_FOUND",
+        message: "Playback manifest is missing",
+        details: { tenantId, cameraId, path: `${tenantId}/${cameraId}/index.m3u8` }
+      });
+    }
+    const tokenQuery = `?token=${encodeURIComponent(query.token as string)}`;
     const patchedManifest = manifest.replace("segment0.ts", `/playback/${tenantId}/${cameraId}/segment0.ts${tokenQuery}`);
 
     reply.header("content-type", "application/vnd.apple.mpegurl");
@@ -523,47 +645,24 @@ export async function buildApp() {
   app.get("/playback/:tenantId/:cameraId/segment0.ts", async (request, reply) => {
     const { tenantId, cameraId } = request.params as { tenantId: string; cameraId: string };
     const query = request.query as { token?: string };
-
-    if (!query.token) {
-      reply.status(401);
-      return { code: "UNAUTHORIZED", message: "Missing playback token" };
-    }
-
-    const parsed = verifyToken(query.token, streamTokenSecret);
-    if (!parsed || parsed.cid !== cameraId || parsed.tid !== tenantId) {
-      reply.status(401);
-      return { code: "UNAUTHORIZED", message: "Invalid or expired playback token" };
-    }
+    const parsed = parseAndValidatePlaybackToken({ token: query.token, tenantId, cameraId });
 
     const key = streamKey(tenantId, cameraId);
     const entry = streams.get(key);
-    if (!entry || entry.status !== "ready") {
-      reply.status(404);
-      return { code: "NOT_FOUND", message: "Stream not provisioned" };
-    }
-    const sessionKey = streamSessionKey(tenantId, cameraId, parsed.sid);
-    const existingSession = streamSessions.get(sessionKey);
-    if (existingSession?.status === "ended" || existingSession?.status === "expired") {
-      reply.status(401);
-      return { code: "UNAUTHORIZED", message: "Stream session is no longer active" };
-    }
-    const issuedAt = new Date(parsed.iat * 1000).toISOString();
-    const expiresAt = new Date(parsed.exp * 1000).toISOString();
-    streamSessions.set(sessionKey, {
-      tenantId,
-      cameraId,
-      sid: parsed.sid,
-      sub: parsed.sub,
-      status: "active",
-      issuedAt: existingSession?.issuedAt ?? issuedAt,
-      activatedAt: existingSession?.activatedAt ?? nowIso(),
-      endedAt: null,
-      expiresAt,
-      lastSeenAt: nowIso(),
-      endReason: null
-    });
+    assertStreamReady(entry, tenantId, cameraId);
+    upsertActiveSession({ tenantId, cameraId, sid: parsed.sid, sub: parsed.sub, exp: parsed.exp, iat: parsed.iat });
 
-    const segment = await readSegment(storageDir, tenantId, cameraId);
+    let segment: Buffer;
+    try {
+      segment = await readSegment(storageDir, tenantId, cameraId);
+    } catch {
+      throw new ApiDomainError({
+        statusCode: 404,
+        apiCode: "PLAYBACK_SEGMENT_NOT_FOUND",
+        message: "Playback segment is missing",
+        details: { tenantId, cameraId, path: `${tenantId}/${cameraId}/segment0.ts` }
+      });
+    }
     reply.header("content-type", "video/MP2T");
     return reply.send(segment);
   });

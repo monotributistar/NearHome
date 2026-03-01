@@ -30,3 +30,18 @@ Servicio MVP para provisionar playback por cámara.
 - `GET /health/:tenantId/:cameraId` devuelve `status` y `health` para sincronización en control-plane.
 - Provisioning es idempotente por `tenantId+cameraId`; si la config no cambia, no reprovisiona.
 - Session manager interno trackea `sid` del token (`issued|active|ended|expired`) con TTL y sweep.
+
+## Errores playback (NH-DP-03)
+
+- `PLAYBACK_TOKEN_MISSING`
+- `PLAYBACK_TOKEN_FORMAT_INVALID`
+- `PLAYBACK_TOKEN_SIGNATURE_INVALID`
+- `PLAYBACK_TOKEN_PAYLOAD_INVALID`
+- `PLAYBACK_TOKEN_EXPIRED`
+- `PLAYBACK_TOKEN_SCOPE_MISMATCH`
+- `PLAYBACK_SESSION_CLOSED`
+- `PLAYBACK_STREAM_NOT_FOUND`
+- `PLAYBACK_STREAM_NOT_READY`
+- `PLAYBACK_STREAM_STOPPED`
+- `PLAYBACK_MANIFEST_NOT_FOUND`
+- `PLAYBACK_SEGMENT_NOT_FOUND`

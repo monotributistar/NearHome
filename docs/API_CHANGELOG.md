@@ -44,6 +44,11 @@
   - session manager por `sid` con estado `issued|active|ended|expired`.
   - nuevos endpoints `GET /sessions` y `POST /sessions/sweep`.
   - métricas agregadas: `nearhome_stream_sessions_total`, `nearhome_stream_session_sweeps_total`.
+- NH-DP-03: playback robusto con contrato de errores:
+  - validación detallada de token (missing/format/signature/payload/expired).
+  - validación de scope `tenantId/cameraId` con error explícito.
+  - errores diferenciados por estado de stream (`not_found`, `not_ready`, `stopped`).
+  - errores explícitos por sesión cerrada y assets faltantes (`manifest/segment`).
 - NH-028: ciclo de vida de sesiones de stream:
   - `GET /stream-sessions`
   - `GET /stream-sessions/:id`

@@ -70,6 +70,10 @@
    - Session manager por `sid` en data-plane con estados `issued|active|ended|expired`.
    - Sweep de TTL/idle configurable y endpoint de ejecución manual.
    - Métricas de sesiones expuestas en `GET /metrics`.
+15. Playback robusto (NH-DP-03):
+   - errores tipificados por causa de token, scope, estado de stream, estado de sesión y assets de playback.
+   - contrato de errores documentado en `docs/CONTROLPLANE_DATAPLANE_CONTRACT.md`.
+   - cobertura de tests de contrato de playback ampliada en data-plane.
 
 ## Cambios técnicos relevantes
 
@@ -134,6 +138,10 @@
   - nuevas métricas de sesiones.
 - `apps/stream-gateway/test/stream-gateway.spec.ts`:
   - cobertura NH-DP-01/NH-DP-02 (idempotencia, TTL, deprovision cierra sesiones).
+- `apps/stream-gateway/src/app.ts`:
+  - matriz de validaciones y errores robustos en endpoints de playback.
+- `apps/stream-gateway/test/stream-gateway.spec.ts`:
+  - casos NH-DP-03 para errores de token/scope/session/stream/assets.
 - `docs/CONTROLPLANE_DATAPLANE_CONTRACT.md`:
   - contrato actualizado de provision y session tracking.
 
@@ -169,6 +177,7 @@
 - `pnpm --filter @app/stream-gateway test`: `5 passed` (incluye métricas + token firmado + mismatch)
 - `pnpm --filter @app/stream-gateway test`: `7 passed` (incluye aislamiento + errores claros)
 - `pnpm --filter @app/stream-gateway test`: `10 passed` (incluye NH-DP-01/NH-DP-02)
+- `pnpm --filter @app/stream-gateway test`: `12 passed` (incluye NH-DP-03 playback robusto)
 - `pnpm test:e2e:admin`: `7 passed`
 - `pnpm test:e2e:portal`: `2 passed`
 

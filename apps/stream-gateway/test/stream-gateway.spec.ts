@@ -115,6 +115,9 @@ describe("stream-gateway", () => {
       url: `/playback/${tenantId}/${cameraId}/index.m3u8`
     });
     expect(missingTokenRes.statusCode).toBe(401);
+    expect(missingTokenRes.json()).toMatchObject({
+      code: "PLAYBACK_TOKEN_MISSING"
+    });
 
     const expiredToken = createPlaybackToken({ tenantId, cameraId, expiresAt: new Date(Date.now() - 60_000) });
     const expiredRes = await app.inject({
@@ -122,6 +125,9 @@ describe("stream-gateway", () => {
       url: `/playback/${tenantId}/${cameraId}/index.m3u8?token=${encodeURIComponent(expiredToken)}`
     });
     expect(expiredRes.statusCode).toBe(401);
+    expect(expiredRes.json()).toMatchObject({
+      code: "PLAYBACK_TOKEN_EXPIRED"
+    });
 
     await app.close();
   });
@@ -150,7 +156,10 @@ describe("stream-gateway", () => {
       method: "GET",
       url: `/playback/${tenantId}/${cameraId}/index.m3u8?token=${encodeURIComponent(token)}`
     });
-    expect(playbackRes.statusCode).toBe(404);
+    expect(playbackRes.statusCode).toBe(410);
+    expect(playbackRes.json()).toMatchObject({
+      code: "PLAYBACK_STREAM_STOPPED"
+    });
 
     await app.close();
   });
@@ -173,13 +182,28 @@ describe("stream-gateway", () => {
       url: `/playback/${tenantId}/${cameraId}/index.m3u8?token=${encodeURIComponent(tampered)}`
     });
     expect(tamperedRes.statusCode).toBe(401);
+    expect(tamperedRes.json()).toMatchObject({
+      code: "PLAYBACK_TOKEN_SIGNATURE_INVALID"
+    });
 
     const otherTenantToken = createPlaybackToken({ tenantId: "tenant-other", cameraId, expiresAt: new Date(Date.now() + 60_000) });
     const mismatchRes = await app.inject({
       method: "GET",
       url: `/playback/${tenantId}/${cameraId}/index.m3u8?token=${encodeURIComponent(otherTenantToken)}`
     });
-    expect(mismatchRes.statusCode).toBe(401);
+    expect(mismatchRes.statusCode).toBe(403);
+    expect(mismatchRes.json()).toMatchObject({
+      code: "PLAYBACK_TOKEN_SCOPE_MISMATCH"
+    });
+
+    const malformedRes = await app.inject({
+      method: "GET",
+      url: `/playback/${tenantId}/${cameraId}/index.m3u8?token=invalid-format`
+    });
+    expect(malformedRes.statusCode).toBe(401);
+    expect(malformedRes.json()).toMatchObject({
+      code: "PLAYBACK_TOKEN_FORMAT_INVALID"
+    });
 
     await app.close();
   });
@@ -246,7 +270,10 @@ describe("stream-gateway", () => {
       method: "GET",
       url: `/playback/tenant-one/${cameraId}/index.m3u8?token=${encodeURIComponent(tokenOne)}`
     });
-    expect(stoppedOne.statusCode).toBe(404);
+    expect(stoppedOne.statusCode).toBe(410);
+    expect(stoppedOne.json()).toMatchObject({
+      code: "PLAYBACK_STREAM_STOPPED"
+    });
 
     await app.close();
   });
@@ -472,6 +499,86 @@ describe("stream-gateway", () => {
     });
     expect(metrics.statusCode).toBe(200);
     expect(metrics.body).toContain("nearhome_stream_sessions_total{status=\"ended\"} 1");
+
+    await app.close();
+  });
+
+  it("rejects playback for a previously closed session even when stream is ready", async () => {
+    const { app } = await setupApp();
+    const tenantId = "tenant-session-ended";
+    const cameraId = "camera-session-ended";
+    const sid = "sid-ended-1";
+
+    await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: { tenantId, cameraId, rtspUrl: "rtsp://demo/session-ended" }
+    });
+
+    const token = createPlaybackToken({
+      tenantId,
+      cameraId,
+      sid,
+      expiresAt: new Date(Date.now() + 60_000)
+    });
+    const firstPlayback = await app.inject({
+      method: "GET",
+      url: `/playback/${tenantId}/${cameraId}/index.m3u8?token=${encodeURIComponent(token)}`
+    });
+    expect(firstPlayback.statusCode).toBe(200);
+
+    await new Promise((resolve) => setTimeout(resolve, 1_200));
+    await app.inject({ method: "POST", url: "/sessions/sweep" });
+
+    const secondPlayback = await app.inject({
+      method: "GET",
+      url: `/playback/${tenantId}/${cameraId}/index.m3u8?token=${encodeURIComponent(token)}`
+    });
+    expect(secondPlayback.statusCode).toBe(401);
+    expect(secondPlayback.json()).toMatchObject({
+      code: "PLAYBACK_SESSION_CLOSED"
+    });
+
+    await app.close();
+  });
+
+  it("returns clear errors when playback assets are missing", async () => {
+    const { app, dir } = await setupApp();
+    const tenantId = "tenant-missing-assets";
+    const cameraId = "camera-missing-assets";
+
+    await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: { tenantId, cameraId, rtspUrl: "rtsp://demo/missing-assets" }
+    });
+
+    const token = createPlaybackToken({
+      tenantId,
+      cameraId,
+      sid: "sid-assets",
+      expiresAt: new Date(Date.now() + 60_000)
+    });
+
+    await rm(path.join(dir, tenantId, cameraId, "segment0.ts"), { force: true });
+    const segmentRes = await app.inject({
+      method: "GET",
+      url: `/playback/${tenantId}/${cameraId}/segment0.ts?token=${encodeURIComponent(token)}`
+    });
+    expect(segmentRes.statusCode).toBe(404);
+    expect(segmentRes.json()).toMatchObject({
+      code: "PLAYBACK_SEGMENT_NOT_FOUND"
+    });
+
+    await rm(path.join(dir, tenantId, cameraId, "index.m3u8"), { force: true });
+    const manifestRes = await app.inject({
+      method: "GET",
+      url: `/playback/${tenantId}/${cameraId}/index.m3u8?token=${encodeURIComponent(token)}`
+    });
+    expect(manifestRes.statusCode).toBe(404);
+    expect(manifestRes.json()).toMatchObject({
+      code: "PLAYBACK_MANIFEST_NOT_FOUND"
+    });
 
     await app.close();
   });
