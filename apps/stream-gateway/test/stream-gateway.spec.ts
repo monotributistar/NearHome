@@ -193,4 +193,77 @@ describe("stream-gateway", () => {
 
     await app.close();
   });
+
+  it("isolates same cameraId across different tenants without collisions", async () => {
+    const { app } = await setupApp();
+    const cameraId = "shared-camera";
+
+    await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: { tenantId: "tenant-one", cameraId, rtspUrl: "rtsp://demo/tenant-one/shared-camera" }
+    });
+    await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: { tenantId: "tenant-two", cameraId, rtspUrl: "rtsp://demo/tenant-two/shared-camera" }
+    });
+
+    const healthOne = await app.inject({ method: "GET", url: "/health/tenant-one/shared-camera" });
+    const healthTwo = await app.inject({ method: "GET", url: "/health/tenant-two/shared-camera" });
+    expect(healthOne.statusCode).toBe(200);
+    expect(healthTwo.statusCode).toBe(200);
+    expect(healthOne.json<{ data: { rtspUrl: string } }>().data.rtspUrl).toContain("tenant-one");
+    expect(healthTwo.json<{ data: { rtspUrl: string } }>().data.rtspUrl).toContain("tenant-two");
+
+    await app.inject({
+      method: "POST",
+      url: "/deprovision",
+      payload: { tenantId: "tenant-one", cameraId }
+    });
+
+    const tokenTwo = createPlaybackToken({ tenantId: "tenant-two", cameraId, expiresAt: new Date(Date.now() + 60_000) });
+    const stillPlayableTwo = await app.inject({
+      method: "GET",
+      url: `/playback/tenant-two/${cameraId}/index.m3u8?token=${encodeURIComponent(tokenTwo)}`
+    });
+    expect(stillPlayableTwo.statusCode).toBe(200);
+
+    const tokenOne = createPlaybackToken({ tenantId: "tenant-one", cameraId, expiresAt: new Date(Date.now() + 60_000) });
+    const stoppedOne = await app.inject({
+      method: "GET",
+      url: `/playback/tenant-one/${cameraId}/index.m3u8?token=${encodeURIComponent(tokenOne)}`
+    });
+    expect(stoppedOne.statusCode).toBe(404);
+
+    await app.close();
+  });
+
+  it("returns clear validation and not-found error shapes", async () => {
+    const { app } = await setupApp();
+
+    const invalidProvision = await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: { tenantId: "", cameraId: "x", rtspUrl: "bad" }
+    });
+    expect(invalidProvision.statusCode).toBe(400);
+    expect(invalidProvision.json()).toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: "Validation failed",
+      details: expect.any(Object)
+    });
+
+    const notFoundRoute = await app.inject({
+      method: "GET",
+      url: "/missing-route"
+    });
+    expect(notFoundRoute.statusCode).toBe(404);
+    expect(notFoundRoute.json()).toMatchObject({
+      code: "NOT_FOUND",
+      message: "Route not found"
+    });
+
+    await app.close();
+  });
 });

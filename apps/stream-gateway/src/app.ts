@@ -31,6 +31,23 @@ type StreamEntry = {
   updatedAt: string;
 };
 
+type ApiErrorBody = {
+  code: string;
+  message: string;
+  details?: unknown;
+};
+
+function statusToCode(statusCode: number) {
+  if (statusCode === 400) return "BAD_REQUEST";
+  if (statusCode === 401) return "UNAUTHORIZED";
+  if (statusCode === 403) return "FORBIDDEN";
+  if (statusCode === 404) return "NOT_FOUND";
+  if (statusCode === 409) return "CONFLICT";
+  if (statusCode === 422) return "UNPROCESSABLE_ENTITY";
+  if (statusCode === 429) return "TOO_MANY_REQUESTS";
+  return "INTERNAL_SERVER_ERROR";
+}
+
 function streamKey(tenantId: string, cameraId: string) {
   return `${tenantId}:${cameraId}`;
 }
@@ -191,6 +208,33 @@ export async function buildApp() {
 
   app.addHook("onClose", async () => {
     stopProbeLoop();
+  });
+
+  app.setNotFoundHandler((_request, reply) => {
+    const body: ApiErrorBody = {
+      code: "NOT_FOUND",
+      message: "Route not found"
+    };
+    reply.status(404).send(body);
+  });
+
+  app.setErrorHandler((error, _request, reply) => {
+    let statusCode = (error as { statusCode?: number }).statusCode ?? 500;
+    let body: ApiErrorBody = {
+      code: statusToCode(statusCode),
+      message: statusCode >= 500 ? "Internal server error" : "Request failed"
+    };
+
+    if (error instanceof z.ZodError) {
+      statusCode = 400;
+      body = {
+        code: "VALIDATION_ERROR",
+        message: "Validation failed",
+        details: error.flatten()
+      };
+    }
+
+    reply.status(statusCode).send(body);
   });
 
   app.get("/health", async () => ({ ok: true, streams: streams.size, storageDir }));
