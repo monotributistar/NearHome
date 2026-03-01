@@ -10,7 +10,9 @@ Monorepo PNPM + Turborepo con:
 - `packages/api-client`: fetch client con auth + tenant header
 - `packages/ui`: componentes UI (daisyUI + primitive modal estilo shadcn)
 
-## Documentos de planificación
+## Documentación
+
+### Planificación y arquitectura
 
 - Plan general por etapas: `/Users/monotributistar/SOURCES/NearHome/docs/PLAN_GENERAL.md`
 - Contratos por componente/interfaz: `/Users/monotributistar/SOURCES/NearHome/docs/CONTRATOS_COMPONENTES.md`
@@ -20,6 +22,11 @@ Monorepo PNPM + Turborepo con:
 - Sprint actual: `/Users/monotributistar/SOURCES/NearHome/docs/SPRINT_01.md`
 - Orden de ejecución recomendado: `/Users/monotributistar/SOURCES/NearHome/docs/EXECUTION_ORDER.md`
 - Progreso + cambios + problemas por etapa: `/Users/monotributistar/SOURCES/NearHome/docs/PROGRESO.md`
+
+### Calidad y validación
+
+- Cobertura de casos E2E y alcance por suite: `/Users/monotributistar/SOURCES/NearHome/docs/E2E.md`
+- Inventario de pruebas y comandos: `/Users/monotributistar/SOURCES/NearHome/docs/TESTS.md`
 
 ## Requisitos
 
