@@ -156,6 +156,14 @@ Errores tipificados playback (NH-DP-03):
 - `404 PLAYBACK_MANIFEST_NOT_FOUND`
 - `404 PLAYBACK_SEGMENT_NOT_FOUND`
 
+Comportamiento de resiliencia (NH-DP-04):
+
+- lectura de `index.m3u8` y `segment0.ts` con retry/backoff exponencial para errores transitorios (`ENOENT`, `EAGAIN`, `EBUSY`)
+- configuración por env:
+  - `STREAM_PLAYBACK_READ_RETRIES`
+  - `STREAM_PLAYBACK_READ_RETRY_BASE_MS`
+  - `STREAM_PLAYBACK_READ_RETRY_MAX_MS`
+
 ### 5) Session tracking (Data Plane)
 
 - `GET /sessions`
@@ -190,6 +198,9 @@ Métricas actuales:
 - `nearhome_stream_connectivity_total{connectivity=...}`
 - `nearhome_stream_sessions_total{status=...}`
 - `nearhome_stream_session_sweeps_total`
+- `nearhome_playback_requests_total{tenant_id,camera_id,asset,result}`
+- `nearhome_playback_errors_total{tenant_id,camera_id,asset,code}`
+- `nearhome_playback_read_retries_total{tenant_id,camera_id,asset}`
 
 ## Variables de entorno relevantes
 
@@ -204,6 +215,9 @@ Data Plane:
 - `STREAM_PROBE_INTERVAL_MS`
 - `STREAM_SESSION_IDLE_TTL_MS`
 - `STREAM_SESSION_SWEEP_MS`
+- `STREAM_PLAYBACK_READ_RETRIES`
+- `STREAM_PLAYBACK_READ_RETRY_BASE_MS`
+- `STREAM_PLAYBACK_READ_RETRY_MAX_MS`
 
 ## Versionado sugerido
 

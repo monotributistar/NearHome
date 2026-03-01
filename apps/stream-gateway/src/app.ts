@@ -168,6 +168,10 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function randomIn(min: number, max: number) {
   return Math.round(min + Math.random() * (max - min));
 }
@@ -235,9 +239,39 @@ export async function buildApp() {
   const probeIntervalMs = Number(process.env.STREAM_PROBE_INTERVAL_MS ?? 5000);
   const sessionIdleTtlMs = Number(process.env.STREAM_SESSION_IDLE_TTL_MS ?? 60_000);
   const sessionSweepIntervalMs = Number(process.env.STREAM_SESSION_SWEEP_MS ?? 5_000);
+  const playbackReadRetries = Math.max(0, Number(process.env.STREAM_PLAYBACK_READ_RETRIES ?? 0));
+  const playbackReadRetryBaseMs = Math.max(0, Number(process.env.STREAM_PLAYBACK_READ_RETRY_BASE_MS ?? 25));
+  const playbackReadRetryMaxMs = Math.max(playbackReadRetryBaseMs, Number(process.env.STREAM_PLAYBACK_READ_RETRY_MAX_MS ?? 250));
   let probeTimer: NodeJS.Timeout | null = null;
   let sessionSweepTimer: NodeJS.Timeout | null = null;
   let sessionSweepCount = 0;
+  const playbackRequestCounters = new Map<string, number>();
+  const playbackErrorCounters = new Map<string, number>();
+  const playbackReadRetryCounters = new Map<string, number>();
+
+  const metricKey = (labels: Record<string, string>) =>
+    Object.entries(labels)
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([key, value]) => `${key}=${value}`)
+      .join("|");
+
+  const incCounter = (store: Map<string, number>, labels: Record<string, string>) => {
+    const key = metricKey(labels);
+    store.set(key, (store.get(key) ?? 0) + 1);
+  };
+
+  const formatMetricLines = (name: string, store: Map<string, number>) => {
+    return Array.from(store.entries())
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([key, value]) => {
+        const labels = key
+          .split("|")
+          .map((pair) => pair.split("="))
+          .map(([label, labelValue]) => `${label}="${labelValue.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`)
+          .join(",");
+        return `${name}{${labels}} ${value}`;
+      });
+  };
 
   const startProbeLoop = () => {
     if (probeTimer) return;
@@ -462,6 +496,69 @@ export async function buildApp() {
     });
   }
 
+  async function readWithRetry<T>(args: {
+    reader: () => Promise<T>;
+    tenantId: string;
+    cameraId: string;
+    asset: "manifest" | "segment";
+  }): Promise<T> {
+    let attempt = 0;
+    while (true) {
+      try {
+        return await args.reader();
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        const retryable = code === "ENOENT" || code === "EAGAIN" || code === "EBUSY";
+        if (!retryable || attempt >= playbackReadRetries) {
+          throw error;
+        }
+        attempt += 1;
+        incCounter(playbackReadRetryCounters, {
+          tenant_id: args.tenantId,
+          camera_id: args.cameraId,
+          asset: args.asset
+        });
+        const waitMs = Math.min(playbackReadRetryBaseMs * 2 ** (attempt - 1), playbackReadRetryMaxMs);
+        if (waitMs > 0) {
+          await sleep(waitMs);
+        }
+      }
+    }
+  }
+
+  async function withPlaybackMetrics<T>(args: {
+    tenantId: string;
+    cameraId: string;
+    asset: "manifest" | "segment";
+    handler: () => Promise<T>;
+  }): Promise<T> {
+    try {
+      const result = await args.handler();
+      incCounter(playbackRequestCounters, {
+        tenant_id: args.tenantId,
+        camera_id: args.cameraId,
+        asset: args.asset,
+        result: "ok"
+      });
+      return result;
+    } catch (error) {
+      incCounter(playbackRequestCounters, {
+        tenant_id: args.tenantId,
+        camera_id: args.cameraId,
+        asset: args.asset,
+        result: "error"
+      });
+      const code = error instanceof ApiDomainError ? error.apiCode : "INTERNAL_SERVER_ERROR";
+      incCounter(playbackErrorCounters, {
+        tenant_id: args.tenantId,
+        camera_id: args.cameraId,
+        asset: args.asset,
+        code
+      });
+      throw error;
+    }
+  }
+
   app.get("/health", async () => ({ ok: true, streams: streams.size, sessions: streamSessions.size, storageDir }));
 
   app.get("/metrics", async (_request, reply) => {
@@ -506,7 +603,16 @@ export async function buildApp() {
       `nearhome_stream_sessions_total{status=\"expired\"} ${sessionCounters.expired}`,
       "# HELP nearhome_stream_session_sweeps_total Number of session sweep cycles",
       "# TYPE nearhome_stream_session_sweeps_total counter",
-      `nearhome_stream_session_sweeps_total ${sessionSweepCount}`
+      `nearhome_stream_session_sweeps_total ${sessionSweepCount}`,
+      "# HELP nearhome_playback_requests_total Playback requests by tenant/camera/asset/result",
+      "# TYPE nearhome_playback_requests_total counter",
+      ...formatMetricLines("nearhome_playback_requests_total", playbackRequestCounters),
+      "# HELP nearhome_playback_errors_total Playback errors by tenant/camera/asset/code",
+      "# TYPE nearhome_playback_errors_total counter",
+      ...formatMetricLines("nearhome_playback_errors_total", playbackErrorCounters),
+      "# HELP nearhome_playback_read_retries_total Playback asset read retries by tenant/camera/asset",
+      "# TYPE nearhome_playback_read_retries_total counter",
+      ...formatMetricLines("nearhome_playback_read_retries_total", playbackReadRetryCounters)
     ];
     reply.header("content-type", "text/plain; version=0.0.4");
     return lines.join("\n");
@@ -617,54 +723,78 @@ export async function buildApp() {
   app.get("/playback/:tenantId/:cameraId/index.m3u8", async (request, reply) => {
     const { tenantId, cameraId } = request.params as { tenantId: string; cameraId: string };
     const query = request.query as { token?: string };
-    const parsed = parseAndValidatePlaybackToken({ token: query.token, tenantId, cameraId });
+    return withPlaybackMetrics({
+      tenantId,
+      cameraId,
+      asset: "manifest",
+      handler: async () => {
+        const parsed = parseAndValidatePlaybackToken({ token: query.token, tenantId, cameraId });
 
-    const key = streamKey(tenantId, cameraId);
-    const entry = streams.get(key);
-    assertStreamReady(entry, tenantId, cameraId);
-    upsertActiveSession({ tenantId, cameraId, sid: parsed.sid, sub: parsed.sub, exp: parsed.exp, iat: parsed.iat });
+        const key = streamKey(tenantId, cameraId);
+        const entry = streams.get(key);
+        assertStreamReady(entry, tenantId, cameraId);
+        upsertActiveSession({ tenantId, cameraId, sid: parsed.sid, sub: parsed.sub, exp: parsed.exp, iat: parsed.iat });
 
-    let manifest: string;
-    try {
-      manifest = await readManifest(storageDir, tenantId, cameraId);
-    } catch {
-      throw new ApiDomainError({
-        statusCode: 404,
-        apiCode: "PLAYBACK_MANIFEST_NOT_FOUND",
-        message: "Playback manifest is missing",
-        details: { tenantId, cameraId, path: `${tenantId}/${cameraId}/index.m3u8` }
-      });
-    }
-    const tokenQuery = `?token=${encodeURIComponent(query.token as string)}`;
-    const patchedManifest = manifest.replace("segment0.ts", `/playback/${tenantId}/${cameraId}/segment0.ts${tokenQuery}`);
+        let manifest: string;
+        try {
+          manifest = await readWithRetry({
+            reader: () => readManifest(storageDir, tenantId, cameraId),
+            tenantId,
+            cameraId,
+            asset: "manifest"
+          });
+        } catch {
+          throw new ApiDomainError({
+            statusCode: 404,
+            apiCode: "PLAYBACK_MANIFEST_NOT_FOUND",
+            message: "Playback manifest is missing",
+            details: { tenantId, cameraId, path: `${tenantId}/${cameraId}/index.m3u8` }
+          });
+        }
+        const tokenQuery = `?token=${encodeURIComponent(query.token as string)}`;
+        const patchedManifest = manifest.replace("segment0.ts", `/playback/${tenantId}/${cameraId}/segment0.ts${tokenQuery}`);
 
-    reply.header("content-type", "application/vnd.apple.mpegurl");
-    return patchedManifest;
+        reply.header("content-type", "application/vnd.apple.mpegurl");
+        return patchedManifest;
+      }
+    });
   });
 
   app.get("/playback/:tenantId/:cameraId/segment0.ts", async (request, reply) => {
     const { tenantId, cameraId } = request.params as { tenantId: string; cameraId: string };
     const query = request.query as { token?: string };
-    const parsed = parseAndValidatePlaybackToken({ token: query.token, tenantId, cameraId });
+    return withPlaybackMetrics({
+      tenantId,
+      cameraId,
+      asset: "segment",
+      handler: async () => {
+        const parsed = parseAndValidatePlaybackToken({ token: query.token, tenantId, cameraId });
 
-    const key = streamKey(tenantId, cameraId);
-    const entry = streams.get(key);
-    assertStreamReady(entry, tenantId, cameraId);
-    upsertActiveSession({ tenantId, cameraId, sid: parsed.sid, sub: parsed.sub, exp: parsed.exp, iat: parsed.iat });
+        const key = streamKey(tenantId, cameraId);
+        const entry = streams.get(key);
+        assertStreamReady(entry, tenantId, cameraId);
+        upsertActiveSession({ tenantId, cameraId, sid: parsed.sid, sub: parsed.sub, exp: parsed.exp, iat: parsed.iat });
 
-    let segment: Buffer;
-    try {
-      segment = await readSegment(storageDir, tenantId, cameraId);
-    } catch {
-      throw new ApiDomainError({
-        statusCode: 404,
-        apiCode: "PLAYBACK_SEGMENT_NOT_FOUND",
-        message: "Playback segment is missing",
-        details: { tenantId, cameraId, path: `${tenantId}/${cameraId}/segment0.ts` }
-      });
-    }
-    reply.header("content-type", "video/MP2T");
-    return reply.send(segment);
+        let segment: Buffer;
+        try {
+          segment = await readWithRetry({
+            reader: () => readSegment(storageDir, tenantId, cameraId),
+            tenantId,
+            cameraId,
+            asset: "segment"
+          });
+        } catch {
+          throw new ApiDomainError({
+            statusCode: 404,
+            apiCode: "PLAYBACK_SEGMENT_NOT_FOUND",
+            message: "Playback segment is missing",
+            details: { tenantId, cameraId, path: `${tenantId}/${cameraId}/segment0.ts` }
+          });
+        }
+        reply.header("content-type", "video/MP2T");
+        return reply.send(segment);
+      }
+    });
   });
 
   app.get("/sessions", async (request) => {

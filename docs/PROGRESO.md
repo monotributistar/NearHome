@@ -15,6 +15,7 @@
 - Etapa activa: contrato ControlPlane/DataPlane (NH-017) completada
 - Etapa activa: sync de salud desde data-plane (NH-033) completada
 - Etapa activa: scheduler automático de sync health (NH-034) completada
+- Etapa activa: resiliencia + observabilidad de playback (NH-DP-04) completada
 
 ## Progreso completado
 
@@ -74,6 +75,10 @@
    - errores tipificados por causa de token, scope, estado de stream, estado de sesión y assets de playback.
    - contrato de errores documentado en `docs/CONTROLPLANE_DATAPLANE_CONTRACT.md`.
    - cobertura de tests de contrato de playback ampliada en data-plane.
+16. Playback resiliente y observable (NH-DP-04):
+   - retry/backoff configurable para lectura de `index.m3u8` y `segment0.ts`.
+   - métricas por `tenant/camera/asset` para requests, errores y reintentos.
+   - tests TDD para fallback transitorio de assets y visibilidad de errores por tenant.
 
 ## Cambios técnicos relevantes
 
@@ -142,6 +147,11 @@
   - matriz de validaciones y errores robustos en endpoints de playback.
 - `apps/stream-gateway/test/stream-gateway.spec.ts`:
   - casos NH-DP-03 para errores de token/scope/session/stream/assets.
+- `apps/stream-gateway/src/app.ts`:
+  - lectura de assets con `retry/backoff` configurable (`STREAM_PLAYBACK_READ_*`).
+  - métricas nuevas: `nearhome_playback_requests_total`, `nearhome_playback_errors_total`, `nearhome_playback_read_retries_total`.
+- `apps/stream-gateway/test/stream-gateway.spec.ts`:
+  - casos NH-DP-04 para reintentos exitosos en miss transitorio y métricas por tenant/cámara.
 - `docs/CONTROLPLANE_DATAPLANE_CONTRACT.md`:
   - contrato actualizado de provision y session tracking.
 
@@ -178,11 +188,12 @@
 - `pnpm --filter @app/stream-gateway test`: `7 passed` (incluye aislamiento + errores claros)
 - `pnpm --filter @app/stream-gateway test`: `10 passed` (incluye NH-DP-01/NH-DP-02)
 - `pnpm --filter @app/stream-gateway test`: `12 passed` (incluye NH-DP-03 playback robusto)
+- `pnpm --filter @app/stream-gateway test`: `14 passed` (incluye NH-DP-04 retry/backoff + métricas playback)
 - `pnpm test:e2e:admin`: `7 passed`
 - `pnpm test:e2e:portal`: `2 passed`
 
 ## Próximo bloque recomendado
 
-1. NH-019: estrategia de migración a Postgres.
-2. NH-017: contrato ControlPlane->DataPlane.
-3. NH-018: stream-token firmado.
+1. NH-DP-05: adaptador de data-plane real (ingesta/transcode) preservando contratos HTTP actuales.
+2. NH-015: asignación de cámaras por `client_user` (subset real y enforcement integral).
+3. Endurecimiento e2e multi-tenant para concurrencia de playback (escenarios simultáneos por tenant).

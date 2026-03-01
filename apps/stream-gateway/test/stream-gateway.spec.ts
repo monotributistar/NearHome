@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createHmac } from "node:crypto";
@@ -48,6 +48,9 @@ afterEach(async () => {
   delete process.env.STREAM_TOKEN_SECRET;
   delete process.env.STREAM_SESSION_IDLE_TTL_MS;
   delete process.env.STREAM_SESSION_SWEEP_MS;
+  delete process.env.STREAM_PLAYBACK_READ_RETRIES;
+  delete process.env.STREAM_PLAYBACK_READ_RETRY_BASE_MS;
+  delete process.env.STREAM_PLAYBACK_READ_RETRY_MAX_MS;
   while (createdDirs.length) {
     const dir = createdDirs.pop();
     if (dir) {
@@ -579,6 +582,95 @@ describe("stream-gateway", () => {
     expect(manifestRes.json()).toMatchObject({
       code: "PLAYBACK_MANIFEST_NOT_FOUND"
     });
+
+    await app.close();
+  });
+
+  it("retries manifest read on transient miss and serves playback once asset appears", async () => {
+    process.env.STREAM_PLAYBACK_READ_RETRIES = "3";
+    process.env.STREAM_PLAYBACK_READ_RETRY_BASE_MS = "10";
+    const { app, dir } = await setupApp();
+    const tenantId = "tenant-retry";
+    const cameraId = "camera-retry";
+
+    await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: { tenantId, cameraId, rtspUrl: "rtsp://demo/retry" }
+    });
+
+    const token = createPlaybackToken({
+      tenantId,
+      cameraId,
+      sid: "sid-retry",
+      expiresAt: new Date(Date.now() + 60_000)
+    });
+
+    const manifestPath = path.join(dir, tenantId, cameraId, "index.m3u8");
+    await rm(manifestPath, { force: true });
+    setTimeout(async () => {
+      await writeFile(manifestPath, "#EXTM3U\n#EXT-X-ENDLIST", "utf8");
+    }, 5);
+
+    const manifestRes = await app.inject({
+      method: "GET",
+      url: `/playback/${tenantId}/${cameraId}/index.m3u8?token=${encodeURIComponent(token)}`
+    });
+    expect(manifestRes.statusCode).toBe(200);
+    expect(manifestRes.body).toContain("#EXTM3U");
+
+    const metricsRes = await app.inject({
+      method: "GET",
+      url: "/metrics"
+    });
+    expect(metricsRes.statusCode).toBe(200);
+    expect(metricsRes.body).toContain(
+      `nearhome_playback_read_retries_total{asset=\"manifest\",camera_id=\"${cameraId}\",tenant_id=\"${tenantId}\"} 1`
+    );
+
+    await app.close();
+  });
+
+  it("exposes per-tenant playback error metrics", async () => {
+    const { app } = await setupApp();
+    const tenantId = "tenant-playback-metrics";
+    const cameraId = "camera-playback-metrics";
+
+    await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: { tenantId, cameraId, rtspUrl: "rtsp://demo/playback-metrics" }
+    });
+
+    const missingToken = await app.inject({
+      method: "GET",
+      url: `/playback/${tenantId}/${cameraId}/index.m3u8`
+    });
+    expect(missingToken.statusCode).toBe(401);
+
+    const malformed = await app.inject({
+      method: "GET",
+      url: `/playback/${tenantId}/${cameraId}/segment0.ts?token=invalid-format`
+    });
+    expect(malformed.statusCode).toBe(401);
+
+    const metricsRes = await app.inject({
+      method: "GET",
+      url: "/metrics"
+    });
+    expect(metricsRes.statusCode).toBe(200);
+    expect(metricsRes.body).toContain(
+      `nearhome_playback_requests_total{asset=\"manifest\",camera_id=\"${cameraId}\",result=\"error\",tenant_id=\"${tenantId}\"} 1`
+    );
+    expect(metricsRes.body).toContain(
+      `nearhome_playback_requests_total{asset=\"segment\",camera_id=\"${cameraId}\",result=\"error\",tenant_id=\"${tenantId}\"} 1`
+    );
+    expect(metricsRes.body).toContain(
+      `nearhome_playback_errors_total{asset=\"manifest\",camera_id=\"${cameraId}\",code=\"PLAYBACK_TOKEN_MISSING\",tenant_id=\"${tenantId}\"} 1`
+    );
+    expect(metricsRes.body).toContain(
+      `nearhome_playback_errors_total{asset=\"segment\",camera_id=\"${cameraId}\",code=\"PLAYBACK_TOKEN_FORMAT_INVALID\",tenant_id=\"${tenantId}\"} 1`
+    );
 
     await app.close();
   });

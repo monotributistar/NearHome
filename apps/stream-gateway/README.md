@@ -21,6 +21,9 @@ Servicio MVP para provisionar playback por cámara.
 - `STREAM_PROBE_INTERVAL_MS`
 - `STREAM_SESSION_IDLE_TTL_MS`
 - `STREAM_SESSION_SWEEP_MS`
+- `STREAM_PLAYBACK_READ_RETRIES`
+- `STREAM_PLAYBACK_READ_RETRY_BASE_MS`
+- `STREAM_PLAYBACK_READ_RETRY_MAX_MS`
 
 ## Notas
 
@@ -45,3 +48,9 @@ Servicio MVP para provisionar playback por cámara.
 - `PLAYBACK_STREAM_STOPPED`
 - `PLAYBACK_MANIFEST_NOT_FOUND`
 - `PLAYBACK_SEGMENT_NOT_FOUND`
+
+## Observabilidad playback (NH-DP-04)
+
+- `nearhome_playback_requests_total{tenant_id,camera_id,asset,result}`
+- `nearhome_playback_errors_total{tenant_id,camera_id,asset,code}`
+- `nearhome_playback_read_retries_total{tenant_id,camera_id,asset}`

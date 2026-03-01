@@ -49,6 +49,10 @@
   - validación de scope `tenantId/cameraId` con error explícito.
   - errores diferenciados por estado de stream (`not_found`, `not_ready`, `stopped`).
   - errores explícitos por sesión cerrada y assets faltantes (`manifest/segment`).
+- NH-DP-04: resiliencia y observabilidad de playback:
+  - retry/backoff configurable para lectura de assets (`index.m3u8`, `segment0.ts`) ante fallos transitorios.
+  - métricas de playback por `tenant/camera/asset/result`.
+  - métricas de errores de playback por `code` y de reintentos de lectura.
 - NH-028: ciclo de vida de sesiones de stream:
   - `GET /stream-sessions`
   - `GET /stream-sessions/:id`

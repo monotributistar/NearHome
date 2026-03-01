@@ -54,7 +54,25 @@ Cobertura incluida:
   - `GET /readiness` devuelve `200` con `db=up`
   - devuelve `503` en modo de falla forzada (`READINESS_FORCE_FAIL=1`)
 
+## Data-plane integration tests
+
+Archivo: `apps/stream-gateway/test/stream-gateway.spec.ts`
+
+Cobertura incluida:
+
+- NH-DP-01/NH-DP-02
+  - idempotencia de `POST /provision` y versionado por cámara
+  - aislamiento multi-tenant para `tenantId+cameraId`
+  - lifecycle de sesiones playback (`active|ended|expired`) y sweep
+- NH-DP-03 playback robusto
+  - errores tipificados por token/scope/sesión/estado stream/assets
+  - stream deprovisioned devuelve `410 PLAYBACK_STREAM_STOPPED`
+- NH-DP-04 resiliencia/observabilidad playback
+  - retries con backoff ante miss transitorio de manifest
+  - métricas por tenant/cámara para requests, errores y reintentos
+
 ## Ejecutar
 
 1. `pnpm db:reset`
 2. `pnpm --filter @app/api test`
+3. `pnpm --filter @app/stream-gateway test`
