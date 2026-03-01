@@ -102,3 +102,4 @@ pnpm dev
 POC funcional orientado a control-plane + data-plane MVP de playback tokenizado. Streaming productivo de baja latencia y pipeline de detección real quedan para la siguiente etapa.
 
 Nota: `STREAM_TOKEN_SECRET` debe coincidir entre `apps/api` y `apps/stream-gateway` para validar playback.
+Nota: el sync automático de health en API se controla con `STREAM_HEALTH_SYNC_ENABLED`, `STREAM_HEALTH_SYNC_INTERVAL_MS` y `STREAM_HEALTH_SYNC_BATCH_SIZE`.

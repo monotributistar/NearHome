@@ -30,6 +30,9 @@
 - NH-033: sincronización de salud de cámara desde data-plane:
   - `POST /cameras/:id/sync-health` (tenant_admin).
   - aplica update de `CameraHealthSnapshot` + lifecycle basado en health remoto.
+- NH-034: scheduler automático de sync-health:
+  - loop configurable por env en control-plane para cámaras activas.
+  - tolerancia a fallos por cámara (no interrumpe sync global).
 - NH-028: ciclo de vida de sesiones de stream:
   - `GET /stream-sessions`
   - `GET /stream-sessions/:id`

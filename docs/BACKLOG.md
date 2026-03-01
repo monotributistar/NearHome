@@ -246,6 +246,17 @@
 - Aceptación:
   - Tabla audit poblada y endpoint mínimo de consulta admin.
 
+### NH-034 (P1) - Scheduler automático de sync health (TDD)
+
+- Estado: `done`
+- Scope:
+  - Ejecutar `sync-health` en loop automático para cámaras activas.
+  - Configuración por env de `enabled`, `interval`, `batch`.
+  - Reutilizar la misma lógica de sync manual para evitar divergencia.
+- Aceptación:
+  - Test de integración verifica actualización automática de lifecycle + snapshot.
+  - Errores por cámara no detienen el loop completo.
+
 ## P2 - Escalado y producción
 
 ### NH-017 (P2) - Contrato ControlPlane->DataPlane

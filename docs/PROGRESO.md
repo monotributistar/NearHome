@@ -2,7 +2,7 @@
 
 ## Corte actual
 
-- Fecha de corte: `2026-02-27`
+- Fecha de corte: `2026-03-01`
 - Etapa activa: lifecycle de cámara + validación funcional (API/E2E)
 - Etapa activa: stream sessions + tracking operativo (NH-028) completada
 - Etapa activa: observabilidad base (NH-011) completada
@@ -14,6 +14,7 @@
 - Etapa activa: métricas base de data-plane (NH-032) completada
 - Etapa activa: contrato ControlPlane/DataPlane (NH-017) completada
 - Etapa activa: sync de salud desde data-plane (NH-033) completada
+- Etapa activa: scheduler automático de sync health (NH-034) completada
 
 ## Progreso completado
 
@@ -55,6 +56,10 @@
    - Documento técnico de contrato ControlPlane/DataPlane en `docs/CONTROLPLANE_DATAPLANE_CONTRACT.md`.
    - Endpoint `POST /cameras/:id/sync-health` para sincronizar salud desde data-plane.
    - Worker de probes mock en `stream-gateway` para estados `online|degraded|offline`.
+12. Scheduler de sync health (TDD):
+   - Loop automático configurable por env para cámaras activas.
+   - Reutiliza la misma lógica de `sync-health` manual.
+   - Test de integración validando actualización automática de snapshot + lifecycle.
 
 ## Cambios técnicos relevantes
 
@@ -99,6 +104,10 @@
   - Loop de probes mock por stream y health enriquecido por cámara.
 - `apps/api/src/app.ts`:
   - Endpoint `/cameras/:id/sync-health` para sincronización con data-plane.
+- `apps/api/src/app.ts`:
+  - Scheduler de sync health con `STREAM_HEALTH_SYNC_*`.
+- `apps/api/test/stream-health-sync.scheduler.spec.ts`:
+  - Test de integración del loop automático.
 
 ## Problemas encontrados y resolución
 
@@ -123,8 +132,10 @@
 - `pnpm --filter @app/api test`: `27 passed`
 - `pnpm --filter @app/api test`: `29 passed`
 - `pnpm --filter @app/api test`: `30 passed`
+- `pnpm --filter @app/api test`: `32 passed`
 - `pnpm --filter @app/stream-gateway test`: `5 passed`
 - `pnpm --filter @app/stream-gateway test`: `5 passed` (incluye métricas + token firmado + mismatch)
+- `pnpm --filter @app/stream-gateway test`: `7 passed` (incluye aislamiento + errores claros)
 - `pnpm test:e2e:admin`: `7 passed`
 - `pnpm test:e2e:portal`: `2 passed`
 
