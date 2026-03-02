@@ -135,6 +135,7 @@ Extensión NH-DP-07:
 
 - `GET /playback/:tenantId/:cameraId/index.m3u8?token=...`
 - `GET /playback/:tenantId/:cameraId/segment0.ts?token=...`
+- `GET /playback/:tenantId/:cameraId/segments/:segmentName?token=...`
 
 Token esperado:
 
@@ -178,6 +179,11 @@ Comportamiento de resiliencia (NH-DP-04):
   - `STREAM_PLAYBACK_READ_RETRIES`
   - `STREAM_PLAYBACK_READ_RETRY_BASE_MS`
   - `STREAM_PLAYBACK_READ_RETRY_MAX_MS`
+
+Extensión NH-DP-08A:
+
+- `index.m3u8` se reescribe para servir segmentos por ruta tokenizada dinámica (`/segments/:segmentName`).
+- se mantiene compatibilidad con `segment0.ts` para flujos legacy/mock.
 
 ### 5) Session tracking (Data Plane)
 

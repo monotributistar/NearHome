@@ -3,10 +3,12 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createHmac } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { buildApp } from "../src/app.js";
 import type { MediaEngine } from "../src/media-engine.js";
 
 const createdDirs: string[] = [];
+const hasFfmpeg = spawnSync("ffmpeg", ["-version"], { stdio: "ignore" }).status === 0;
 
 const STREAM_TOKEN_SECRET = "test-stream-secret";
 
@@ -62,6 +64,7 @@ afterEach(async () => {
   delete process.env.STREAM_TRANSCODER_RESTART_MAX;
   delete process.env.STREAM_TRANSCODER_RESTART_BACKOFF_MS;
   delete process.env.STREAM_TRANSCODER_RESTART_BACKOFF_MAX_MS;
+  delete process.env.STREAM_PROCESS_SEED_ASSETS;
   while (createdDirs.length) {
     const dir = createdDirs.pop();
     if (dir) {
@@ -100,7 +103,7 @@ describe("stream-gateway", () => {
     expect(manifestRes.headers["content-type"]).toContain("application/vnd.apple.mpegurl");
     const manifest = manifestRes.body;
     expect(manifest).toContain(`#EXTM3U`);
-    expect(manifest).toContain(`/playback/${tenantId}/${cameraId}/segment0.ts?token=`);
+    expect(manifest).toContain(`/playback/${tenantId}/${cameraId}/segments/segment0.ts?token=`);
 
     const segmentRes = await app.inject({
       method: "GET",
@@ -746,7 +749,7 @@ describe("stream-gateway", () => {
       url: `/playback/${tenantId}/${cameraId}/index.m3u8?token=${encodeURIComponent(token)}`
     });
     expect(manifestRes.statusCode).toBe(200);
-    expect(manifestRes.body).toContain(`/playback/${tenantId}/${cameraId}/segment0.ts?token=`);
+    expect(manifestRes.body).toContain(`/playback/${tenantId}/${cameraId}/segments/segment0.ts?token=`);
 
     const segmentRes = await app.inject({
       method: "GET",
@@ -909,6 +912,54 @@ describe("stream-gateway", () => {
     const metrics = await app.inject({ method: "GET", url: "/metrics" });
     expect(metrics.statusCode).toBe(200);
     expect(metrics.body).toContain("nearhome_media_worker_restarts_total");
+
+    await app.close();
+  });
+
+  it.skipIf(!hasFfmpeg)("serves playback from ffmpeg preset using lavfi source without mock seed assets", async () => {
+    process.env.STREAM_MEDIA_ENGINE = "process";
+    process.env.STREAM_TRANSCODER_PRESET = "ffmpeg-hls";
+    process.env.STREAM_PROCESS_SEED_ASSETS = "0";
+    process.env.STREAM_TRANSCODER_RESTART_MAX = "0";
+    process.env.STREAM_PLAYBACK_READ_RETRIES = "12";
+    process.env.STREAM_PLAYBACK_READ_RETRY_BASE_MS = "100";
+    const { app } = await setupApp();
+    const tenantId = "tenant-ffmpeg-real";
+    const cameraId = "camera-ffmpeg-real";
+
+    const provision = await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: { tenantId, cameraId, rtspUrl: "lavfi:testsrc=size=320x240:rate=10,format=yuv420p" }
+    });
+    expect(provision.statusCode).toBe(200);
+
+    const token = createPlaybackToken({
+      tenantId,
+      cameraId,
+      sid: "sid-ffmpeg-real",
+      expiresAt: new Date(Date.now() + 60_000)
+    });
+
+    const manifest = await app.inject({
+      method: "GET",
+      url: `/playback/${tenantId}/${cameraId}/index.m3u8?token=${encodeURIComponent(token)}`
+    });
+    expect(manifest.statusCode).toBe(200);
+    expect(manifest.body).toContain("#EXTM3U");
+    expect(manifest.body).toContain("#EXTINF");
+
+    const segmentPath = manifest.body
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line.startsWith(`/playback/${tenantId}/${cameraId}/segments/`));
+    expect(segmentPath).toBeTruthy();
+    const segment = await app.inject({
+      method: "GET",
+      url: segmentPath as string
+    });
+    expect(segment.statusCode).toBe(200);
+    expect(segment.body.length).toBeGreaterThan(400);
 
     await app.close();
   });

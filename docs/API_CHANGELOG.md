@@ -65,6 +65,10 @@
   - restart automático de workers con backoff exponencial y límite configurable.
   - preset `ffmpeg-hls` para comando de transcode.
   - métricas nuevas: `nearhome_media_workers_total`, `nearhome_media_worker_restarts_total`.
+- NH-DP-08A: compatibilidad de playback HLS con segmentos dinámicos:
+  - endpoint `GET /playback/:tenantId/:cameraId/segments/:segmentName?token=...`.
+  - reescritura de `index.m3u8` para assets tokenizados por segmento.
+  - smoke test de playback real con ffmpeg (`lavfi`) sin cambiar contrato HTTP.
 - NH-028: ciclo de vida de sesiones de stream:
   - `GET /stream-sessions`
   - `GET /stream-sessions/:id`

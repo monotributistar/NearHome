@@ -2,7 +2,7 @@
 
 ## Corte actual
 
-- Fecha de corte: `2026-03-01`
+- Fecha de corte: `2026-03-02`
 - Etapa activa: lifecycle de cámara + validación funcional (API/E2E)
 - Etapa activa: stream sessions + tracking operativo (NH-028) completada
 - Etapa activa: observabilidad base (NH-011) completada
@@ -19,6 +19,7 @@
 - Etapa activa: adapter de media desacoplado (NH-DP-05) completada
 - Etapa activa: process-engine de data-plane (NH-DP-06) completada
 - Etapa activa: supervisor de workers process-engine (NH-DP-07) completada
+- Etapa activa: playback HLS con segmentos dinámicos + smoke ffmpeg (NH-DP-08A) completada
 
 ## Progreso completado
 
@@ -94,6 +95,10 @@
    - restart/backoff exponencial para workers con salida por error.
    - preset `ffmpeg-hls` para comando de transcode estandarizado.
    - métricas operativas de workers y restarts.
+20. Playback HLS dinámico + smoke real (NH-DP-08A):
+   - endpoint dinámico `/playback/:tenantId/:cameraId/segments/:segmentName`.
+   - reescritura de `index.m3u8` para asset URLs tokenizadas por segmento.
+   - smoke test con ffmpeg real (`lavfi`) para validar fetch de manifiesto + segmento dinámico.
 
 ## Cambios técnicos relevantes
 
@@ -185,6 +190,14 @@
   - métricas de worker engine (`nearhome_media_workers_total`, `nearhome_media_worker_restarts_total`).
 - `apps/stream-gateway/test/stream-gateway.spec.ts`:
   - tests NH-DP-07 para preset ffmpeg y restart/backoff de worker.
+- `apps/stream-gateway/src/app.ts`:
+  - soporte de playback para rutas de segmento dinámico (`/segments/:segmentName`).
+  - reescritura de manifiesto hacia URLs tokenizadas por segmento.
+- `apps/stream-gateway/src/media-engine.ts`:
+  - `readSegment(scope, segmentName?)` para leer segmento dinámico.
+  - preset `ffmpeg-hls` compatible con input sintético `lavfi` en smoke tests.
+- `apps/stream-gateway/test/stream-gateway.spec.ts`:
+  - smoke NH-DP-08A con ffmpeg real (si está disponible).
 - `docs/CONTROLPLANE_DATAPLANE_CONTRACT.md`:
   - contrato actualizado de provision y session tracking.
 
@@ -225,11 +238,12 @@
 - `pnpm --filter @app/stream-gateway test`: `15 passed` (incluye NH-DP-05 adapter de media)
 - `pnpm --filter @app/stream-gateway test`: `16 passed` (incluye NH-DP-06 process engine)
 - `pnpm --filter @app/stream-gateway test`: `18 passed` (incluye NH-DP-07 supervisor process-engine)
+- `pnpm --filter @app/stream-gateway test`: `19 passed` (incluye NH-DP-08A segmentos dinámicos + smoke ffmpeg)
 - `pnpm test:e2e:admin`: `7 passed`
 - `pnpm test:e2e:portal`: `2 passed`
 
 ## Próximo bloque recomendado
 
-1. NH-DP-08: validar pipeline real de video end-to-end (ffmpeg/gstreamer + RTSP de prueba).
+1. NH-DP-08B: validar pipeline real de video end-to-end con RTSP real persistente y QoS.
 2. NH-015: asignación de cámaras por `client_user` (subset real y enforcement integral).
 3. Endurecimiento e2e multi-tenant para concurrencia de playback (escenarios simultáneos por tenant).

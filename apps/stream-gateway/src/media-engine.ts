@@ -18,7 +18,7 @@ export type MediaEngine = {
   provisionStream(input: StreamMediaInput): Promise<void>;
   deprovisionStream(scope: StreamMediaScope): Promise<void>;
   readManifest(scope: StreamMediaScope): Promise<string>;
-  readSegment(scope: StreamMediaScope): Promise<Buffer>;
+  readSegment(scope: StreamMediaScope, segmentName?: string): Promise<Buffer>;
   close(): Promise<void>;
   diagnostics?: () => {
     workers?: {
@@ -71,13 +71,17 @@ async function ensurePlaybackAssets(storageDir: string, scope: StreamMediaScope)
   await fs.writeFile(playlistPath, manifest, "utf8");
 }
 
+async function ensureCameraStorageDir(storageDir: string, scope: StreamMediaScope) {
+  await fs.mkdir(cameraDir(storageDir, scope.tenantId, scope.cameraId), { recursive: true });
+}
+
 async function readManifestFile(storageDir: string, scope: StreamMediaScope) {
   const playlistPath = path.join(cameraDir(storageDir, scope.tenantId, scope.cameraId), "index.m3u8");
   return fs.readFile(playlistPath, "utf8");
 }
 
-async function readSegmentFile(storageDir: string, scope: StreamMediaScope) {
-  const segmentPath = path.join(cameraDir(storageDir, scope.tenantId, scope.cameraId), "segment0.ts");
+async function readSegmentFile(storageDir: string, scope: StreamMediaScope, segmentName = "segment0.ts") {
+  const segmentPath = path.join(cameraDir(storageDir, scope.tenantId, scope.cameraId), segmentName);
   return fs.readFile(segmentPath);
 }
 
@@ -95,7 +99,7 @@ export function createMockMediaEngine(storageDir: string): MediaEngine {
     provisionStream,
     deprovisionStream,
     readManifest: (scope) => readManifestFile(storageDir, scope),
-    readSegment: (scope) => readSegmentFile(storageDir, scope),
+    readSegment: (scope, segmentName) => readSegmentFile(storageDir, scope, segmentName),
     close: async () => {}
   };
 }
@@ -146,15 +150,16 @@ function buildFfmpegHlsCommand(input: StreamMediaInput, storageDir: string) {
   const outDir = cameraDir(storageDir, input.tenantId, input.cameraId);
   const playlist = path.join(outDir, "index.m3u8");
   const segmentPattern = path.join(outDir, "segment%d.ts");
+  const isLavfi = input.rtspUrl.startsWith("lavfi:");
+  const inputArgs = isLavfi ? ["-f", "lavfi", "-i", `"${input.rtspUrl.slice("lavfi:".length)}"`] : ["-rtsp_transport", "tcp", "-i", `"${input.rtspUrl}"`];
+  const videoArgs = isLavfi
+    ? ["-c:v", "mpeg2video", "-q:v", "4", "-pix_fmt", "yuv420p"]
+    : ["-c:v", "copy"];
   return [
     "ffmpeg",
-    "-rtsp_transport",
-    "tcp",
-    "-i",
-    `"${input.rtspUrl}"`,
+    ...inputArgs,
     "-an",
-    "-c:v",
-    "copy",
+    ...videoArgs,
     "-f",
     "hls",
     "-hls_time",
@@ -183,6 +188,9 @@ export function createProcessMediaEngine(storageDir: string): MediaEngine {
   const startTimeoutMs = Math.max(100, Number(process.env.STREAM_TRANSCODER_START_TIMEOUT_MS ?? 1000));
   const stopTimeoutMs = Math.max(100, Number(process.env.STREAM_TRANSCODER_STOP_TIMEOUT_MS ?? 800));
   const dryRun = process.env.STREAM_TRANSCODER_DRY_RUN === "1";
+  const preset = process.env.STREAM_TRANSCODER_PRESET ?? "custom";
+  const seedAssetsByDefault = preset === "ffmpeg-hls" ? "0" : "1";
+  const seedAssets = (process.env.STREAM_PROCESS_SEED_ASSETS ?? seedAssetsByDefault) !== "0";
   const maxRestarts = Math.max(0, Number(process.env.STREAM_TRANSCODER_RESTART_MAX ?? 3));
   const restartBackoffMs = Math.max(0, Number(process.env.STREAM_TRANSCODER_RESTART_BACKOFF_MS ?? 200));
   const restartBackoffMaxMs = Math.max(restartBackoffMs, Number(process.env.STREAM_TRANSCODER_RESTART_BACKOFF_MAX_MS ?? 3000));
@@ -251,8 +259,13 @@ export function createProcessMediaEngine(storageDir: string): MediaEngine {
   };
 
   const provisionStream = async (input: StreamMediaInput) => {
-    await ensurePlaybackAssets(storageDir, { tenantId: input.tenantId, cameraId: input.cameraId });
-    const key = streamKey({ tenantId: input.tenantId, cameraId: input.cameraId });
+    const scope = { tenantId: input.tenantId, cameraId: input.cameraId };
+    if (seedAssets) {
+      await ensurePlaybackAssets(storageDir, scope);
+    } else {
+      await ensureCameraStorageDir(storageDir, scope);
+    }
+    const key = streamKey(scope);
     const existing = workers.get(key);
     if (existing) {
       existing.desiredRunning = false;
@@ -348,7 +361,7 @@ export function createProcessMediaEngine(storageDir: string): MediaEngine {
     provisionStream,
     deprovisionStream,
     readManifest: (scope) => readManifestFile(storageDir, scope),
-    readSegment: (scope) => readSegmentFile(storageDir, scope),
+    readSegment: (scope, segmentName) => readSegmentFile(storageDir, scope, segmentName),
     close,
     diagnostics
   };

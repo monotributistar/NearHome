@@ -78,6 +78,9 @@ Cobertura incluida:
 - NH-DP-07 process supervisor
   - preset `ffmpeg-hls` en modo `dry-run` para validar comando de transcode
   - restart/backoff automático de worker con límite y observabilidad de reinicios
+- NH-DP-08A playback real compatible con HLS dinámico
+  - smoke test con ffmpeg real (si está disponible) usando source `lavfi`
+  - validación de manifiesto reescrito y fetch de segmento dinámico en `/segments/:segmentName`
 
 ## Ejecutar
 

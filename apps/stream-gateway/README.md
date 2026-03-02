@@ -11,6 +11,7 @@ Servicio MVP para provisionar playback por cámara.
 - `GET /metrics` (formato Prometheus)
 - `GET /playback/:tenantId/:cameraId/index.m3u8?token=`
 - `GET /playback/:tenantId/:cameraId/segment0.ts?token=`
+- `GET /playback/:tenantId/:cameraId/segments/:segmentName?token=`
 - `GET /sessions` (filtros `tenantId`, `cameraId`, `status`, `sid`)
 - `POST /sessions/sweep` (forzar sweep de TTL para operación/testing)
 
@@ -84,3 +85,9 @@ Servicio MVP para provisionar playback por cámara.
 - Restart automático con backoff exponencial para workers que salen con error.
 - Preset `ffmpeg-hls` para comando de transcode sin romper contrato HTTP.
 - Diagnóstico por worker en health: `state`, `restartCount`, `command`, `lastExitCode`, `lastExitSignal`.
+
+## Dynamic Segments + ffmpeg smoke (NH-DP-08A)
+
+- El manifiesto de playback reescribe segmentos HLS a rutas tokenizadas del gateway (`/segments/:segmentName`).
+- Compatible con nombres de segmento dinámicos emitidos por ffmpeg.
+- Test de smoke con ffmpeg real (si está instalado) usando input sintético `lavfi`.

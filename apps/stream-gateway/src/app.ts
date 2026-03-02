@@ -529,6 +529,18 @@ export async function buildApp(options: BuildAppOptions = {}) {
     }
   }
 
+  const rewriteManifestSegmentUris = (manifest: string, tenantId: string, cameraId: string, token: string) => {
+    const tokenQuery = `?token=${encodeURIComponent(token)}`;
+    return manifest
+      .split("\n")
+      .map((line) => {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) return line;
+        return `/playback/${tenantId}/${cameraId}/segments/${encodeURIComponent(trimmed)}${tokenQuery}`;
+      })
+      .join("\n");
+  };
+
   app.get("/health", async () => ({
     ok: true,
     streams: streams.size,
@@ -750,8 +762,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
             details: { tenantId, cameraId, path: `${tenantId}/${cameraId}/index.m3u8` }
           });
         }
-        const tokenQuery = `?token=${encodeURIComponent(query.token as string)}`;
-        const patchedManifest = manifest.replace("segment0.ts", `/playback/${tenantId}/${cameraId}/segment0.ts${tokenQuery}`);
+        const patchedManifest = rewriteManifestSegmentUris(manifest, tenantId, cameraId, query.token as string);
 
         reply.header("content-type", "application/vnd.apple.mpegurl");
         return patchedManifest;
@@ -759,10 +770,10 @@ export async function buildApp(options: BuildAppOptions = {}) {
     });
   });
 
-  app.get("/playback/:tenantId/:cameraId/segment0.ts", async (request, reply) => {
+  const servePlaybackSegment = async (request: any, reply: any, segmentName: string) => {
     const { tenantId, cameraId } = request.params as { tenantId: string; cameraId: string };
     const query = request.query as { token?: string };
-    return withPlaybackMetrics({
+    return withPlaybackMetrics<unknown>({
       tenantId,
       cameraId,
       asset: "segment",
@@ -777,7 +788,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
         let segment: Buffer;
         try {
           segment = await readWithRetry({
-            reader: () => mediaEngine.readSegment({ tenantId, cameraId }),
+            reader: () => mediaEngine.readSegment({ tenantId, cameraId }, segmentName),
             tenantId,
             cameraId,
             asset: "segment"
@@ -787,13 +798,22 @@ export async function buildApp(options: BuildAppOptions = {}) {
             statusCode: 404,
             apiCode: "PLAYBACK_SEGMENT_NOT_FOUND",
             message: "Playback segment is missing",
-            details: { tenantId, cameraId, path: `${tenantId}/${cameraId}/segment0.ts` }
+            details: { tenantId, cameraId, path: `${tenantId}/${cameraId}/${segmentName}` }
           });
         }
         reply.header("content-type", "video/MP2T");
         return reply.send(segment);
       }
     });
+  };
+
+  app.get("/playback/:tenantId/:cameraId/segments/:segmentName", async (request, reply) => {
+    const { segmentName } = request.params as { segmentName: string };
+    return servePlaybackSegment(request, reply, decodeURIComponent(segmentName));
+  });
+
+  app.get("/playback/:tenantId/:cameraId/segment0.ts", async (request, reply) => {
+    return servePlaybackSegment(request, reply, "segment0.ts");
   });
 
   app.get("/sessions", async (request) => {
