@@ -71,6 +71,11 @@ Definir contrato mínimo y versionable entre:
 }
 ```
 
+Notas de implementación (NH-DP-05):
+
+- `stream-gateway` desacopla el motor de media mediante adapter (`MediaEngine`).
+- El contrato HTTP de provision/playback se mantiene estable aunque cambie el motor subyacente.
+
 - out:
 
 ```json
@@ -190,6 +195,7 @@ Comportamiento:
 
 Data Plane expone:
 
+- `GET /health` (incluye `mediaEngine`)
 - `GET /metrics` (formato Prometheus)
 
 Métricas actuales:
@@ -218,6 +224,7 @@ Data Plane:
 - `STREAM_PLAYBACK_READ_RETRIES`
 - `STREAM_PLAYBACK_READ_RETRY_BASE_MS`
 - `STREAM_PLAYBACK_READ_RETRY_MAX_MS`
+- `STREAM_MEDIA_ENGINE`
 
 ## Versionado sugerido
 

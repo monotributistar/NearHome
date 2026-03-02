@@ -24,6 +24,7 @@ Servicio MVP para provisionar playback por cámara.
 - `STREAM_PLAYBACK_READ_RETRIES`
 - `STREAM_PLAYBACK_READ_RETRY_BASE_MS`
 - `STREAM_PLAYBACK_READ_RETRY_MAX_MS`
+- `STREAM_MEDIA_ENGINE` (`mock` por defecto)
 
 ## Notas
 
@@ -33,6 +34,7 @@ Servicio MVP para provisionar playback por cámara.
 - `GET /health/:tenantId/:cameraId` devuelve `status` y `health` para sincronización en control-plane.
 - Provisioning es idempotente por `tenantId+cameraId`; si la config no cambia, no reprovisiona.
 - Session manager interno trackea `sid` del token (`issued|active|ended|expired`) con TTL y sweep.
+- El motor de media está desacoplado por adapter (`MediaEngine`) para integrar data-plane real sin cambiar el contrato HTTP.
 
 ## Errores playback (NH-DP-03)
 
@@ -54,3 +56,8 @@ Servicio MVP para provisionar playback por cámara.
 - `nearhome_playback_requests_total{tenant_id,camera_id,asset,result}`
 - `nearhome_playback_errors_total{tenant_id,camera_id,asset,code}`
 - `nearhome_playback_read_retries_total{tenant_id,camera_id,asset}`
+
+## Data-plane adapter (NH-DP-05)
+
+- `buildApp({ mediaEngine })` permite inyectar un motor custom.
+- `GET /health` expone `mediaEngine` activo para diagnóstico operacional.

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createHmac } from "node:crypto";
 import { buildApp } from "../src/app.js";
+import type { MediaEngine } from "../src/media-engine.js";
 
 const createdDirs: string[] = [];
 
@@ -32,14 +33,14 @@ function createPlaybackToken(args: {
   return `${payloadBase64}.${signature}`;
 }
 
-async function setupApp() {
+async function setupApp(options?: { mediaEngine?: MediaEngine }) {
   const dir = await mkdtemp(path.join(tmpdir(), "nearhome-stream-"));
   createdDirs.push(dir);
   process.env.STREAM_STORAGE_DIR = dir;
   process.env.STREAM_TOKEN_SECRET = STREAM_TOKEN_SECRET;
   process.env.STREAM_SESSION_IDLE_TTL_MS = "1000";
   process.env.STREAM_SESSION_SWEEP_MS = "60000";
-  const app = await buildApp();
+  const app = await buildApp(options);
   return { app, dir };
 }
 
@@ -671,6 +672,77 @@ describe("stream-gateway", () => {
     expect(metricsRes.body).toContain(
       `nearhome_playback_errors_total{asset=\"segment\",camera_id=\"${cameraId}\",code=\"PLAYBACK_TOKEN_FORMAT_INVALID\",tenant_id=\"${tenantId}\"} 1`
     );
+
+    await app.close();
+  });
+
+  it("keeps playback contract stable with injected media engine adapter", async () => {
+    const manifests = new Map<string, string>();
+    const segments = new Map<string, Buffer>();
+    const key = (tenantId: string, cameraId: string) => `${tenantId}:${cameraId}`;
+    const mediaEngine: MediaEngine = {
+      name: "test-adapter",
+      async provisionStream(input) {
+        manifests.set(key(input.tenantId, input.cameraId), "#EXTM3U\n#EXTINF:5.0,\nsegment0.ts\n#EXT-X-ENDLIST");
+        segments.set(key(input.tenantId, input.cameraId), Buffer.from("ADAPTER_SEGMENT"));
+      },
+      async deprovisionStream(scope) {
+        manifests.delete(key(scope.tenantId, scope.cameraId));
+        segments.delete(key(scope.tenantId, scope.cameraId));
+      },
+      async readManifest(scope) {
+        const value = manifests.get(key(scope.tenantId, scope.cameraId));
+        if (!value) {
+          const error = new Error("missing manifest") as NodeJS.ErrnoException;
+          error.code = "ENOENT";
+          throw error;
+        }
+        return value;
+      },
+      async readSegment(scope) {
+        const value = segments.get(key(scope.tenantId, scope.cameraId));
+        if (!value) {
+          const error = new Error("missing segment") as NodeJS.ErrnoException;
+          error.code = "ENOENT";
+          throw error;
+        }
+        return value;
+      }
+    };
+    const { app } = await setupApp({ mediaEngine });
+    const tenantId = "tenant-adapter";
+    const cameraId = "camera-adapter";
+
+    const health = await app.inject({ method: "GET", url: "/health" });
+    expect(health.statusCode).toBe(200);
+    expect(health.json()).toMatchObject({ mediaEngine: "test-adapter" });
+
+    const provision = await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: { tenantId, cameraId, rtspUrl: "rtsp://adapter/test" }
+    });
+    expect(provision.statusCode).toBe(200);
+
+    const token = createPlaybackToken({
+      tenantId,
+      cameraId,
+      sid: "sid-adapter",
+      expiresAt: new Date(Date.now() + 60_000)
+    });
+    const manifestRes = await app.inject({
+      method: "GET",
+      url: `/playback/${tenantId}/${cameraId}/index.m3u8?token=${encodeURIComponent(token)}`
+    });
+    expect(manifestRes.statusCode).toBe(200);
+    expect(manifestRes.body).toContain(`/playback/${tenantId}/${cameraId}/segment0.ts?token=`);
+
+    const segmentRes = await app.inject({
+      method: "GET",
+      url: `/playback/${tenantId}/${cameraId}/segment0.ts?token=${encodeURIComponent(token)}`
+    });
+    expect(segmentRes.statusCode).toBe(200);
+    expect(segmentRes.body).toContain("ADAPTER_SEGMENT");
 
     await app.close();
   });

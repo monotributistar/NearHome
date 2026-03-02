@@ -16,6 +16,7 @@
 - Etapa activa: sync de salud desde data-plane (NH-033) completada
 - Etapa activa: scheduler automático de sync health (NH-034) completada
 - Etapa activa: resiliencia + observabilidad de playback (NH-DP-04) completada
+- Etapa activa: adapter de media desacoplado (NH-DP-05) completada
 
 ## Progreso completado
 
@@ -79,6 +80,10 @@
    - retry/backoff configurable para lectura de `index.m3u8` y `segment0.ts`.
    - métricas por `tenant/camera/asset` para requests, errores y reintentos.
    - tests TDD para fallback transitorio de assets y visibilidad de errores por tenant.
+17. Adapter de media para data-plane (NH-DP-05):
+   - motor de media desacoplado detrás de interfaz `MediaEngine`.
+   - `buildApp({ mediaEngine })` habilita inyección de motor real/simulado.
+   - test de contrato validando que playback mantiene shape HTTP con engine custom.
 
 ## Cambios técnicos relevantes
 
@@ -152,6 +157,13 @@
   - métricas nuevas: `nearhome_playback_requests_total`, `nearhome_playback_errors_total`, `nearhome_playback_read_retries_total`.
 - `apps/stream-gateway/test/stream-gateway.spec.ts`:
   - casos NH-DP-04 para reintentos exitosos en miss transitorio y métricas por tenant/cámara.
+- `apps/stream-gateway/src/media-engine.ts`:
+  - nuevo adapter `MediaEngine` + implementación mock filesystem.
+- `apps/stream-gateway/src/app.ts`:
+  - consumo de adapter inyectable con fallback por env `STREAM_MEDIA_ENGINE`.
+  - `/health` incluye engine activo para diagnóstico.
+- `apps/stream-gateway/test/stream-gateway.spec.ts`:
+  - caso de contrato con engine inyectado (independencia del motor).
 - `docs/CONTROLPLANE_DATAPLANE_CONTRACT.md`:
   - contrato actualizado de provision y session tracking.
 
@@ -189,11 +201,12 @@
 - `pnpm --filter @app/stream-gateway test`: `10 passed` (incluye NH-DP-01/NH-DP-02)
 - `pnpm --filter @app/stream-gateway test`: `12 passed` (incluye NH-DP-03 playback robusto)
 - `pnpm --filter @app/stream-gateway test`: `14 passed` (incluye NH-DP-04 retry/backoff + métricas playback)
+- `pnpm --filter @app/stream-gateway test`: `15 passed` (incluye NH-DP-05 adapter de media)
 - `pnpm test:e2e:admin`: `7 passed`
 - `pnpm test:e2e:portal`: `2 passed`
 
 ## Próximo bloque recomendado
 
-1. NH-DP-05: adaptador de data-plane real (ingesta/transcode) preservando contratos HTTP actuales.
+1. NH-DP-06: implementación de engine real (ingesta/transcode) usando el adapter existente.
 2. NH-015: asignación de cámaras por `client_user` (subset real y enforcement integral).
 3. Endurecimiento e2e multi-tenant para concurrencia de playback (escenarios simultáneos por tenant).

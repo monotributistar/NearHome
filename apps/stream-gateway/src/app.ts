@@ -1,8 +1,8 @@
 import Fastify from "fastify";
-import { promises as fs } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { createMediaEngineFromEnv, type MediaEngine } from "./media-engine.js";
 
 const ProvisionSchema = z.object({
   tenantId: z.string().min(1),
@@ -97,10 +97,6 @@ function streamSessionKey(tenantId: string, cameraId: string, sid: string) {
   return `${tenantId}:${cameraId}:${sid}`;
 }
 
-function cameraDir(storageDir: string, tenantId: string, cameraId: string) {
-  return path.join(storageDir, tenantId, cameraId);
-}
-
 const StreamPlaybackTokenSchema = z.object({
   sub: z.string().min(1),
   tid: z.string().min(1),
@@ -130,38 +126,6 @@ function verifyTokenDetailed(token: string, secret: string) {
   } catch {
     return { ok: false as const, reason: "payload_invalid" as const };
   }
-}
-
-async function ensureMockPlaylist(storageDir: string, tenantId: string, cameraId: string) {
-  const dir = cameraDir(storageDir, tenantId, cameraId);
-  await fs.mkdir(dir, { recursive: true });
-
-  const segmentPath = path.join(dir, "segment0.ts");
-  const playlistPath = path.join(dir, "index.m3u8");
-
-  const segment = Buffer.from("NEARHOME_STREAM_SEGMENT");
-  await fs.writeFile(segmentPath, segment);
-
-  const manifest = [
-    "#EXTM3U",
-    "#EXT-X-VERSION:3",
-    "#EXT-X-TARGETDURATION:5",
-    "#EXT-X-MEDIA-SEQUENCE:0",
-    "#EXTINF:5.0,",
-    "segment0.ts",
-    "#EXT-X-ENDLIST"
-  ].join("\n");
-  await fs.writeFile(playlistPath, manifest, "utf8");
-}
-
-async function readManifest(storageDir: string, tenantId: string, cameraId: string) {
-  const playlistPath = path.join(cameraDir(storageDir, tenantId, cameraId), "index.m3u8");
-  return fs.readFile(playlistPath, "utf8");
-}
-
-async function readSegment(storageDir: string, tenantId: string, cameraId: string) {
-  const segmentPath = path.join(cameraDir(storageDir, tenantId, cameraId), "segment0.ts");
-  return fs.readFile(segmentPath);
 }
 
 function nowIso() {
@@ -230,11 +194,16 @@ function runStreamProbe(entry: StreamEntry): StreamEntry {
   return { ...entry, health: buildHealth("online"), updatedAt: nowIso() };
 }
 
-export async function buildApp() {
+type BuildAppOptions = {
+  mediaEngine?: MediaEngine;
+};
+
+export async function buildApp(options: BuildAppOptions = {}) {
   const app = Fastify({ logger: true });
   const streams = new Map<string, StreamEntry>();
   const streamSessions = new Map<string, StreamSessionEntry>();
   const storageDir = process.env.STREAM_STORAGE_DIR ?? path.resolve(process.cwd(), "storage");
+  const mediaEngine = options.mediaEngine ?? createMediaEngineFromEnv(storageDir);
   const streamTokenSecret = process.env.STREAM_TOKEN_SECRET ?? "dev-stream-token-secret";
   const probeIntervalMs = Number(process.env.STREAM_PROBE_INTERVAL_MS ?? 5000);
   const sessionIdleTtlMs = Number(process.env.STREAM_SESSION_IDLE_TTL_MS ?? 60_000);
@@ -559,7 +528,13 @@ export async function buildApp() {
     }
   }
 
-  app.get("/health", async () => ({ ok: true, streams: streams.size, sessions: streamSessions.size, storageDir }));
+  app.get("/health", async () => ({
+    ok: true,
+    streams: streams.size,
+    sessions: streamSessions.size,
+    storageDir,
+    mediaEngine: mediaEngine.name
+  }));
 
   app.get("/metrics", async (_request, reply) => {
     const counters = {
@@ -666,7 +641,11 @@ export async function buildApp() {
       updatedAt: nowIso()
     });
 
-    await ensureMockPlaylist(storageDir, body.tenantId, body.cameraId);
+    await mediaEngine.provisionStream({
+      tenantId: body.tenantId,
+      cameraId: body.cameraId,
+      rtspUrl: body.rtspUrl
+    });
 
     const ready: StreamEntry = {
       tenantId: body.tenantId,
@@ -717,6 +696,14 @@ export async function buildApp() {
         });
       }
     }
+    try {
+      await mediaEngine.deprovisionStream({
+        tenantId: body.tenantId,
+        cameraId: body.cameraId
+      });
+    } catch (error) {
+      request.log.warn({ err: error, tenantId: body.tenantId, cameraId: body.cameraId }, "media engine deprovision failed");
+    }
     return { data: { removed: true } };
   });
 
@@ -738,7 +725,7 @@ export async function buildApp() {
         let manifest: string;
         try {
           manifest = await readWithRetry({
-            reader: () => readManifest(storageDir, tenantId, cameraId),
+            reader: () => mediaEngine.readManifest({ tenantId, cameraId }),
             tenantId,
             cameraId,
             asset: "manifest"
@@ -778,7 +765,7 @@ export async function buildApp() {
         let segment: Buffer;
         try {
           segment = await readWithRetry({
-            reader: () => readSegment(storageDir, tenantId, cameraId),
+            reader: () => mediaEngine.readSegment({ tenantId, cameraId }),
             tenantId,
             cameraId,
             asset: "segment"

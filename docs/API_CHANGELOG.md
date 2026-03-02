@@ -53,6 +53,10 @@
   - retry/backoff configurable para lectura de assets (`index.m3u8`, `segment0.ts`) ante fallos transitorios.
   - métricas de playback por `tenant/camera/asset/result`.
   - métricas de errores de playback por `code` y de reintentos de lectura.
+- NH-DP-05: adapter de media para data-plane:
+  - `MediaEngine` desacoplado de rutas HTTP de `stream-gateway`.
+  - inyección por `buildApp({ mediaEngine })` para pruebas/implementaciones reales.
+  - `GET /health` informa `mediaEngine` activo.
 - NH-028: ciclo de vida de sesiones de stream:
   - `GET /stream-sessions`
   - `GET /stream-sessions/:id`

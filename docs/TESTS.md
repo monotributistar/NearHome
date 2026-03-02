@@ -70,6 +70,8 @@ Cobertura incluida:
 - NH-DP-04 resiliencia/observabilidad playback
   - retries con backoff ante miss transitorio de manifest
   - métricas por tenant/cámara para requests, errores y reintentos
+- NH-DP-05 adapter de media
+  - inyección de `MediaEngine` custom y verificación de contrato HTTP de playback sin acoplamiento al motor
 
 ## Ejecutar
 
