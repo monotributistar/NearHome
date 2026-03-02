@@ -75,6 +75,9 @@ Cobertura incluida:
 - NH-DP-06 process engine
   - validación de `STREAM_MEDIA_ENGINE=process` con worker por stream
   - verificación de diagnóstico de workers en `GET /health`
+- NH-DP-07 process supervisor
+  - preset `ffmpeg-hls` en modo `dry-run` para validar comando de transcode
+  - restart/backoff automático de worker con límite y observabilidad de reinicios
 
 ## Ejecutar
 

@@ -18,6 +18,7 @@
 - Etapa activa: resiliencia + observabilidad de playback (NH-DP-04) completada
 - Etapa activa: adapter de media desacoplado (NH-DP-05) completada
 - Etapa activa: process-engine de data-plane (NH-DP-06) completada
+- Etapa activa: supervisor de workers process-engine (NH-DP-07) completada
 
 ## Progreso completado
 
@@ -89,6 +90,10 @@
    - soporte `STREAM_MEDIA_ENGINE=process` con worker por stream.
    - comando del worker configurable por env con placeholders de stream.
    - health enriquecido con diagnóstico de workers (`total/running/stopped/failed`).
+19. Supervisor de process-engine (NH-DP-07):
+   - restart/backoff exponencial para workers con salida por error.
+   - preset `ffmpeg-hls` para comando de transcode estandarizado.
+   - métricas operativas de workers y restarts.
 
 ## Cambios técnicos relevantes
 
@@ -173,6 +178,13 @@
   - implementación `createProcessMediaEngine` con lifecycle de workers por cámara.
 - `apps/stream-gateway/test/stream-gateway.spec.ts`:
   - test NH-DP-06 para engine `process` por env y diagnóstico de workers.
+- `apps/stream-gateway/src/media-engine.ts`:
+  - supervisor de workers con `restartCount`, `lastExit` y backoff configurable.
+  - soporte `STREAM_TRANSCODER_PRESET=ffmpeg-hls` y `STREAM_TRANSCODER_DRY_RUN`.
+- `apps/stream-gateway/src/app.ts`:
+  - métricas de worker engine (`nearhome_media_workers_total`, `nearhome_media_worker_restarts_total`).
+- `apps/stream-gateway/test/stream-gateway.spec.ts`:
+  - tests NH-DP-07 para preset ffmpeg y restart/backoff de worker.
 - `docs/CONTROLPLANE_DATAPLANE_CONTRACT.md`:
   - contrato actualizado de provision y session tracking.
 
@@ -212,11 +224,12 @@
 - `pnpm --filter @app/stream-gateway test`: `14 passed` (incluye NH-DP-04 retry/backoff + métricas playback)
 - `pnpm --filter @app/stream-gateway test`: `15 passed` (incluye NH-DP-05 adapter de media)
 - `pnpm --filter @app/stream-gateway test`: `16 passed` (incluye NH-DP-06 process engine)
+- `pnpm --filter @app/stream-gateway test`: `18 passed` (incluye NH-DP-07 supervisor process-engine)
 - `pnpm test:e2e:admin`: `7 passed`
 - `pnpm test:e2e:portal`: `2 passed`
 
 ## Próximo bloque recomendado
 
-1. NH-DP-07: integrar pipeline de video real (ffmpeg/gstreamer) sobre process-engine.
+1. NH-DP-08: validar pipeline real de video end-to-end (ffmpeg/gstreamer + RTSP de prueba).
 2. NH-015: asignación de cámaras por `client_user` (subset real y enforcement integral).
 3. Endurecimiento e2e multi-tenant para concurrencia de playback (escenarios simultáneos por tenant).

@@ -81,6 +81,11 @@ Extensión NH-DP-06:
 - engine `process` para ejecutar un worker real por stream (ingesta/transcode) manteniendo el mismo contrato HTTP.
 - configuración de comando por env con template (`{{tenantId}}`, `{{cameraId}}`, `{{rtspUrl}}`).
 
+Extensión NH-DP-07:
+
+- supervisor de workers con restart/backoff para fallas transitorias del proceso.
+- preset `ffmpeg-hls` para estandarizar comando de ingesta/transcode sobre RTSP.
+
 - out:
 
 ```json
@@ -212,6 +217,8 @@ Métricas actuales:
 - `nearhome_playback_requests_total{tenant_id,camera_id,asset,result}`
 - `nearhome_playback_errors_total{tenant_id,camera_id,asset,code}`
 - `nearhome_playback_read_retries_total{tenant_id,camera_id,asset}`
+- `nearhome_media_workers_total{state}`
+- `nearhome_media_worker_restarts_total`
 
 ## Variables de entorno relevantes
 
@@ -234,6 +241,11 @@ Data Plane:
 - `STREAM_TRANSCODER_SHELL`
 - `STREAM_TRANSCODER_START_TIMEOUT_MS`
 - `STREAM_TRANSCODER_STOP_TIMEOUT_MS`
+- `STREAM_TRANSCODER_PRESET`
+- `STREAM_TRANSCODER_DRY_RUN`
+- `STREAM_TRANSCODER_RESTART_MAX`
+- `STREAM_TRANSCODER_RESTART_BACKOFF_MS`
+- `STREAM_TRANSCODER_RESTART_BACKOFF_MAX_MS`
 
 ## Versionado sugerido
 

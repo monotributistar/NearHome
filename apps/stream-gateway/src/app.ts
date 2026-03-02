@@ -561,6 +561,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
       sessionCounters[session.status] += 1;
     }
 
+    const workerStats = mediaEngine.diagnostics?.().workers;
     const lines = [
       "# HELP nearhome_streams_total Number of known streams by status",
       "# TYPE nearhome_streams_total gauge",
@@ -589,7 +590,16 @@ export async function buildApp(options: BuildAppOptions = {}) {
       ...formatMetricLines("nearhome_playback_errors_total", playbackErrorCounters),
       "# HELP nearhome_playback_read_retries_total Playback asset read retries by tenant/camera/asset",
       "# TYPE nearhome_playback_read_retries_total counter",
-      ...formatMetricLines("nearhome_playback_read_retries_total", playbackReadRetryCounters)
+      ...formatMetricLines("nearhome_playback_read_retries_total", playbackReadRetryCounters),
+      "# HELP nearhome_media_workers_total Media engine workers by state",
+      "# TYPE nearhome_media_workers_total gauge",
+      `nearhome_media_workers_total{state=\"running\"} ${workerStats?.running ?? 0}`,
+      `nearhome_media_workers_total{state=\"restarting\"} ${workerStats?.restarting ?? 0}`,
+      `nearhome_media_workers_total{state=\"stopped\"} ${workerStats?.stopped ?? 0}`,
+      `nearhome_media_workers_total{state=\"failed\"} ${workerStats?.failed ?? 0}`,
+      "# HELP nearhome_media_worker_restarts_total Media engine worker restart attempts",
+      "# TYPE nearhome_media_worker_restarts_total counter",
+      `nearhome_media_worker_restarts_total ${workerStats?.restartsTotal ?? 0}`
     ];
     reply.header("content-type", "text/plain; version=0.0.4");
     return lines.join("\n");

@@ -29,6 +29,11 @@ Servicio MVP para provisionar playback por cámara.
 - `STREAM_TRANSCODER_SHELL`
 - `STREAM_TRANSCODER_START_TIMEOUT_MS`
 - `STREAM_TRANSCODER_STOP_TIMEOUT_MS`
+- `STREAM_TRANSCODER_PRESET` (`custom|ffmpeg-hls`)
+- `STREAM_TRANSCODER_DRY_RUN` (`1` para validar comando sin ejecutar proceso)
+- `STREAM_TRANSCODER_RESTART_MAX`
+- `STREAM_TRANSCODER_RESTART_BACKOFF_MS`
+- `STREAM_TRANSCODER_RESTART_BACKOFF_MAX_MS`
 
 ## Notas
 
@@ -60,6 +65,8 @@ Servicio MVP para provisionar playback por cámara.
 - `nearhome_playback_requests_total{tenant_id,camera_id,asset,result}`
 - `nearhome_playback_errors_total{tenant_id,camera_id,asset,code}`
 - `nearhome_playback_read_retries_total{tenant_id,camera_id,asset}`
+- `nearhome_media_workers_total{state}`
+- `nearhome_media_worker_restarts_total`
 
 ## Data-plane adapter (NH-DP-05)
 
@@ -70,4 +77,10 @@ Servicio MVP para provisionar playback por cámara.
 
 - Modo `STREAM_MEDIA_ENGINE=process` para ejecutar un worker de ingesta/transcode por cámara.
 - El worker se lanza con `STREAM_TRANSCODER_CMD` (template soportado: `{{tenantId}}`, `{{cameraId}}`, `{{rtspUrl}}`).
-- `GET /health` incluye `mediaEngineDiagnostics.workers` con `total|running|stopped|failed`.
+- `GET /health` incluye `mediaEngineDiagnostics.workers` con `total|running|restarting|stopped|failed`.
+
+## Process Supervisor (NH-DP-07)
+
+- Restart automático con backoff exponencial para workers que salen con error.
+- Preset `ffmpeg-hls` para comando de transcode sin romper contrato HTTP.
+- Diagnóstico por worker en health: `state`, `restartCount`, `command`, `lastExitCode`, `lastExitSignal`.

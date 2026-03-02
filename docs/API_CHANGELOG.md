@@ -61,6 +61,10 @@
   - soporte de `STREAM_MEDIA_ENGINE=process`.
   - worker por stream lanzado por comando configurable (`STREAM_TRANSCODER_CMD`).
   - `/health` incluye diagnóstico de workers (`total/running/stopped/failed`).
+- NH-DP-07: supervisor del process engine:
+  - restart automático de workers con backoff exponencial y límite configurable.
+  - preset `ffmpeg-hls` para comando de transcode.
+  - métricas nuevas: `nearhome_media_workers_total`, `nearhome_media_worker_restarts_total`.
 - NH-028: ciclo de vida de sesiones de stream:
   - `GET /stream-sessions`
   - `GET /stream-sessions/:id`

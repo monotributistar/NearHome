@@ -26,6 +26,17 @@ export type MediaEngine = {
       running: number;
       stopped: number;
       failed: number;
+      restarting?: number;
+      restartsTotal?: number;
+      details?: Array<{
+        tenantId: string;
+        cameraId: string;
+        state: string;
+        restartCount: number;
+        command: string;
+        lastExitCode: number | null;
+        lastExitSignal: string | null;
+      }>;
     };
   };
 };
@@ -89,11 +100,20 @@ export function createMockMediaEngine(storageDir: string): MediaEngine {
   };
 }
 
-type ProcessWorkerState = "running" | "stopped" | "failed";
+type ProcessWorkerState = "running" | "stopped" | "failed" | "restarting";
 
 type ProcessWorkerEntry = {
-  process: ReturnType<typeof spawn>;
+  tenantId: string;
+  cameraId: string;
+  rtspUrl: string;
+  command: string;
+  process: ReturnType<typeof spawn> | null;
   state: ProcessWorkerState;
+  restartCount: number;
+  desiredRunning: boolean;
+  restartTimer: NodeJS.Timeout | null;
+  lastExitCode: number | null;
+  lastExitSignal: string | null;
 };
 
 async function stopProcess(processRef: ReturnType<typeof spawn>, timeoutMs: number) {
@@ -122,34 +142,96 @@ function renderCommandTemplate(template: string, input: StreamMediaInput) {
     .replaceAll("{{rtspUrl}}", input.rtspUrl);
 }
 
+function buildFfmpegHlsCommand(input: StreamMediaInput, storageDir: string) {
+  const outDir = cameraDir(storageDir, input.tenantId, input.cameraId);
+  const playlist = path.join(outDir, "index.m3u8");
+  const segmentPattern = path.join(outDir, "segment%d.ts");
+  return [
+    "ffmpeg",
+    "-rtsp_transport",
+    "tcp",
+    "-i",
+    `"${input.rtspUrl}"`,
+    "-an",
+    "-c:v",
+    "copy",
+    "-f",
+    "hls",
+    "-hls_time",
+    "2",
+    "-hls_list_size",
+    "5",
+    "-hls_flags",
+    "delete_segments+append_list",
+    "-hls_segment_filename",
+    `"${segmentPattern}"`,
+    `"${playlist}"`
+  ].join(" ");
+}
+
+function resolveTranscoderCommand(input: StreamMediaInput, storageDir: string) {
+  const preset = process.env.STREAM_TRANSCODER_PRESET ?? "custom";
+  if (preset === "ffmpeg-hls") {
+    return buildFfmpegHlsCommand(input, storageDir);
+  }
+  const commandTemplate = process.env.STREAM_TRANSCODER_CMD ?? 'node -e "setInterval(() => {}, 1000)"';
+  return renderCommandTemplate(commandTemplate, input);
+}
+
 export function createProcessMediaEngine(storageDir: string): MediaEngine {
   const shell = process.env.STREAM_TRANSCODER_SHELL ?? process.env.SHELL ?? "/bin/sh";
-  const commandTemplate = process.env.STREAM_TRANSCODER_CMD ?? 'node -e "setInterval(() => {}, 1000)"';
   const startTimeoutMs = Math.max(100, Number(process.env.STREAM_TRANSCODER_START_TIMEOUT_MS ?? 1000));
   const stopTimeoutMs = Math.max(100, Number(process.env.STREAM_TRANSCODER_STOP_TIMEOUT_MS ?? 800));
+  const dryRun = process.env.STREAM_TRANSCODER_DRY_RUN === "1";
+  const maxRestarts = Math.max(0, Number(process.env.STREAM_TRANSCODER_RESTART_MAX ?? 3));
+  const restartBackoffMs = Math.max(0, Number(process.env.STREAM_TRANSCODER_RESTART_BACKOFF_MS ?? 200));
+  const restartBackoffMaxMs = Math.max(restartBackoffMs, Number(process.env.STREAM_TRANSCODER_RESTART_BACKOFF_MAX_MS ?? 3000));
   const workers = new Map<string, ProcessWorkerEntry>();
+  let closing = false;
 
-  const provisionStream = async (input: StreamMediaInput) => {
-    await ensurePlaybackAssets(storageDir, { tenantId: input.tenantId, cameraId: input.cameraId });
-    const key = streamKey({ tenantId: input.tenantId, cameraId: input.cameraId });
-    const existing = workers.get(key);
-    if (existing) {
-      await stopProcess(existing.process, stopTimeoutMs);
-      existing.state = "stopped";
+  const clearRestartTimer = (entry: ProcessWorkerEntry) => {
+    if (!entry.restartTimer) return;
+    clearTimeout(entry.restartTimer);
+    entry.restartTimer = null;
+  };
+
+  const scheduleRestart = (entry: ProcessWorkerEntry) => {
+    if (!entry.desiredRunning || closing) return;
+    if (entry.restartCount >= maxRestarts) {
+      entry.state = "failed";
+      return;
     }
+    entry.restartCount += 1;
+    entry.state = "restarting";
+    const waitMs = Math.min(restartBackoffMs * 2 ** (entry.restartCount - 1), restartBackoffMaxMs);
+    clearRestartTimer(entry);
+    entry.restartTimer = setTimeout(() => {
+      entry.restartTimer = null;
+      void spawnWorker(entry);
+    }, waitMs);
+  };
 
-    const command = renderCommandTemplate(commandTemplate, input);
-    const child = spawn(shell, ["-lc", command], {
+  const spawnWorker = async (entry: ProcessWorkerEntry) => {
+    clearRestartTimer(entry);
+    const child = spawn(shell, ["-lc", entry.command], {
       stdio: "ignore"
     });
-
-    const entry: ProcessWorkerEntry = { process: child, state: "running" };
-    workers.set(key, entry);
+    entry.process = child;
+    entry.state = "running";
 
     child.on("exit", (code, signal) => {
-      if (entry.state === "running") {
-        entry.state = code === 0 || signal === "SIGTERM" || signal === "SIGKILL" ? "stopped" : "failed";
+      entry.lastExitCode = code;
+      entry.lastExitSignal = signal ?? null;
+      entry.process = null;
+      if (!entry.desiredRunning || closing) {
+        entry.state = "stopped";
+        return;
       }
+      if (code === 0 || signal === "SIGTERM" || signal === "SIGKILL") {
+        entry.state = "stopped";
+        return;
+      }
+      scheduleRestart(entry);
     });
 
     await new Promise<void>((resolve, reject) => {
@@ -168,17 +250,61 @@ export function createProcessMediaEngine(storageDir: string): MediaEngine {
     });
   };
 
+  const provisionStream = async (input: StreamMediaInput) => {
+    await ensurePlaybackAssets(storageDir, { tenantId: input.tenantId, cameraId: input.cameraId });
+    const key = streamKey({ tenantId: input.tenantId, cameraId: input.cameraId });
+    const existing = workers.get(key);
+    if (existing) {
+      existing.desiredRunning = false;
+      clearRestartTimer(existing);
+      if (existing.process) {
+        await stopProcess(existing.process, stopTimeoutMs);
+      }
+      existing.state = "stopped";
+    }
+
+    const command = resolveTranscoderCommand(input, storageDir);
+    const entry: ProcessWorkerEntry = {
+      tenantId: input.tenantId,
+      cameraId: input.cameraId,
+      rtspUrl: input.rtspUrl,
+      command,
+      process: null,
+      state: "stopped",
+      restartCount: 0,
+      desiredRunning: true,
+      restartTimer: null,
+      lastExitCode: null,
+      lastExitSignal: null
+    };
+    workers.set(key, entry);
+    if (dryRun) {
+      entry.state = "running";
+      return;
+    }
+    await spawnWorker(entry);
+  };
+
   const deprovisionStream = async (scope: StreamMediaScope) => {
     const key = streamKey(scope);
     const worker = workers.get(key);
     if (!worker) return;
-    await stopProcess(worker.process, stopTimeoutMs);
+    worker.desiredRunning = false;
+    clearRestartTimer(worker);
+    if (worker.process) {
+      await stopProcess(worker.process, stopTimeoutMs);
+    }
     worker.state = "stopped";
   };
 
   const close = async () => {
+    closing = true;
     for (const worker of workers.values()) {
-      await stopProcess(worker.process, stopTimeoutMs);
+      worker.desiredRunning = false;
+      clearRestartTimer(worker);
+      if (worker.process) {
+        await stopProcess(worker.process, stopTimeoutMs);
+      }
       worker.state = "stopped";
     }
   };
@@ -187,17 +313,32 @@ export function createProcessMediaEngine(storageDir: string): MediaEngine {
     let running = 0;
     let stopped = 0;
     let failed = 0;
+    let restarting = 0;
+    let restartsTotal = 0;
     for (const worker of workers.values()) {
       if (worker.state === "running") running += 1;
       if (worker.state === "stopped") stopped += 1;
       if (worker.state === "failed") failed += 1;
+      if (worker.state === "restarting") restarting += 1;
+      restartsTotal += worker.restartCount;
     }
     return {
       workers: {
         total: workers.size,
         running,
         stopped,
-        failed
+        failed,
+        restarting,
+        restartsTotal,
+        details: Array.from(workers.values()).map((worker) => ({
+          tenantId: worker.tenantId,
+          cameraId: worker.cameraId,
+          state: worker.state,
+          restartCount: worker.restartCount,
+          command: worker.command,
+          lastExitCode: worker.lastExitCode,
+          lastExitSignal: worker.lastExitSignal
+        }))
       }
     };
   };

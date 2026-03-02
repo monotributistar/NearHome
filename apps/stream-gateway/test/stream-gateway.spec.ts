@@ -57,6 +57,11 @@ afterEach(async () => {
   delete process.env.STREAM_TRANSCODER_SHELL;
   delete process.env.STREAM_TRANSCODER_START_TIMEOUT_MS;
   delete process.env.STREAM_TRANSCODER_STOP_TIMEOUT_MS;
+  delete process.env.STREAM_TRANSCODER_PRESET;
+  delete process.env.STREAM_TRANSCODER_DRY_RUN;
+  delete process.env.STREAM_TRANSCODER_RESTART_MAX;
+  delete process.env.STREAM_TRANSCODER_RESTART_BACKOFF_MS;
+  delete process.env.STREAM_TRANSCODER_RESTART_BACKOFF_MAX_MS;
   while (createdDirs.length) {
     const dir = createdDirs.pop();
     if (dir) {
@@ -810,6 +815,100 @@ describe("stream-gateway", () => {
         }
       }
     });
+
+    await app.close();
+  });
+
+  it("renders ffmpeg preset command in process engine diagnostics", async () => {
+    process.env.STREAM_MEDIA_ENGINE = "process";
+    process.env.STREAM_TRANSCODER_PRESET = "ffmpeg-hls";
+    process.env.STREAM_TRANSCODER_DRY_RUN = "1";
+    const { app } = await setupApp();
+    const tenantId = "tenant-ffmpeg";
+    const cameraId = "camera-ffmpeg";
+
+    const provision = await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: { tenantId, cameraId, rtspUrl: "rtsp://demo/ffmpeg" }
+    });
+    expect(provision.statusCode).toBe(200);
+
+    const health = await app.inject({ method: "GET", url: "/health" });
+    expect(health.statusCode).toBe(200);
+    const body = health.json<{
+      mediaEngineDiagnostics?: {
+        workers?: {
+          details?: Array<{ tenantId: string; cameraId: string; command: string }>;
+        };
+      };
+    }>();
+    const detail = body.mediaEngineDiagnostics?.workers?.details?.find((item) => item.tenantId === tenantId && item.cameraId === cameraId);
+    expect(detail?.command).toContain("ffmpeg");
+    expect(detail?.command).toContain("index.m3u8");
+    expect(detail?.command).toContain("segment%d.ts");
+
+    await app.close();
+  });
+
+  it("restarts failing process worker with backoff until max restarts", async () => {
+    process.env.STREAM_MEDIA_ENGINE = "process";
+    process.env.STREAM_TRANSCODER_CMD = 'node -e "setTimeout(() => process.exit(1), 20)"';
+    process.env.STREAM_TRANSCODER_RESTART_MAX = "2";
+    process.env.STREAM_TRANSCODER_RESTART_BACKOFF_MS = "10";
+    process.env.STREAM_TRANSCODER_RESTART_BACKOFF_MAX_MS = "20";
+    const { app } = await setupApp();
+    const tenantId = "tenant-restart";
+    const cameraId = "camera-restart";
+
+    const provision = await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: { tenantId, cameraId, rtspUrl: "rtsp://demo/restart" }
+    });
+    expect(provision.statusCode).toBe(200);
+
+    let detail:
+      | {
+          tenantId: string;
+          cameraId: string;
+          restartCount: number;
+          state: string;
+        }
+      | undefined;
+    let body:
+      | {
+          mediaEngineDiagnostics?: {
+            workers?: {
+              failed?: number;
+              details?: Array<{ tenantId: string; cameraId: string; restartCount: number; state: string }>;
+            };
+          };
+        }
+      | undefined;
+    const deadline = Date.now() + 1200;
+    while (Date.now() < deadline) {
+      const health = await app.inject({ method: "GET", url: "/health" });
+      expect(health.statusCode).toBe(200);
+      body = health.json<{
+        mediaEngineDiagnostics?: {
+          workers?: {
+            failed?: number;
+            details?: Array<{ tenantId: string; cameraId: string; restartCount: number; state: string }>;
+          };
+        };
+      }>();
+      detail = body.mediaEngineDiagnostics?.workers?.details?.find((item) => item.tenantId === tenantId && item.cameraId === cameraId);
+      if (detail?.state === "failed") break;
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    }
+    expect(detail?.state).toBe("failed");
+    expect(detail?.restartCount).toBe(2);
+    expect(body?.mediaEngineDiagnostics?.workers?.failed).toBeGreaterThanOrEqual(1);
+
+    const metrics = await app.inject({ method: "GET", url: "/metrics" });
+    expect(metrics.statusCode).toBe(200);
+    expect(metrics.body).toContain("nearhome_media_worker_restarts_total");
 
     await app.close();
   });
