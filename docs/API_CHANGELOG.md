@@ -57,6 +57,10 @@
   - `MediaEngine` desacoplado de rutas HTTP de `stream-gateway`.
   - inyección por `buildApp({ mediaEngine })` para pruebas/implementaciones reales.
   - `GET /health` informa `mediaEngine` activo.
+- NH-DP-06: engine de proceso para ingesta/transcode:
+  - soporte de `STREAM_MEDIA_ENGINE=process`.
+  - worker por stream lanzado por comando configurable (`STREAM_TRANSCODER_CMD`).
+  - `/health` incluye diagnóstico de workers (`total/running/stopped/failed`).
 - NH-028: ciclo de vida de sesiones de stream:
   - `GET /stream-sessions`
   - `GET /stream-sessions/:id`

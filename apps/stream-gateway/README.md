@@ -25,6 +25,10 @@ Servicio MVP para provisionar playback por cámara.
 - `STREAM_PLAYBACK_READ_RETRY_BASE_MS`
 - `STREAM_PLAYBACK_READ_RETRY_MAX_MS`
 - `STREAM_MEDIA_ENGINE` (`mock` por defecto)
+- `STREAM_TRANSCODER_CMD` (cuando `STREAM_MEDIA_ENGINE=process`)
+- `STREAM_TRANSCODER_SHELL`
+- `STREAM_TRANSCODER_START_TIMEOUT_MS`
+- `STREAM_TRANSCODER_STOP_TIMEOUT_MS`
 
 ## Notas
 
@@ -61,3 +65,9 @@ Servicio MVP para provisionar playback por cámara.
 
 - `buildApp({ mediaEngine })` permite inyectar un motor custom.
 - `GET /health` expone `mediaEngine` activo para diagnóstico operacional.
+
+## Process Engine (NH-DP-06)
+
+- Modo `STREAM_MEDIA_ENGINE=process` para ejecutar un worker de ingesta/transcode por cámara.
+- El worker se lanza con `STREAM_TRANSCODER_CMD` (template soportado: `{{tenantId}}`, `{{cameraId}}`, `{{rtspUrl}}`).
+- `GET /health` incluye `mediaEngineDiagnostics.workers` con `total|running|stopped|failed`.

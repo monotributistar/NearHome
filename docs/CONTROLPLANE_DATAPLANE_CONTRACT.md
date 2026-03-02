@@ -76,6 +76,11 @@ Notas de implementación (NH-DP-05):
 - `stream-gateway` desacopla el motor de media mediante adapter (`MediaEngine`).
 - El contrato HTTP de provision/playback se mantiene estable aunque cambie el motor subyacente.
 
+Extensión NH-DP-06:
+
+- engine `process` para ejecutar un worker real por stream (ingesta/transcode) manteniendo el mismo contrato HTTP.
+- configuración de comando por env con template (`{{tenantId}}`, `{{cameraId}}`, `{{rtspUrl}}`).
+
 - out:
 
 ```json
@@ -225,6 +230,10 @@ Data Plane:
 - `STREAM_PLAYBACK_READ_RETRY_BASE_MS`
 - `STREAM_PLAYBACK_READ_RETRY_MAX_MS`
 - `STREAM_MEDIA_ENGINE`
+- `STREAM_TRANSCODER_CMD`
+- `STREAM_TRANSCODER_SHELL`
+- `STREAM_TRANSCODER_START_TIMEOUT_MS`
+- `STREAM_TRANSCODER_STOP_TIMEOUT_MS`
 
 ## Versionado sugerido
 

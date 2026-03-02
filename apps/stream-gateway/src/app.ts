@@ -305,6 +305,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
   app.addHook("onClose", async () => {
     stopProbeLoop();
     stopSessionSweepLoop();
+    await mediaEngine.close();
   });
 
   app.setNotFoundHandler((_request, reply) => {
@@ -533,7 +534,8 @@ export async function buildApp(options: BuildAppOptions = {}) {
     streams: streams.size,
     sessions: streamSessions.size,
     storageDir,
-    mediaEngine: mediaEngine.name
+    mediaEngine: mediaEngine.name,
+    ...(mediaEngine.diagnostics ? { mediaEngineDiagnostics: mediaEngine.diagnostics() } : {})
   }));
 
   app.get("/metrics", async (_request, reply) => {

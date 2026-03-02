@@ -72,6 +72,9 @@ Cobertura incluida:
   - métricas por tenant/cámara para requests, errores y reintentos
 - NH-DP-05 adapter de media
   - inyección de `MediaEngine` custom y verificación de contrato HTTP de playback sin acoplamiento al motor
+- NH-DP-06 process engine
+  - validación de `STREAM_MEDIA_ENGINE=process` con worker por stream
+  - verificación de diagnóstico de workers en `GET /health`
 
 ## Ejecutar
 

@@ -17,6 +17,7 @@
 - Etapa activa: scheduler automático de sync health (NH-034) completada
 - Etapa activa: resiliencia + observabilidad de playback (NH-DP-04) completada
 - Etapa activa: adapter de media desacoplado (NH-DP-05) completada
+- Etapa activa: process-engine de data-plane (NH-DP-06) completada
 
 ## Progreso completado
 
@@ -84,6 +85,10 @@
    - motor de media desacoplado detrás de interfaz `MediaEngine`.
    - `buildApp({ mediaEngine })` habilita inyección de motor real/simulado.
    - test de contrato validando que playback mantiene shape HTTP con engine custom.
+18. Process engine para ingesta/transcode (NH-DP-06):
+   - soporte `STREAM_MEDIA_ENGINE=process` con worker por stream.
+   - comando del worker configurable por env con placeholders de stream.
+   - health enriquecido con diagnóstico de workers (`total/running/stopped/failed`).
 
 ## Cambios técnicos relevantes
 
@@ -164,6 +169,10 @@
   - `/health` incluye engine activo para diagnóstico.
 - `apps/stream-gateway/test/stream-gateway.spec.ts`:
   - caso de contrato con engine inyectado (independencia del motor).
+- `apps/stream-gateway/src/media-engine.ts`:
+  - implementación `createProcessMediaEngine` con lifecycle de workers por cámara.
+- `apps/stream-gateway/test/stream-gateway.spec.ts`:
+  - test NH-DP-06 para engine `process` por env y diagnóstico de workers.
 - `docs/CONTROLPLANE_DATAPLANE_CONTRACT.md`:
   - contrato actualizado de provision y session tracking.
 
@@ -202,11 +211,12 @@
 - `pnpm --filter @app/stream-gateway test`: `12 passed` (incluye NH-DP-03 playback robusto)
 - `pnpm --filter @app/stream-gateway test`: `14 passed` (incluye NH-DP-04 retry/backoff + métricas playback)
 - `pnpm --filter @app/stream-gateway test`: `15 passed` (incluye NH-DP-05 adapter de media)
+- `pnpm --filter @app/stream-gateway test`: `16 passed` (incluye NH-DP-06 process engine)
 - `pnpm test:e2e:admin`: `7 passed`
 - `pnpm test:e2e:portal`: `2 passed`
 
 ## Próximo bloque recomendado
 
-1. NH-DP-06: implementación de engine real (ingesta/transcode) usando el adapter existente.
+1. NH-DP-07: integrar pipeline de video real (ffmpeg/gstreamer) sobre process-engine.
 2. NH-015: asignación de cámaras por `client_user` (subset real y enforcement integral).
 3. Endurecimiento e2e multi-tenant para concurrencia de playback (escenarios simultáneos por tenant).

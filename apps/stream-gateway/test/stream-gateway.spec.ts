@@ -52,6 +52,11 @@ afterEach(async () => {
   delete process.env.STREAM_PLAYBACK_READ_RETRIES;
   delete process.env.STREAM_PLAYBACK_READ_RETRY_BASE_MS;
   delete process.env.STREAM_PLAYBACK_READ_RETRY_MAX_MS;
+  delete process.env.STREAM_MEDIA_ENGINE;
+  delete process.env.STREAM_TRANSCODER_CMD;
+  delete process.env.STREAM_TRANSCODER_SHELL;
+  delete process.env.STREAM_TRANSCODER_START_TIMEOUT_MS;
+  delete process.env.STREAM_TRANSCODER_STOP_TIMEOUT_MS;
   while (createdDirs.length) {
     const dir = createdDirs.pop();
     if (dir) {
@@ -707,7 +712,8 @@ describe("stream-gateway", () => {
           throw error;
         }
         return value;
-      }
+      },
+      async close() {}
     };
     const { app } = await setupApp({ mediaEngine });
     const tenantId = "tenant-adapter";
@@ -743,6 +749,67 @@ describe("stream-gateway", () => {
     });
     expect(segmentRes.statusCode).toBe(200);
     expect(segmentRes.body).toContain("ADAPTER_SEGMENT");
+
+    await app.close();
+  });
+
+  it("supports process media engine from env and reports worker diagnostics", async () => {
+    process.env.STREAM_MEDIA_ENGINE = "process";
+    process.env.STREAM_TRANSCODER_CMD = 'node -e "setInterval(() => {}, 1000)"';
+    process.env.STREAM_TRANSCODER_START_TIMEOUT_MS = "1500";
+    const { app } = await setupApp();
+    const tenantId = "tenant-process-engine";
+    const cameraId = "camera-process-engine";
+
+    const provision = await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: { tenantId, cameraId, rtspUrl: "rtsp://demo/process-engine" }
+    });
+    expect(provision.statusCode).toBe(200);
+
+    const healthWithWorker = await app.inject({ method: "GET", url: "/health" });
+    expect(healthWithWorker.statusCode).toBe(200);
+    expect(healthWithWorker.json()).toMatchObject({
+      mediaEngine: "process-shell",
+      mediaEngineDiagnostics: {
+        workers: {
+          total: 1,
+          running: 1
+        }
+      }
+    });
+
+    const token = createPlaybackToken({
+      tenantId,
+      cameraId,
+      sid: "sid-process-engine",
+      expiresAt: new Date(Date.now() + 60_000)
+    });
+    const playback = await app.inject({
+      method: "GET",
+      url: `/playback/${tenantId}/${cameraId}/index.m3u8?token=${encodeURIComponent(token)}`
+    });
+    expect(playback.statusCode).toBe(200);
+
+    const deprovision = await app.inject({
+      method: "POST",
+      url: "/deprovision",
+      payload: { tenantId, cameraId }
+    });
+    expect(deprovision.statusCode).toBe(200);
+
+    const healthAfterStop = await app.inject({ method: "GET", url: "/health" });
+    expect(healthAfterStop.statusCode).toBe(200);
+    expect(healthAfterStop.json()).toMatchObject({
+      mediaEngine: "process-shell",
+      mediaEngineDiagnostics: {
+        workers: {
+          total: 1,
+          running: 0
+        }
+      }
+    });
 
     await app.close();
   });
