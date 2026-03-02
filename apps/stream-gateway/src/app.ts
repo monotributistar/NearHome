@@ -211,6 +211,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
   const playbackReadRetries = Math.max(0, Number(process.env.STREAM_PLAYBACK_READ_RETRIES ?? 0));
   const playbackReadRetryBaseMs = Math.max(0, Number(process.env.STREAM_PLAYBACK_READ_RETRY_BASE_MS ?? 25));
   const playbackReadRetryMaxMs = Math.max(playbackReadRetryBaseMs, Number(process.env.STREAM_PLAYBACK_READ_RETRY_MAX_MS ?? 250));
+  const maxActiveSessionsPerTenant = Math.max(0, Number(process.env.STREAM_MAX_ACTIVE_SESSIONS_PER_TENANT ?? 0));
   let probeTimer: NodeJS.Timeout | null = null;
   let sessionSweepTimer: NodeJS.Timeout | null = null;
   let sessionSweepCount = 0;
@@ -448,6 +449,26 @@ export async function buildApp(options: BuildAppOptions = {}) {
           endReason: existingSession.endReason
         }
       });
+    }
+    if (maxActiveSessionsPerTenant > 0 && existingSession?.status !== "active") {
+      let activeSessionsInTenant = 0;
+      for (const session of streamSessions.values()) {
+        if (session.tenantId === args.tenantId && session.status === "active") {
+          activeSessionsInTenant += 1;
+        }
+      }
+      if (activeSessionsInTenant >= maxActiveSessionsPerTenant) {
+        throw new ApiDomainError({
+          statusCode: 409,
+          apiCode: "PLAYBACK_TENANT_CAPACITY_EXCEEDED",
+          message: "Tenant reached max active playback sessions",
+          details: {
+            tenantId: args.tenantId,
+            maxActiveSessionsPerTenant,
+            activeSessionsInTenant
+          }
+        });
+      }
     }
     const issuedAt = new Date(args.iat * 1000).toISOString();
     const expiresAt = new Date(args.exp * 1000).toISOString();

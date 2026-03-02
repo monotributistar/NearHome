@@ -20,6 +20,7 @@
 - Etapa activa: process-engine de data-plane (NH-DP-06) completada
 - Etapa activa: supervisor de workers process-engine (NH-DP-07) completada
 - Etapa activa: playback HLS con segmentos dinámicos + smoke ffmpeg (NH-DP-08A) completada
+- Etapa activa: guardrail de concurrencia playback por tenant (NH-DP-08B) completada
 
 ## Progreso completado
 
@@ -99,6 +100,10 @@
    - endpoint dinámico `/playback/:tenantId/:cameraId/segments/:segmentName`.
    - reescritura de `index.m3u8` para asset URLs tokenizadas por segmento.
    - smoke test con ffmpeg real (`lavfi`) para validar fetch de manifiesto + segmento dinámico.
+21. Guardrail de concurrencia playback por tenant (NH-DP-08B):
+   - límite opcional de sesiones activas en data-plane (`STREAM_MAX_ACTIVE_SESSIONS_PER_TENANT`).
+   - rechazo explícito `409 PLAYBACK_TENANT_CAPACITY_EXCEEDED`.
+   - validación de no interferencia cross-tenant bajo límite activo.
 
 ## Cambios técnicos relevantes
 
@@ -198,6 +203,10 @@
   - preset `ffmpeg-hls` compatible con input sintético `lavfi` en smoke tests.
 - `apps/stream-gateway/test/stream-gateway.spec.ts`:
   - smoke NH-DP-08A con ffmpeg real (si está disponible).
+- `apps/stream-gateway/src/app.ts`:
+  - enforcement opcional de capacidad máxima de sesiones activas por tenant.
+- `apps/stream-gateway/test/stream-gateway.spec.ts`:
+  - tests NH-DP-08B para límite por tenant y aislamiento cross-tenant.
 - `docs/CONTROLPLANE_DATAPLANE_CONTRACT.md`:
   - contrato actualizado de provision y session tracking.
 
@@ -239,11 +248,12 @@
 - `pnpm --filter @app/stream-gateway test`: `16 passed` (incluye NH-DP-06 process engine)
 - `pnpm --filter @app/stream-gateway test`: `18 passed` (incluye NH-DP-07 supervisor process-engine)
 - `pnpm --filter @app/stream-gateway test`: `19 passed` (incluye NH-DP-08A segmentos dinámicos + smoke ffmpeg)
+- `pnpm --filter @app/stream-gateway test`: `21 passed` (incluye NH-DP-08B guardrail por tenant)
 - `pnpm test:e2e:admin`: `7 passed`
 - `pnpm test:e2e:portal`: `2 passed`
 
 ## Próximo bloque recomendado
 
-1. NH-DP-08B: validar pipeline real de video end-to-end con RTSP real persistente y QoS.
+1. NH-DP-08C: validar pipeline real de video end-to-end con RTSP real persistente y QoS.
 2. NH-015: asignación de cámaras por `client_user` (subset real y enforcement integral).
 3. Endurecimiento e2e multi-tenant para concurrencia de playback (escenarios simultáneos por tenant).

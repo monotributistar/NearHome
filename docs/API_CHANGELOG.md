@@ -69,6 +69,10 @@
   - endpoint `GET /playback/:tenantId/:cameraId/segments/:segmentName?token=...`.
   - reescritura de `index.m3u8` para assets tokenizados por segmento.
   - smoke test de playback real con ffmpeg (`lavfi`) sin cambiar contrato HTTP.
+- NH-DP-08B: guardrail de concurrencia en data-plane por tenant:
+  - límite opcional `STREAM_MAX_ACTIVE_SESSIONS_PER_TENANT`.
+  - nuevo error `409 PLAYBACK_TENANT_CAPACITY_EXCEEDED` con detalle de capacidad.
+  - aislamiento multi-tenant validado: el límite de tenant A no impacta tenant B.
 - NH-028: ciclo de vida de sesiones de stream:
   - `GET /stream-sessions`
   - `GET /stream-sessions/:id`

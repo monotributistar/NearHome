@@ -65,6 +65,7 @@ afterEach(async () => {
   delete process.env.STREAM_TRANSCODER_RESTART_BACKOFF_MS;
   delete process.env.STREAM_TRANSCODER_RESTART_BACKOFF_MAX_MS;
   delete process.env.STREAM_PROCESS_SEED_ASSETS;
+  delete process.env.STREAM_MAX_ACTIVE_SESSIONS_PER_TENANT;
   while (createdDirs.length) {
     const dir = createdDirs.pop();
     if (dir) {
@@ -960,6 +961,113 @@ describe("stream-gateway", () => {
     });
     expect(segment.statusCode).toBe(200);
     expect(segment.body.length).toBeGreaterThan(400);
+
+    await app.close();
+  });
+
+  it("enforces max active playback sessions per tenant when configured", async () => {
+    process.env.STREAM_MAX_ACTIVE_SESSIONS_PER_TENANT = "1";
+    const { app } = await setupApp();
+    const tenantId = "tenant-cap";
+    const cameraA = "camera-cap-a";
+    const cameraB = "camera-cap-b";
+
+    await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: { tenantId, cameraId: cameraA, rtspUrl: "rtsp://demo/cap-a" }
+    });
+    await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: { tenantId, cameraId: cameraB, rtspUrl: "rtsp://demo/cap-b" }
+    });
+
+    const tokenA = createPlaybackToken({
+      tenantId,
+      cameraId: cameraA,
+      sid: "sid-cap-1",
+      expiresAt: new Date(Date.now() + 60_000)
+    });
+    const playbackA = await app.inject({
+      method: "GET",
+      url: `/playback/${tenantId}/${cameraA}/index.m3u8?token=${encodeURIComponent(tokenA)}`
+    });
+    expect(playbackA.statusCode).toBe(200);
+
+    const tokenB = createPlaybackToken({
+      tenantId,
+      cameraId: cameraB,
+      sid: "sid-cap-2",
+      expiresAt: new Date(Date.now() + 60_000)
+    });
+    const playbackB = await app.inject({
+      method: "GET",
+      url: `/playback/${tenantId}/${cameraB}/index.m3u8?token=${encodeURIComponent(tokenB)}`
+    });
+    expect(playbackB.statusCode).toBe(409);
+    expect(playbackB.json()).toMatchObject({
+      code: "PLAYBACK_TENANT_CAPACITY_EXCEEDED"
+    });
+
+    await app.close();
+  });
+
+  it("applies active-session tenant cap without cross-tenant interference", async () => {
+    process.env.STREAM_MAX_ACTIVE_SESSIONS_PER_TENANT = "1";
+    const { app } = await setupApp();
+    const cameraId = "camera-cap-shared";
+
+    await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: { tenantId: "tenant-cap-a", cameraId, rtspUrl: "rtsp://demo/tenant-cap-a/shared" }
+    });
+    await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: { tenantId: "tenant-cap-b", cameraId, rtspUrl: "rtsp://demo/tenant-cap-b/shared" }
+    });
+
+    const tokenA1 = createPlaybackToken({
+      tenantId: "tenant-cap-a",
+      cameraId,
+      sid: "sid-a-1",
+      expiresAt: new Date(Date.now() + 60_000)
+    });
+    const tokenA2 = createPlaybackToken({
+      tenantId: "tenant-cap-a",
+      cameraId,
+      sid: "sid-a-2",
+      expiresAt: new Date(Date.now() + 60_000)
+    });
+    const tokenB1 = createPlaybackToken({
+      tenantId: "tenant-cap-b",
+      cameraId,
+      sid: "sid-b-1",
+      expiresAt: new Date(Date.now() + 60_000)
+    });
+
+    const playbackA1 = await app.inject({
+      method: "GET",
+      url: `/playback/tenant-cap-a/${cameraId}/index.m3u8?token=${encodeURIComponent(tokenA1)}`
+    });
+    expect(playbackA1.statusCode).toBe(200);
+
+    const playbackA2 = await app.inject({
+      method: "GET",
+      url: `/playback/tenant-cap-a/${cameraId}/index.m3u8?token=${encodeURIComponent(tokenA2)}`
+    });
+    expect(playbackA2.statusCode).toBe(409);
+    expect(playbackA2.json()).toMatchObject({
+      code: "PLAYBACK_TENANT_CAPACITY_EXCEEDED"
+    });
+
+    const playbackB1 = await app.inject({
+      method: "GET",
+      url: `/playback/tenant-cap-b/${cameraId}/index.m3u8?token=${encodeURIComponent(tokenB1)}`
+    });
+    expect(playbackB1.statusCode).toBe(200);
 
     await app.close();
   });

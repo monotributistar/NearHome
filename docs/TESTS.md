@@ -81,6 +81,10 @@ Cobertura incluida:
 - NH-DP-08A playback real compatible con HLS dinámico
   - smoke test con ffmpeg real (si está disponible) usando source `lavfi`
   - validación de manifiesto reescrito y fetch de segmento dinámico en `/segments/:segmentName`
+- NH-DP-08B guardrail de concurrencia por tenant
+  - límite opcional de sesiones activas playback por tenant (`STREAM_MAX_ACTIVE_SESSIONS_PER_TENANT`)
+  - rechazo explícito `409 PLAYBACK_TENANT_CAPACITY_EXCEEDED`
+  - validación de no interferencia cross-tenant bajo límite activo
 
 ## Ejecutar
 
