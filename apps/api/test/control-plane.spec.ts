@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../src/app";
 
@@ -1521,5 +1521,359 @@ describe("NH-DP detection jobs and incidents", () => {
       data: expect.any(Array),
       total: expect.any(Number)
     });
+  });
+});
+
+describe("NH-DP-13 detection pipeline execution", () => {
+  it("executes queued job through inference bridge and persists observations/incidents", async () => {
+    const previousBridge = process.env.DETECTION_BRIDGE_URL;
+    process.env.DETECTION_BRIDGE_URL = "http://mock-inference-bridge";
+
+    const fetchMock = vi.fn(async (input: any) => {
+      const url = String(input);
+      if (url.includes("http://mock-inference-bridge/v1/infer")) {
+        return new globalThis.Response(
+          JSON.stringify({
+            detections: [
+              {
+                label: "dog",
+                confidence: 0.91,
+                bbox: { x: 0.15, y: 0.2, w: 0.25, h: 0.3 },
+                attributes: { motion: true }
+              }
+            ],
+            providerMeta: { nodeId: "node-yolo-cpu" }
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+      return new globalThis.Response("not found", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const pipelineApp = await buildApp();
+    await pipelineApp.ready();
+
+    try {
+      const loginResponse = await pipelineApp.inject({
+        method: "POST",
+        url: "/auth/login",
+        headers: { "x-forwarded-for": `test-pipeline-${Date.now()}` },
+        payload: { email: "admin@nearhome.dev", password: "demo1234" }
+      });
+      expect(loginResponse.statusCode).toBe(200);
+      const token = loginResponse.json<{ accessToken: string }>().accessToken;
+
+      const meResponse = await pipelineApp.inject({
+        method: "GET",
+        url: "/auth/me",
+        headers: { authorization: `Bearer ${token}` }
+      });
+      expect(meResponse.statusCode).toBe(200);
+      const tenantId = meResponse.json<{ memberships: Array<{ tenantId: string }> }>().memberships[0]?.tenantId;
+      expect(tenantId).toBeTruthy();
+
+      const camerasResponse = await pipelineApp.inject({
+        method: "GET",
+        url: "/cameras?_start=0&_end=1",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "x-tenant-id": tenantId!
+        }
+      });
+      expect(camerasResponse.statusCode).toBe(200);
+      const cameraId = camerasResponse.json<{ data: Array<{ id: string }> }>().data[0]?.id;
+      expect(cameraId).toBeTruthy();
+
+      const createResponse = await pipelineApp.inject({
+        method: "POST",
+        url: "/v1/detections/jobs",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "x-tenant-id": tenantId!
+        },
+        payload: {
+          cameraId,
+          mode: "realtime",
+          source: "snapshot",
+          provider: "onprem_bento",
+          options: { modelRef: "yolo26n@1.0.0", taskType: "object_detection" }
+        }
+      });
+      expect(createResponse.statusCode).toBe(200);
+      const jobId = createResponse.json<{ data: { id: string } }>().data.id;
+
+      let jobStatus = "queued";
+      for (let i = 0; i < 30; i += 1) {
+        const jobResponse = await pipelineApp.inject({
+          method: "GET",
+          url: `/v1/detections/jobs/${jobId}`,
+          headers: {
+            authorization: `Bearer ${token}`,
+            "x-tenant-id": tenantId!
+          }
+        });
+        expect(jobResponse.statusCode).toBe(200);
+        jobStatus = jobResponse.json<{ data: { status: string } }>().data.status;
+        if (jobStatus === "succeeded") break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      expect(jobStatus).toBe("succeeded");
+
+      const resultsResponse = await pipelineApp.inject({
+        method: "GET",
+        url: `/v1/detections/jobs/${jobId}/results`,
+        headers: {
+          authorization: `Bearer ${token}`,
+          "x-tenant-id": tenantId!
+        }
+      });
+      expect(resultsResponse.statusCode).toBe(200);
+      const results = resultsResponse.json<{ data: Array<{ label: string }>; total: number }>();
+      expect(results.total).toBeGreaterThan(0);
+      expect(results.data[0]?.label).toBe("dog");
+
+      const incidentsResponse = await pipelineApp.inject({
+        method: "GET",
+        url: "/v1/incidents?_start=0&_end=20",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "x-tenant-id": tenantId!
+        }
+      });
+      expect(incidentsResponse.statusCode).toBe(200);
+      const incidents = incidentsResponse.json<{ data: Array<{ id: string; type: string }>; total: number }>();
+      expect(incidents.total).toBeGreaterThan(0);
+      expect(incidents.data.some((entry) => entry.type === "dog_in_backyard")).toBe(true);
+
+      const firstIncidentId = incidents.data[0]?.id;
+      expect(firstIncidentId).toBeTruthy();
+
+      const evidenceResponse = await pipelineApp.inject({
+        method: "GET",
+        url: `/v1/incidents/${firstIncidentId}/evidence`,
+        headers: {
+          authorization: `Bearer ${token}`,
+          "x-tenant-id": tenantId!
+        }
+      });
+      expect(evidenceResponse.statusCode).toBe(200);
+      expect(evidenceResponse.json<{ total: number }>().total).toBeGreaterThan(0);
+    } finally {
+      await pipelineApp.close();
+      vi.unstubAllGlobals();
+      process.env.DETECTION_BRIDGE_URL = previousBridge;
+    }
+  });
+});
+
+describe("NH-DP-14 temporal workflow dispatch", () => {
+  it("dispatches detection job to temporal endpoint and stores workflow/run ids", async () => {
+    const previousBridge = process.env.DETECTION_BRIDGE_URL;
+    const previousMode = process.env.DETECTION_EXECUTION_MODE;
+    const previousTemporalDispatch = process.env.DETECTION_TEMPORAL_DISPATCH_URL;
+
+    process.env.DETECTION_BRIDGE_URL = "";
+    process.env.DETECTION_EXECUTION_MODE = "temporal";
+    process.env.DETECTION_TEMPORAL_DISPATCH_URL = "http://mock-temporal-dispatch";
+
+    const fetchMock = vi.fn(async (input: any) => {
+      const url = String(input);
+      if (url.includes("http://mock-temporal-dispatch/v1/workflows/detection-jobs")) {
+        return new globalThis.Response(
+          JSON.stringify({
+            workflowId: "wf-det-job",
+            runId: "run-det-job",
+            taskQueue: "nearhome-detection"
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+      return new globalThis.Response("not found", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const temporalApp = await buildApp();
+    await temporalApp.ready();
+
+    try {
+      const loginResponse = await temporalApp.inject({
+        method: "POST",
+        url: "/auth/login",
+        headers: { "x-forwarded-for": `test-temporal-${Date.now()}` },
+        payload: { email: "admin@nearhome.dev", password: "demo1234" }
+      });
+      expect(loginResponse.statusCode).toBe(200);
+      const token = loginResponse.json<{ accessToken: string }>().accessToken;
+
+      const meResponse = await temporalApp.inject({
+        method: "GET",
+        url: "/auth/me",
+        headers: { authorization: `Bearer ${token}` }
+      });
+      expect(meResponse.statusCode).toBe(200);
+      const tenantId = meResponse.json<{ memberships: Array<{ tenantId: string }> }>().memberships[0]?.tenantId;
+      expect(tenantId).toBeTruthy();
+
+      const camerasResponse = await temporalApp.inject({
+        method: "GET",
+        url: "/cameras?_start=0&_end=1",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "x-tenant-id": tenantId!
+        }
+      });
+      expect(camerasResponse.statusCode).toBe(200);
+      const cameraId = camerasResponse.json<{ data: Array<{ id: string }> }>().data[0]?.id;
+      expect(cameraId).toBeTruthy();
+
+      const createResponse = await temporalApp.inject({
+        method: "POST",
+        url: "/v1/detections/jobs",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "x-tenant-id": tenantId!
+        },
+        payload: {
+          cameraId,
+          mode: "realtime",
+          source: "snapshot",
+          provider: "onprem_bento",
+          options: { modelRef: "yolo26n@1.0.0", taskType: "object_detection" }
+        }
+      });
+      expect(createResponse.statusCode).toBe(200);
+      const jobId = createResponse.json<{ data: { id: string } }>().data.id;
+
+      let job: { status: string; workflowId: string | null; runId: string | null } | null = null;
+      for (let i = 0; i < 30; i += 1) {
+        const jobResponse = await temporalApp.inject({
+          method: "GET",
+          url: `/v1/detections/jobs/${jobId}`,
+          headers: {
+            authorization: `Bearer ${token}`,
+            "x-tenant-id": tenantId!
+          }
+        });
+        expect(jobResponse.statusCode).toBe(200);
+        job = jobResponse.json<{ data: { status: string; workflowId: string | null; runId: string | null } }>().data;
+        if (job.workflowId) break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+
+      expect(job).toBeTruthy();
+      expect(job?.status).toBe("queued");
+      expect(job?.workflowId).toBe("wf-det-job");
+      expect(job?.runId).toBe("run-det-job");
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://mock-temporal-dispatch/v1/workflows/detection-jobs",
+        expect.objectContaining({ method: "POST" })
+      );
+    } finally {
+      await temporalApp.close();
+      vi.unstubAllGlobals();
+      process.env.DETECTION_BRIDGE_URL = previousBridge;
+      process.env.DETECTION_EXECUTION_MODE = previousMode;
+      process.env.DETECTION_TEMPORAL_DISPATCH_URL = previousTemporalDispatch;
+    }
+  });
+
+  it("marks detection job as failed when temporal dispatch errors", async () => {
+    const previousBridge = process.env.DETECTION_BRIDGE_URL;
+    const previousMode = process.env.DETECTION_EXECUTION_MODE;
+    const previousTemporalDispatch = process.env.DETECTION_TEMPORAL_DISPATCH_URL;
+
+    process.env.DETECTION_BRIDGE_URL = "";
+    process.env.DETECTION_EXECUTION_MODE = "temporal";
+    process.env.DETECTION_TEMPORAL_DISPATCH_URL = "http://mock-temporal-dispatch";
+
+    const fetchMock = vi.fn(async () => new globalThis.Response("boom", { status: 500 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const temporalApp = await buildApp();
+    await temporalApp.ready();
+
+    try {
+      const loginResponse = await temporalApp.inject({
+        method: "POST",
+        url: "/auth/login",
+        headers: { "x-forwarded-for": `test-temporal-fail-${Date.now()}` },
+        payload: { email: "admin@nearhome.dev", password: "demo1234" }
+      });
+      expect(loginResponse.statusCode).toBe(200);
+      const token = loginResponse.json<{ accessToken: string }>().accessToken;
+
+      const meResponse = await temporalApp.inject({
+        method: "GET",
+        url: "/auth/me",
+        headers: { authorization: `Bearer ${token}` }
+      });
+      expect(meResponse.statusCode).toBe(200);
+      const tenantId = meResponse.json<{ memberships: Array<{ tenantId: string }> }>().memberships[0]?.tenantId;
+      expect(tenantId).toBeTruthy();
+
+      const camerasResponse = await temporalApp.inject({
+        method: "GET",
+        url: "/cameras?_start=0&_end=1",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "x-tenant-id": tenantId!
+        }
+      });
+      expect(camerasResponse.statusCode).toBe(200);
+      const cameraId = camerasResponse.json<{ data: Array<{ id: string }> }>().data[0]?.id;
+      expect(cameraId).toBeTruthy();
+
+      const createResponse = await temporalApp.inject({
+        method: "POST",
+        url: "/v1/detections/jobs",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "x-tenant-id": tenantId!
+        },
+        payload: {
+          cameraId,
+          mode: "realtime",
+          source: "snapshot",
+          provider: "onprem_bento"
+        }
+      });
+      expect(createResponse.statusCode).toBe(200);
+      const jobId = createResponse.json<{ data: { id: string } }>().data.id;
+
+      let jobStatus = "queued";
+      let jobErrorCode: string | null = null;
+      for (let i = 0; i < 30; i += 1) {
+        const jobResponse = await temporalApp.inject({
+          method: "GET",
+          url: `/v1/detections/jobs/${jobId}`,
+          headers: {
+            authorization: `Bearer ${token}`,
+            "x-tenant-id": tenantId!
+          }
+        });
+        expect(jobResponse.statusCode).toBe(200);
+        const job = jobResponse.json<{ data: { status: string; errorCode: string | null } }>().data;
+        jobStatus = job.status;
+        jobErrorCode = job.errorCode;
+        if (jobStatus === "failed") break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+
+      expect(jobStatus).toBe("failed");
+      expect(jobErrorCode).toBe("TEMPORAL_DISPATCH_ERROR");
+    } finally {
+      await temporalApp.close();
+      vi.unstubAllGlobals();
+      process.env.DETECTION_BRIDGE_URL = previousBridge;
+      process.env.DETECTION_EXECUTION_MODE = previousMode;
+      process.env.DETECTION_TEMPORAL_DISPATCH_URL = previousTemporalDispatch;
+    }
   });
 });

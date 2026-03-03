@@ -450,6 +450,62 @@ function incidentEvidenceResponse(evidence: {
   };
 }
 
+function toNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function resolveZoneFromProfile(zoneMapRaw: string | null, bbox: { x: number; y: number; w: number; h: number }) {
+  if (!zoneMapRaw) return null;
+  let zoneMap: Record<string, unknown>;
+  try {
+    zoneMap = parseJson<Record<string, unknown>>(zoneMapRaw);
+  } catch {
+    return null;
+  }
+
+  const centerX = bbox.x + bbox.w / 2;
+  const centerY = bbox.y + bbox.h / 2;
+  for (const [zoneId, candidate] of Object.entries(zoneMap)) {
+    if (!candidate || typeof candidate !== "object") continue;
+    const shape = candidate as Record<string, unknown>;
+    const xMin = toNumber(shape.xMin);
+    const xMax = toNumber(shape.xMax);
+    const yMin = toNumber(shape.yMin);
+    const yMax = toNumber(shape.yMax);
+    if (xMin === null || xMax === null || yMin === null || yMax === null) continue;
+    if (centerX >= xMin && centerX <= xMax && centerY >= yMin && centerY <= yMax) {
+      return zoneId;
+    }
+  }
+  return null;
+}
+
+function deriveIncidentFromDetection(args: { label: string; zoneId: string | null; location: string | null }) {
+  const label = args.label.toLowerCase();
+  if (label.includes("dog")) {
+    return {
+      type: "dog_in_backyard",
+      summary: `Dog detected${args.zoneId ? ` in zone ${args.zoneId}` : ""}${args.location ? ` at ${args.location}` : ""}`
+    };
+  }
+  if (label.includes("branch")) {
+    return {
+      type: "branch_fall_backyard",
+      summary: `Branch fall detected${args.zoneId ? ` in zone ${args.zoneId}` : ""}${args.location ? ` at ${args.location}` : ""}`
+    };
+  }
+  if (label.includes("person")) {
+    return {
+      type: "person_approached_front_window",
+      summary: `Person detected${args.zoneId ? ` in zone ${args.zoneId}` : ""}${args.location ? ` at ${args.location}` : ""}`
+    };
+  }
+  return {
+    type: `object_detected_${label.replace(/[^a-z0-9]+/g, "_")}`,
+    summary: `${args.label} detected${args.zoneId ? ` in zone ${args.zoneId}` : ""}${args.location ? ` at ${args.location}` : ""}`
+  };
+}
+
 async function computeEntitlements(tenantId: string) {
   const subscription = await prisma.subscription.findFirst({
     where: { tenantId, status: "active" },
@@ -827,6 +883,9 @@ export async function buildApp() {
   const jwtSecret = process.env.JWT_SECRET ?? "dev-super-secret";
   const streamTokenSecret = process.env.STREAM_TOKEN_SECRET ?? "dev-stream-token-secret";
   const streamGatewayUrl = process.env.STREAM_GATEWAY_URL?.replace(/\/$/, "") ?? null;
+  const detectionBridgeUrl = process.env.DETECTION_BRIDGE_URL?.replace(/\/$/, "") ?? null;
+  const temporalDispatchUrl = process.env.DETECTION_TEMPORAL_DISPATCH_URL?.replace(/\/$/, "") ?? null;
+  const detectionExecutionMode = process.env.DETECTION_EXECUTION_MODE ?? "inline";
   const streamHealthSyncEnabled = process.env.STREAM_HEALTH_SYNC_ENABLED === "1";
   const streamHealthSyncIntervalMs = Number(process.env.STREAM_HEALTH_SYNC_INTERVAL_MS ?? 30_000);
   const streamHealthSyncBatchSize = Number(process.env.STREAM_HEALTH_SYNC_BATCH_SIZE ?? 100);
@@ -836,6 +895,255 @@ export async function buildApp() {
   const loginBuckets = new Map<string, LoginBucket>();
   let streamSyncTimer: NodeJS.Timeout | null = null;
   let streamSyncInFlight = false;
+
+  const runDetectionJobPipeline = async (jobId: string) => {
+    if (!detectionBridgeUrl) return;
+    const job = await prisma.detectionJob.findUnique({
+      where: { id: jobId },
+      include: {
+        camera: {
+          include: { profile: true }
+        }
+      }
+    });
+    if (!job) return;
+    if ((job.status as DetectionJobStatus) !== "queued") return;
+
+    await prisma.detectionJob.update({
+      where: { id: job.id },
+      data: {
+        status: "running",
+        startedAt: new Date(),
+        workflowId: detectionExecutionMode === "temporal" ? `temporal-${job.id}` : `inline-${job.id}`,
+        runId: detectionExecutionMode === "temporal" ? `run-${Date.now()}` : null
+      }
+    });
+
+    const options = job.options ? parseJson<Record<string, unknown>>(job.options) : {};
+    const inferPayload = {
+      requestId: `det-${job.id}`,
+      jobId: job.id,
+      tenantId: job.tenantId,
+      cameraId: job.cameraId,
+      taskType: typeof options.taskType === "string" ? options.taskType : "object_detection",
+      modelRef: typeof options.modelRef === "string" ? options.modelRef : "yolo26n@1.0.0",
+      mediaRef: {
+        source: job.source,
+        cameraId: job.cameraId,
+        rtspUrl: job.camera.rtspUrl
+      },
+      thresholds: typeof options.thresholds === "object" && options.thresholds ? options.thresholds : {},
+      deadlineMs: typeof options.deadlineMs === "number" ? options.deadlineMs : 15000,
+      priority: typeof options.priority === "number" ? options.priority : 5,
+      provider: job.provider
+    };
+
+    try {
+      const response = await fetch(`${detectionBridgeUrl}/v1/infer`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(inferPayload)
+      });
+      if (!response.ok) {
+        throw new Error(`Bridge HTTP ${response.status}`);
+      }
+      const body = (await response.json()) as {
+        detections?: Array<{
+          label?: string;
+          confidence?: number;
+          bbox?: { x?: number; y?: number; w?: number; h?: number };
+          keypoints?: unknown;
+          attributes?: Record<string, unknown>;
+          providerMeta?: Record<string, unknown>;
+        }>;
+        providerMeta?: Record<string, unknown>;
+      };
+      const detections = Array.isArray(body.detections) ? body.detections : [];
+
+      await prisma.$transaction(async (tx) => {
+        for (let i = 0; i < detections.length; i += 1) {
+          const det = detections[i];
+          const label = typeof det.label === "string" && det.label.length > 0 ? det.label : "unknown";
+          const confidence = typeof det.confidence === "number" ? det.confidence : 0;
+          const bbox = {
+            x: typeof det.bbox?.x === "number" ? det.bbox.x : 0,
+            y: typeof det.bbox?.y === "number" ? det.bbox.y : 0,
+            w: typeof det.bbox?.w === "number" ? det.bbox.w : 0.1,
+            h: typeof det.bbox?.h === "number" ? det.bbox.h : 0.1
+          };
+          const frameTs = new Date();
+          const zoneId = resolveZoneFromProfile(job.camera.profile?.zoneMap ?? null, bbox);
+          const incident = deriveIncidentFromDetection({ label, zoneId, location: job.camera.location });
+
+          const observation = await tx.detectionObservation.create({
+            data: {
+              jobId: job.id,
+              tenantId: job.tenantId,
+              cameraId: job.cameraId,
+              frameTs,
+              label,
+              confidence,
+              bbox: JSON.stringify(bbox),
+              keypoints: det.keypoints ? JSON.stringify(det.keypoints) : null,
+              attributes: det.attributes ? JSON.stringify(det.attributes) : null,
+              providerMeta: det.providerMeta ? JSON.stringify(det.providerMeta) : body.providerMeta ? JSON.stringify(body.providerMeta) : null
+            }
+          });
+
+          const track = await tx.track.create({
+            data: {
+              jobId: job.id,
+              tenantId: job.tenantId,
+              cameraId: job.cameraId,
+              classLabel: label,
+              trackExternalId: `${job.id}-${i + 1}`,
+              startedAt: frameTs,
+              metadata: JSON.stringify({ zoneId })
+            }
+          });
+
+          await tx.trackPoint.create({
+            data: {
+              trackId: track.id,
+              ts: frameTs,
+              x: bbox.x + bbox.w / 2,
+              y: bbox.y + bbox.h / 2,
+              zoneId
+            }
+          });
+
+          const primitive = await tx.scenePrimitiveEvent.create({
+            data: {
+              tenantId: job.tenantId,
+              cameraId: job.cameraId,
+              jobId: job.id,
+              type: `object_detected.${label.toLowerCase()}`,
+              severity: confidence >= 0.8 ? "high" : confidence >= 0.5 ? "medium" : "low",
+              startedAt: frameTs,
+              payload: JSON.stringify({
+                confidence,
+                zoneId,
+                observationId: observation.id
+              })
+            }
+          });
+
+          const incidentEvent = await tx.incidentEvent.create({
+            data: {
+              tenantId: job.tenantId,
+              cameraId: job.cameraId,
+              jobId: job.id,
+              type: incident.type,
+              severity: confidence >= 0.8 ? "high" : confidence >= 0.5 ? "medium" : "low",
+              status: "open",
+              summary: incident.summary,
+              startedAt: frameTs,
+              payload: JSON.stringify({
+                label,
+                confidence,
+                zoneId
+              })
+            }
+          });
+
+          await tx.incidentEvidence.create({
+            data: {
+              tenantId: job.tenantId,
+              incidentId: incidentEvent.id,
+              observationId: observation.id,
+              trackId: track.id,
+              scenePrimitiveEventId: primitive.id
+            }
+          });
+        }
+
+        await tx.detectionJob.update({
+          where: { id: job.id },
+          data: {
+            status: "succeeded",
+            finishedAt: new Date()
+          }
+        });
+      });
+    } catch (error) {
+      app.log.error({ error, jobId: job.id }, "detection.pipeline_failed");
+      await prisma.detectionJob.update({
+        where: { id: job.id },
+        data: {
+          status: "failed",
+          finishedAt: new Date(),
+          errorCode: "DETECTION_PIPELINE_ERROR",
+          errorMessage: error instanceof Error ? error.message : "unknown error"
+        }
+      });
+    }
+  };
+
+  const dispatchDetectionJobTemporal = async (jobId: string) => {
+    if (!temporalDispatchUrl) {
+      throw new Error("DETECTION_TEMPORAL_DISPATCH_URL is not configured");
+    }
+
+    const job = await prisma.detectionJob.findUnique({
+      where: { id: jobId },
+      include: {
+        camera: true
+      }
+    });
+    if (!job) return;
+    if ((job.status as DetectionJobStatus) !== "queued") return;
+
+    const options = job.options ? parseJson<Record<string, unknown>>(job.options) : {};
+    const dispatchPayload = {
+      requestId: `det-${job.id}`,
+      jobId: job.id,
+      tenantId: job.tenantId,
+      cameraId: job.cameraId,
+      mode: job.mode,
+      source: job.source,
+      provider: job.provider,
+      options,
+      mediaRef: {
+        source: job.source,
+        cameraId: job.cameraId,
+        rtspUrl: job.camera.rtspUrl
+      }
+    };
+
+    try {
+      const response = await fetch(`${temporalDispatchUrl}/v1/workflows/detection-jobs`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(dispatchPayload)
+      });
+      if (!response.ok) {
+        throw new Error(`Temporal dispatch HTTP ${response.status}`);
+      }
+
+      const body = (await response.json()) as { workflowId?: string; runId?: string; taskQueue?: string };
+      const workflowId =
+        typeof body.workflowId === "string" && body.workflowId.length > 0 ? body.workflowId : `det-${job.id}`;
+
+      await prisma.detectionJob.update({
+        where: { id: job.id },
+        data: {
+          workflowId,
+          runId: typeof body.runId === "string" && body.runId.length > 0 ? body.runId : null
+        }
+      });
+    } catch (error) {
+      app.log.error({ error, jobId: job.id }, "detection.temporal_dispatch_failed");
+      await prisma.detectionJob.update({
+        where: { id: job.id },
+        data: {
+          status: "failed",
+          finishedAt: new Date(),
+          errorCode: "TEMPORAL_DISPATCH_ERROR",
+          errorMessage: error instanceof Error ? error.message : "unknown error"
+        }
+      });
+    }
+  };
 
   await app.register(cors, {
     origin: [
@@ -2368,6 +2676,12 @@ export async function buildApp() {
         provider: job.provider
       }
     });
+
+    if (detectionExecutionMode === "temporal") {
+      void dispatchDetectionJobTemporal(job.id);
+    } else if (detectionBridgeUrl) {
+      void runDetectionJobPipeline(job.id);
+    }
 
     return { data: detectionJobResponse(job) };
   });

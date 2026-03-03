@@ -12,6 +12,8 @@ services:
       STREAM_TOKEN_SECRET: dev-stream-token-secret
       DATABASE_URL: file:./dev.db
       STREAM_GATEWAY_URL: http://stream-gateway:3010
+      DETECTION_EXECUTION_MODE: temporal
+      DETECTION_TEMPORAL_DISPATCH_URL: http://detection-dispatcher:8072
       CORS_ORIGIN_ADMIN: http://localhost:5173
       CORS_ORIGIN_PORTAL: http://localhost:5174
       TEMPORAL_ADDRESS: temporal:7233
@@ -21,6 +23,7 @@ services:
     depends_on:
       - stream-gateway
       - temporal
+      - detection-dispatcher
     networks:
       - nearhome_net
 
@@ -78,6 +81,21 @@ services:
     depends_on:
       - temporal
       - inference-bridge
+    networks:
+      - nearhome_net
+
+  detection-dispatcher:
+    build:
+      context: ../apps/detection-worker
+      dockerfile: Dockerfile
+    command: ["uvicorn", "dispatcher:app", "--host", "0.0.0.0", "--port", "8072"]
+    environment:
+      TEMPORAL_SERVER: temporal:7233
+      TEMPORAL_TASK_QUEUE: nearhome-detection
+    ports:
+      - "8072:8072"
+    depends_on:
+      - temporal
     networks:
       - nearhome_net
 

@@ -114,6 +114,14 @@
     - `InferenceNodeSnapshot`
   - `CameraProfile` extendido con `zoneMap`, `homography`, `sceneTags`, `rulesProfile`.
   - nuevo servicio `apps/event-gateway` para WS/SSE y `infra/docker-compose.yml` para despliegue on-prem.
+- NH-DP-13: ejecución inicial de pipeline de detección:
+  - cuando `DETECTION_BRIDGE_URL` está definido, `POST /detections/jobs` dispara ejecución inline.
+  - transición de estado de job `queued -> running -> succeeded|failed`.
+  - persiste `DetectionObservation`, `Track`, `TrackPoint`, `ScenePrimitiveEvent`, `IncidentEvent`, `IncidentEvidence`.
+- NH-DP-14: dispatch Temporal desde API:
+  - en `DETECTION_EXECUTION_MODE=temporal`, `POST /detections/jobs` llama `POST {DETECTION_TEMPORAL_DISPATCH_URL}/v1/workflows/detection-jobs`.
+  - si el dispatch responde `200`, el job conserva estado `queued` y persiste `workflowId`/`runId`.
+  - si el dispatch falla, el job pasa a `failed` con `errorCode=TEMPORAL_DISPATCH_ERROR`.
 - NH-028: ciclo de vida de sesiones de stream:
   - `GET /stream-sessions`
   - `GET /stream-sessions/:id`

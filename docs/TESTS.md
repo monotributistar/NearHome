@@ -60,6 +60,13 @@ Cobertura incluida:
   - `GET /v1/events/ws-token` emite token corto para realtime
   - `GET /v1/incidents` lista incidentes tenant-scoped
   - `client_user` no puede crear jobs de detección (403)
+- NH-DP-13 ejecución pipeline detección (inline bridge)
+  - job `queued` pasa a `running/succeeded`
+  - persistencia de `DetectionObservation` + `IncidentEvent` + `IncidentEvidence`
+  - validación de inferencia mock bridge (`/v1/infer`) y evidencia consultable
+- NH-DP-14 dispatch Temporal desde API
+  - modo `temporal` envía dispatch a `/v1/workflows/detection-jobs` y persiste `workflowId`/`runId`
+  - fallback de error marca job `failed` con `TEMPORAL_DISPATCH_ERROR`
 
 ## Data-plane integration tests
 

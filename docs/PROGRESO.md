@@ -26,6 +26,8 @@
 - Etapa activa: carga multi-tenant con error budget (NH-DP-09) completada
 - Etapa activa: soak test con reporte SLO/SLI (NH-DP-10) completada
 - Etapa activa: base detection plane + event-plane + infra on-prem (NH-DP-12) completada
+- Etapa activa: ejecución pipeline detección v1 (NH-DP-13) completada
+- Etapa activa: dispatch Temporal desde API (NH-DP-14) completada
 
 ## Progreso completado
 
@@ -133,6 +135,16 @@
    - `CameraProfile` extendido con contexto de escena (`zoneMap`, `homography`, `sceneTags`, `rulesProfile`).
    - nuevo servicio `apps/event-gateway` (WS/SSE) y stack on-prem en `infra/docker-compose.yml`.
    - scaffolding de `inference-bridge`, `detection-worker`, nodos on-prem (`yolo`, `mediapipe`).
+27. Detection pipeline execution v1 (NH-DP-13):
+   - ejecución inline de jobs cuando `DETECTION_BRIDGE_URL` está configurado.
+   - transición automática `queued -> running -> succeeded/failed`.
+   - persistencia de observaciones/tracks/eventos primitivos/incidentes/evidencia.
+   - test de integración API con bridge mock validando artefactos persistidos.
+28. Temporal dispatch integration (NH-DP-14):
+   - API en modo `temporal` despacha jobs a endpoint HTTP (`/v1/workflows/detection-jobs`).
+   - persistencia de `workflowId` y `runId` al aceptar dispatch.
+   - fallback de error con transición `queued -> failed` y `errorCode=TEMPORAL_DISPATCH_ERROR`.
+   - servicio `detection-dispatcher` agregado al stack compose.
 
 ## Cambios técnicos relevantes
 
@@ -301,9 +313,10 @@
 - `pnpm --filter @app/stream-gateway test:soak`: `PASS` (reporte generado)
 - `pnpm test:e2e:admin`: `7 passed`
 - `pnpm test:e2e:portal`: `2 passed`
+- `pnpm --filter @app/api test`: `42 passed` (incluye NH-DP-14 dispatch temporal)
 
 ## Próximo bloque recomendado
 
 1. NH-015: asignación de cámaras por `client_user` (subset real y enforcement integral).
 2. Endurecimiento e2e multi-tenant para concurrencia de playback (escenarios simultáneos por tenant).
-3. NH-DP-13: integración real Temporal + inference-bridge + persistencia de observaciones/incidentes automáticas.
+3. NH-DP-15: completar callback/collector de resultados Temporal -> API para cerrar job y persistir observaciones vía worker.

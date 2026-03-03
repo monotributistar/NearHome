@@ -126,6 +126,8 @@ POC funcional orientado a control-plane + data-plane MVP de playback tokenizado.
 
 Nota: `STREAM_TOKEN_SECRET` debe coincidir entre `apps/api` y `apps/stream-gateway` para validar playback.
 Nota: el sync automático de health en API se controla con `STREAM_HEALTH_SYNC_ENABLED`, `STREAM_HEALTH_SYNC_INTERVAL_MS` y `STREAM_HEALTH_SYNC_BATCH_SIZE`.
+Nota: el pipeline de detección v1 se activa en API cuando `DETECTION_BRIDGE_URL` está configurado (modo `DETECTION_EXECUTION_MODE=inline`).
+Nota: para modo `DETECTION_EXECUTION_MODE=temporal`, API despacha workflows vía `DETECTION_TEMPORAL_DISPATCH_URL` (`/v1/workflows/detection-jobs`).
 
 ## Detection Plane / Infra On-Prem
 
@@ -138,6 +140,7 @@ Nota: el sync automático de health en API se controla con `STREAM_HEALTH_SYNC_E
   - event-gateway (WS/SSE)
   - inference-bridge
   - detection-worker (Temporal)
+  - detection-dispatcher (HTTP -> Temporal start workflow)
   - nodos de inferencia on-prem (YOLO/MediaPipe)
   - Temporal + UI
   - Redis
