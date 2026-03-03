@@ -1,4 +1,4 @@
-import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, writeFile, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { createHmac } from "node:crypto";
@@ -14,6 +14,44 @@ type SoakConfig = {
   maxP95Ms: number;
   tokenTtlMs: number;
   outputPath: string;
+  historyDir: string;
+  indexPath: string;
+  recordHistory: boolean;
+  historyRows: number;
+};
+
+type SoakSummary = {
+  runId: string;
+  generatedAt: string;
+  result: "PASS" | "FAIL";
+  scenario: {
+    tenants: number;
+    camerasPerTenant: number;
+    rounds: number;
+    requestsPerCameraPerRound: number;
+    roundDelayMs: number;
+  };
+  sli: {
+    total: number;
+    success: number;
+    failure: number;
+    errorRate: number;
+    durationMs: number;
+    avgMs: number;
+    p50Ms: number;
+    p95Ms: number;
+    p99Ms: number;
+  };
+  slo: {
+    maxErrorRate: number;
+    maxP95Ms: number;
+  };
+  regression: {
+    hasPrevious: boolean;
+    previousRunId: string | null;
+    errorRateDeltaPct: number | null;
+    p95DeltaMs: number | null;
+  };
 };
 
 function envNumber(name: string, fallback: number) {
@@ -57,6 +95,9 @@ function createPlaybackToken(args: {
 }
 
 async function main() {
+  const defaultReportPath = path.resolve(process.cwd(), "docs/reports/stream-soak-latest.md");
+  const defaultHistoryDir = path.resolve(process.cwd(), "docs/reports/history");
+  const defaultIndexPath = path.resolve(process.cwd(), "docs/reports/stream-soak-history.md");
   const config: SoakConfig = {
     tenants: Math.max(1, Math.floor(envNumber("SOAK_TENANTS", 2))),
     camerasPerTenant: Math.max(1, Math.floor(envNumber("SOAK_CAMERAS_PER_TENANT", 3))),
@@ -66,7 +107,11 @@ async function main() {
     maxErrorRate: Math.max(0, envNumber("SOAK_MAX_ERROR_RATE", 0.01)),
     maxP95Ms: Math.max(1, envNumber("SOAK_MAX_P95_MS", 200)),
     tokenTtlMs: Math.max(5_000, Math.floor(envNumber("SOAK_TOKEN_TTL_MS", 60_000))),
-    outputPath: process.env.SOAK_REPORT_PATH ?? path.resolve(process.cwd(), "docs/reports/stream-soak-latest.md")
+    outputPath: process.env.SOAK_REPORT_PATH ?? defaultReportPath,
+    historyDir: process.env.SOAK_HISTORY_DIR ?? defaultHistoryDir,
+    indexPath: process.env.SOAK_INDEX_PATH ?? defaultIndexPath,
+    recordHistory: (process.env.SOAK_RECORD_HISTORY ?? "1") !== "0",
+    historyRows: Math.max(1, Math.floor(envNumber("SOAK_HISTORY_ROWS", 30)))
   };
 
   const storageDir = await mkdtemp(path.join(tmpdir(), "nearhome-stream-soak-"));
@@ -152,13 +197,68 @@ async function main() {
     const metrics = await app.inject({ method: "GET", url: "/metrics" });
     const metricsBody = metrics.statusCode === 200 ? metrics.body : "metrics_unavailable";
 
+    const historySummaries: SoakSummary[] = [];
+    if (config.recordHistory) {
+      await mkdir(config.historyDir, { recursive: true });
+      const historyFiles = await readdir(config.historyDir);
+      const summaryFiles = historyFiles.filter((file) => file.endsWith(".json")).sort((a, b) => (a < b ? -1 : 1));
+      for (const file of summaryFiles) {
+        try {
+          const raw = await readFile(path.join(config.historyDir, file), "utf8");
+          historySummaries.push(JSON.parse(raw) as SoakSummary);
+        } catch {
+          // Ignore malformed history entries and continue.
+        }
+      }
+    }
+    const previousSummary = historySummaries.length > 0 ? historySummaries[historySummaries.length - 1] : null;
+
     const sloPassed = errorRate <= config.maxErrorRate && p95 <= config.maxP95Ms;
     const nowIso = new Date().toISOString();
+    const runId = nowIso.replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+    const errorRateDeltaPct =
+      previousSummary !== null ? Number(((errorRate - previousSummary.sli.errorRate) * 100).toFixed(3)) : null;
+    const p95DeltaMs = previousSummary !== null ? p95 - previousSummary.sli.p95Ms : null;
+
+    const summary: SoakSummary = {
+      runId,
+      generatedAt: nowIso,
+      result: sloPassed ? "PASS" : "FAIL",
+      scenario: {
+        tenants: config.tenants,
+        camerasPerTenant: config.camerasPerTenant,
+        rounds: config.rounds,
+        requestsPerCameraPerRound: config.requestsPerCameraPerRound,
+        roundDelayMs: config.roundDelayMs
+      },
+      sli: {
+        total,
+        success,
+        failure,
+        errorRate,
+        durationMs,
+        avgMs: avg,
+        p50Ms: p50,
+        p95Ms: p95,
+        p99Ms: p99
+      },
+      slo: {
+        maxErrorRate: config.maxErrorRate,
+        maxP95Ms: config.maxP95Ms
+      },
+      regression: {
+        hasPrevious: previousSummary !== null,
+        previousRunId: previousSummary?.runId ?? null,
+        errorRateDeltaPct,
+        p95DeltaMs
+      }
+    };
 
     const report = [
       "# Stream Gateway Soak Report",
       "",
       `- Generated at: ${nowIso}`,
+      `- Run ID: ${runId}`,
       `- Result: ${sloPassed ? "PASS" : "FAIL"}`,
       "",
       "## Scenario",
@@ -183,6 +283,14 @@ async function main() {
       `- Max error rate: ${(config.maxErrorRate * 100).toFixed(3)}%`,
       `- Max p95 latency: ${config.maxP95Ms}ms`,
       "",
+      "## Regression vs Previous",
+      "",
+      previousSummary
+        ? `- Previous run: ${previousSummary.runId} (${previousSummary.generatedAt})`
+        : "- Previous run: none",
+      previousSummary ? `- Error rate delta (pp): ${errorRateDeltaPct}` : "- Error rate delta (pp): n/a",
+      previousSummary ? `- p95 delta (ms): ${p95DeltaMs}` : "- p95 delta (ms): n/a",
+      "",
       "## Metrics Snapshot",
       "",
       "```text",
@@ -193,8 +301,37 @@ async function main() {
 
     await mkdir(path.dirname(config.outputPath), { recursive: true });
     await writeFile(config.outputPath, report, "utf8");
+    if (config.recordHistory) {
+      await mkdir(config.historyDir, { recursive: true });
+      await writeFile(path.join(config.historyDir, `${runId}.md`), report, "utf8");
+      await writeFile(path.join(config.historyDir, `${runId}.json`), JSON.stringify(summary, null, 2), "utf8");
+
+      const allSummaries = [...historySummaries, summary];
+      const recent = allSummaries.slice(-config.historyRows).reverse();
+      const indexLines = [
+        "# Stream Soak History",
+        "",
+        `Generated at: ${nowIso}`,
+        "",
+        "| Run ID | Time (UTC) | Result | Error Rate % | p95 ms | Duration ms | Delta Error pp | Delta p95 ms |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |",
+        ...recent.map((item) => {
+          const errorPct = (item.sli.errorRate * 100).toFixed(3);
+          const deltaErr = item.regression.errorRateDeltaPct === null ? "n/a" : `${item.regression.errorRateDeltaPct}`;
+          const deltaP95 = item.regression.p95DeltaMs === null ? "n/a" : `${item.regression.p95DeltaMs}`;
+          return `| ${item.runId} | ${item.generatedAt} | ${item.result} | ${errorPct} | ${item.sli.p95Ms} | ${item.sli.durationMs} | ${deltaErr} | ${deltaP95} |`;
+        }),
+        ""
+      ];
+      await mkdir(path.dirname(config.indexPath), { recursive: true });
+      await writeFile(config.indexPath, indexLines.join("\n"), "utf8");
+    }
 
     console.log(`Soak report written to ${config.outputPath}`);
+    if (config.recordHistory) {
+      console.log(`Soak history entry written to ${path.join(config.historyDir, `${runId}.json`)}`);
+      console.log(`Soak history index written to ${config.indexPath}`);
+    }
     console.log(`Result=${sloPassed ? "PASS" : "FAIL"} total=${total} errorRate=${(errorRate * 100).toFixed(3)}% p95=${p95}ms`);
     if (!sloPassed) {
       process.exitCode = 1;

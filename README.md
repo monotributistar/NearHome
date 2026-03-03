@@ -99,6 +99,13 @@ pnpm dev
 - `pnpm test:stream`
 - `pnpm test:stream:load`
 - `pnpm test:stream:soak`
+- `pnpm test:stream:soak:record`
+
+Reportes soak:
+
+- `docs/reports/stream-soak-latest.md`: último run
+- `docs/reports/history/<runId>.md` + `<runId>.json`: historial por corrida
+- `docs/reports/stream-soak-history.md`: índice de corridas y deltas vs run previo
 
 ## Estado
 

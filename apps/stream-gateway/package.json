@@ -10,7 +10,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:load": "vitest run test/stream-gateway.load.spec.ts",
-    "test:soak": "node --import tsx scripts/soak-report.ts"
+    "test:soak": "node --import tsx scripts/soak-report.ts",
+    "test:soak:record": "SOAK_RECORD_HISTORY=1 node --import tsx scripts/soak-report.ts"
   },
   "dependencies": {
     "fastify": "^5.2.1",

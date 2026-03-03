@@ -2,7 +2,7 @@
 
 ## Corte actual
 
-- Fecha de corte: `2026-03-02`
+- Fecha de corte: `2026-03-03`
 - Etapa activa: lifecycle de cámara + validación funcional (API/E2E)
 - Etapa activa: stream sessions + tracking operativo (NH-028) completada
 - Etapa activa: observabilidad base (NH-011) completada
@@ -124,6 +124,8 @@
    - runner `scripts/soak-report.ts` con escenario configurable por env.
    - reporte markdown `docs/reports/stream-soak-latest.md` con `PASS/FAIL`.
    - gate operacional por error rate y latencia p95.
+   - histórico por corrida (`docs/reports/history/<runId>.md` + `.json`) e índice (`docs/reports/stream-soak-history.md`).
+   - comparación automática contra corrida previa (delta de error rate y p95).
 
 ## Cambios técnicos relevantes
 
@@ -295,6 +297,6 @@
 
 ## Próximo bloque recomendado
 
-1. NH-DP-11: export de resultados de soak a histórico (series temporales) para tendencia.
-2. NH-015: asignación de cámaras por `client_user` (subset real y enforcement integral).
-3. Endurecimiento e2e multi-tenant para concurrencia de playback (escenarios simultáneos por tenant).
+1. NH-015: asignación de cámaras por `client_user` (subset real y enforcement integral).
+2. Endurecimiento e2e multi-tenant para concurrencia de playback (escenarios simultáneos por tenant).
+3. NH-DP-12: gate en CI consumiendo el índice histórico y alertando regresiones sostenidas.

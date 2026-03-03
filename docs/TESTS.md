@@ -112,6 +112,7 @@ Cobertura incluida:
 3. `pnpm --filter @app/stream-gateway test`
 4. `pnpm --filter @app/stream-gateway test:load`
 5. `pnpm --filter @app/stream-gateway test:soak`
+6. `pnpm test:stream:soak:record`
 
 ## Data-plane soak report (NH-DP-10)
 
@@ -120,6 +121,8 @@ Runner: `apps/stream-gateway/scripts/soak-report.ts`
 Salida:
 
 - reporte markdown en `docs/reports/stream-soak-latest.md`
+- histórico por run en `docs/reports/history/<runId>.md` y `docs/reports/history/<runId>.json`
+- índice de runs en `docs/reports/stream-soak-history.md` con delta vs corrida anterior
 - exit code `1` cuando incumple SLO configurados
 
 SLI/SLO evaluados:
@@ -138,3 +141,7 @@ Variables configurables:
 - `SOAK_MAX_P95_MS`
 - `SOAK_TOKEN_TTL_MS`
 - `SOAK_REPORT_PATH`
+- `SOAK_RECORD_HISTORY` (`1` por defecto)
+- `SOAK_HISTORY_DIR`
+- `SOAK_INDEX_PATH`
+- `SOAK_HISTORY_ROWS`

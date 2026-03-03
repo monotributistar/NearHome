@@ -89,6 +89,7 @@
   - runner `test:soak` en data-plane.
   - reporte markdown automático con resultado `PASS/FAIL`.
   - gate por `error rate` y latencia `p95` configurable por env.
+  - `test:soak:record` persiste histórico por run (`.md` + `.json`) y genera índice con deltas vs run previo.
 - NH-028: ciclo de vida de sesiones de stream:
   - `GET /stream-sessions`
   - `GET /stream-sessions/:id`
