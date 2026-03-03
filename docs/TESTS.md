@@ -85,6 +85,10 @@ Cobertura incluida:
   - límite opcional de sesiones activas playback por tenant (`STREAM_MAX_ACTIVE_SESSIONS_PER_TENANT`)
   - rechazo explícito `409 PLAYBACK_TENANT_CAPACITY_EXCEEDED`
   - validación de no interferencia cross-tenant bajo límite activo
+- NH-DP-08C timeout operativo de playback
+  - timeout explícito de lectura de assets (`STREAM_PLAYBACK_READ_TIMEOUT_MS`)
+  - retorno de `504 PLAYBACK_ASSET_TIMEOUT` para manifest y segment
+  - error observado también en métricas por `code`
 
 ## Ejecutar
 

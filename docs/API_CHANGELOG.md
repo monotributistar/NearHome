@@ -73,6 +73,10 @@
   - límite opcional `STREAM_MAX_ACTIVE_SESSIONS_PER_TENANT`.
   - nuevo error `409 PLAYBACK_TENANT_CAPACITY_EXCEEDED` con detalle de capacidad.
   - aislamiento multi-tenant validado: el límite de tenant A no impacta tenant B.
+- NH-DP-08C: timeout operativo de lectura de assets playback:
+  - `STREAM_PLAYBACK_READ_TIMEOUT_MS` para budget máximo de lectura de `manifest/segment`.
+  - nuevo error `504 PLAYBACK_ASSET_TIMEOUT` sin degradarlo a `404`.
+  - cobertura de tests para timeout de manifest y segment.
 - NH-028: ciclo de vida de sesiones de stream:
   - `GET /stream-sessions`
   - `GET /stream-sessions/:id`

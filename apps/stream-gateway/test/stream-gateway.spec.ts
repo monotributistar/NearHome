@@ -54,6 +54,7 @@ afterEach(async () => {
   delete process.env.STREAM_PLAYBACK_READ_RETRIES;
   delete process.env.STREAM_PLAYBACK_READ_RETRY_BASE_MS;
   delete process.env.STREAM_PLAYBACK_READ_RETRY_MAX_MS;
+  delete process.env.STREAM_PLAYBACK_READ_TIMEOUT_MS;
   delete process.env.STREAM_MEDIA_ENGINE;
   delete process.env.STREAM_TRANSCODER_CMD;
   delete process.env.STREAM_TRANSCODER_SHELL;
@@ -1068,6 +1069,100 @@ describe("stream-gateway", () => {
       url: `/playback/tenant-cap-b/${cameraId}/index.m3u8?token=${encodeURIComponent(tokenB1)}`
     });
     expect(playbackB1.statusCode).toBe(200);
+
+    await app.close();
+  });
+
+  it("returns timeout error when manifest read exceeds playback timeout budget", async () => {
+    process.env.STREAM_PLAYBACK_READ_TIMEOUT_MS = "80";
+    const mediaEngine: MediaEngine = {
+      name: "timeout-adapter",
+      async provisionStream() {},
+      async deprovisionStream() {},
+      async readManifest() {
+        await new Promise((resolve) => setTimeout(resolve, 140));
+        return "#EXTM3U\n#EXT-X-ENDLIST";
+      },
+      async readSegment() {
+        return Buffer.from("SEGMENT");
+      },
+      async close() {}
+    };
+    const { app } = await setupApp({ mediaEngine });
+    const tenantId = "tenant-timeout";
+    const cameraId = "camera-timeout";
+
+    await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: { tenantId, cameraId, rtspUrl: "rtsp://demo/timeout" }
+    });
+
+    const token = createPlaybackToken({
+      tenantId,
+      cameraId,
+      sid: "sid-timeout-manifest",
+      expiresAt: new Date(Date.now() + 60_000)
+    });
+
+    const manifest = await app.inject({
+      method: "GET",
+      url: `/playback/${tenantId}/${cameraId}/index.m3u8?token=${encodeURIComponent(token)}`
+    });
+    expect(manifest.statusCode).toBe(504);
+    expect(manifest.json()).toMatchObject({
+      code: "PLAYBACK_ASSET_TIMEOUT"
+    });
+
+    const metrics = await app.inject({ method: "GET", url: "/metrics" });
+    expect(metrics.statusCode).toBe(200);
+    expect(metrics.body).toContain(
+      `nearhome_playback_errors_total{asset=\"manifest\",camera_id=\"${cameraId}\",code=\"PLAYBACK_ASSET_TIMEOUT\",tenant_id=\"${tenantId}\"} 1`
+    );
+
+    await app.close();
+  });
+
+  it("returns timeout error when segment read exceeds playback timeout budget", async () => {
+    process.env.STREAM_PLAYBACK_READ_TIMEOUT_MS = "80";
+    const mediaEngine: MediaEngine = {
+      name: "timeout-adapter",
+      async provisionStream() {},
+      async deprovisionStream() {},
+      async readManifest() {
+        return "#EXTM3U\n#EXTINF:5.0,\nsegment0.ts\n#EXT-X-ENDLIST";
+      },
+      async readSegment() {
+        await new Promise((resolve) => setTimeout(resolve, 140));
+        return Buffer.from("SEGMENT");
+      },
+      async close() {}
+    };
+    const { app } = await setupApp({ mediaEngine });
+    const tenantId = "tenant-timeout-segment";
+    const cameraId = "camera-timeout-segment";
+
+    await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: { tenantId, cameraId, rtspUrl: "rtsp://demo/timeout-segment" }
+    });
+
+    const token = createPlaybackToken({
+      tenantId,
+      cameraId,
+      sid: "sid-timeout-segment",
+      expiresAt: new Date(Date.now() + 60_000)
+    });
+
+    const segment = await app.inject({
+      method: "GET",
+      url: `/playback/${tenantId}/${cameraId}/segment0.ts?token=${encodeURIComponent(token)}`
+    });
+    expect(segment.statusCode).toBe(504);
+    expect(segment.json()).toMatchObject({
+      code: "PLAYBACK_ASSET_TIMEOUT"
+    });
 
     await app.close();
   });

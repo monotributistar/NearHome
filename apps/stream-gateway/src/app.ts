@@ -211,6 +211,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
   const playbackReadRetries = Math.max(0, Number(process.env.STREAM_PLAYBACK_READ_RETRIES ?? 0));
   const playbackReadRetryBaseMs = Math.max(0, Number(process.env.STREAM_PLAYBACK_READ_RETRY_BASE_MS ?? 25));
   const playbackReadRetryMaxMs = Math.max(playbackReadRetryBaseMs, Number(process.env.STREAM_PLAYBACK_READ_RETRY_MAX_MS ?? 250));
+  const playbackReadTimeoutMs = Math.max(50, Number(process.env.STREAM_PLAYBACK_READ_TIMEOUT_MS ?? 2000));
   const maxActiveSessionsPerTenant = Math.max(0, Number(process.env.STREAM_MAX_ACTIVE_SESSIONS_PER_TENANT ?? 0));
   let probeTimer: NodeJS.Timeout | null = null;
   let sessionSweepTimer: NodeJS.Timeout | null = null;
@@ -493,11 +494,34 @@ export async function buildApp(options: BuildAppOptions = {}) {
     cameraId: string;
     asset: "manifest" | "segment";
   }): Promise<T> {
+    const readWithTimeout = async () => {
+      const timeoutError = new ApiDomainError({
+        statusCode: 504,
+        apiCode: "PLAYBACK_ASSET_TIMEOUT",
+        message: "Playback asset read timed out",
+        details: {
+          tenantId: args.tenantId,
+          cameraId: args.cameraId,
+          asset: args.asset,
+          timeoutMs: playbackReadTimeoutMs
+        }
+      });
+      return Promise.race([
+        args.reader(),
+        new Promise<T>((_, reject) => {
+          setTimeout(() => reject(timeoutError), playbackReadTimeoutMs);
+        })
+      ]);
+    };
+
     let attempt = 0;
     while (true) {
       try {
-        return await args.reader();
+        return await readWithTimeout();
       } catch (error) {
+        if (error instanceof ApiDomainError && error.apiCode === "PLAYBACK_ASSET_TIMEOUT") {
+          throw error;
+        }
         const code = (error as NodeJS.ErrnoException).code;
         const retryable = code === "ENOENT" || code === "EAGAIN" || code === "EBUSY";
         if (!retryable || attempt >= playbackReadRetries) {
@@ -775,7 +799,10 @@ export async function buildApp(options: BuildAppOptions = {}) {
             cameraId,
             asset: "manifest"
           });
-        } catch {
+        } catch (error) {
+          if (error instanceof ApiDomainError && error.apiCode === "PLAYBACK_ASSET_TIMEOUT") {
+            throw error;
+          }
           throw new ApiDomainError({
             statusCode: 404,
             apiCode: "PLAYBACK_MANIFEST_NOT_FOUND",
@@ -814,7 +841,10 @@ export async function buildApp(options: BuildAppOptions = {}) {
             cameraId,
             asset: "segment"
           });
-        } catch {
+        } catch (error) {
+          if (error instanceof ApiDomainError && error.apiCode === "PLAYBACK_ASSET_TIMEOUT") {
+            throw error;
+          }
           throw new ApiDomainError({
             statusCode: 404,
             apiCode: "PLAYBACK_SEGMENT_NOT_FOUND",
