@@ -1883,10 +1883,26 @@ describe("NH-DP-15 temporal callback ingestion", () => {
     const previousBridge = process.env.DETECTION_BRIDGE_URL;
     const previousMode = process.env.DETECTION_EXECUTION_MODE;
     const previousCallbackSecret = process.env.DETECTION_CALLBACK_SECRET;
+    const previousEventGatewayUrl = process.env.EVENT_GATEWAY_URL;
+    const previousEventPublishSecret = process.env.EVENT_PUBLISH_SECRET;
 
     process.env.DETECTION_BRIDGE_URL = "";
     process.env.DETECTION_EXECUTION_MODE = "inline";
     process.env.DETECTION_CALLBACK_SECRET = "test-callback-secret";
+    process.env.EVENT_GATEWAY_URL = "http://mock-event-gateway";
+    process.env.EVENT_PUBLISH_SECRET = "test-event-secret";
+
+    const fetchMock = vi.fn(async (input: any) => {
+      const url = String(input);
+      if (url.includes("http://mock-event-gateway/internal/events/publish")) {
+        return new globalThis.Response(JSON.stringify({ data: { accepted: true } }), {
+          status: 202,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      return new globalThis.Response("not found", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
 
     const callbackApp = await buildApp();
     await callbackApp.ready();
@@ -1991,11 +2007,32 @@ describe("NH-DP-15 temporal callback ingestion", () => {
       expect(incidentsResponse.statusCode).toBe(200);
       const incidents = incidentsResponse.json<{ data: Array<{ type: string }> }>().data;
       expect(incidents.some((entry) => entry.type === "person_approached_front_window")).toBe(true);
+
+      const publishBodies = fetchMock.mock.calls.map((call) => JSON.parse(String(call[1]?.body ?? "{}")));
+      expect(
+        publishBodies.some(
+          (payload) =>
+            payload.eventType === "detection.job" &&
+            payload.payload?.jobId === jobId &&
+            payload.payload?.status === "succeeded"
+        )
+      ).toBe(true);
+      expect(
+        publishBodies.some(
+          (payload) =>
+            payload.eventType === "incident" &&
+            payload.payload?.jobId === jobId &&
+            payload.payload?.type === "person_approached_front_window"
+        )
+      ).toBe(true);
     } finally {
       await callbackApp.close();
+      vi.unstubAllGlobals();
       process.env.DETECTION_BRIDGE_URL = previousBridge;
       process.env.DETECTION_EXECUTION_MODE = previousMode;
       process.env.DETECTION_CALLBACK_SECRET = previousCallbackSecret;
+      process.env.EVENT_GATEWAY_URL = previousEventGatewayUrl;
+      process.env.EVENT_PUBLISH_SECRET = previousEventPublishSecret;
     }
   });
 
@@ -2003,10 +2040,26 @@ describe("NH-DP-15 temporal callback ingestion", () => {
     const previousBridge = process.env.DETECTION_BRIDGE_URL;
     const previousMode = process.env.DETECTION_EXECUTION_MODE;
     const previousCallbackSecret = process.env.DETECTION_CALLBACK_SECRET;
+    const previousEventGatewayUrl = process.env.EVENT_GATEWAY_URL;
+    const previousEventPublishSecret = process.env.EVENT_PUBLISH_SECRET;
 
     process.env.DETECTION_BRIDGE_URL = "";
     process.env.DETECTION_EXECUTION_MODE = "inline";
     process.env.DETECTION_CALLBACK_SECRET = "test-callback-secret";
+    process.env.EVENT_GATEWAY_URL = "http://mock-event-gateway";
+    process.env.EVENT_PUBLISH_SECRET = "test-event-secret";
+
+    const fetchMock = vi.fn(async (input: any) => {
+      const url = String(input);
+      if (url.includes("http://mock-event-gateway/internal/events/publish")) {
+        return new globalThis.Response(JSON.stringify({ data: { accepted: true } }), {
+          status: 202,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      return new globalThis.Response("not found", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
 
     const callbackApp = await buildApp();
     await callbackApp.ready();
@@ -2075,11 +2128,23 @@ describe("NH-DP-15 temporal callback ingestion", () => {
         status: "failed",
         errorCode: "DETECTION_WORKFLOW_ERROR"
       });
+      const publishBodies = fetchMock.mock.calls.map((call) => JSON.parse(String(call[1]?.body ?? "{}")));
+      expect(
+        publishBodies.some(
+          (payload) =>
+            payload.eventType === "detection.job" &&
+            payload.payload?.jobId === jobId &&
+            payload.payload?.status === "failed"
+        )
+      ).toBe(true);
     } finally {
       await callbackApp.close();
+      vi.unstubAllGlobals();
       process.env.DETECTION_BRIDGE_URL = previousBridge;
       process.env.DETECTION_EXECUTION_MODE = previousMode;
       process.env.DETECTION_CALLBACK_SECRET = previousCallbackSecret;
+      process.env.EVENT_GATEWAY_URL = previousEventGatewayUrl;
+      process.env.EVENT_PUBLISH_SECRET = previousEventPublishSecret;
     }
   });
 });

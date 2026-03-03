@@ -886,6 +886,8 @@ export async function buildApp() {
   const detectionBridgeUrl = process.env.DETECTION_BRIDGE_URL?.replace(/\/$/, "") ?? null;
   const temporalDispatchUrl = process.env.DETECTION_TEMPORAL_DISPATCH_URL?.replace(/\/$/, "") ?? null;
   const detectionCallbackSecret = process.env.DETECTION_CALLBACK_SECRET ?? "dev-detection-callback-secret";
+  const eventGatewayUrl = process.env.EVENT_GATEWAY_URL?.replace(/\/$/, "") ?? null;
+  const eventPublishSecret = process.env.EVENT_PUBLISH_SECRET ?? "dev-event-publish-secret";
   const detectionExecutionMode = process.env.DETECTION_EXECUTION_MODE ?? "inline";
   const streamHealthSyncEnabled = process.env.STREAM_HEALTH_SYNC_ENABLED === "1";
   const streamHealthSyncIntervalMs = Number(process.env.STREAM_HEALTH_SYNC_INTERVAL_MS ?? 30_000);
@@ -902,7 +904,7 @@ export async function buildApp() {
     if (!existing) return null;
     const status = DetectionJobStatusSchema.parse(existing.status);
     if (["succeeded", "failed", "canceled"].includes(status)) return existing;
-    return prisma.detectionJob.update({
+    const updated = await prisma.detectionJob.update({
       where: { id: jobId },
       data: {
         status: "failed",
@@ -911,6 +913,32 @@ export async function buildApp() {
         errorMessage
       }
     });
+    if (eventGatewayUrl) {
+      try {
+        await fetch(`${eventGatewayUrl}/internal/events/publish`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-event-publish-secret": eventPublishSecret
+          },
+          body: JSON.stringify({
+            eventType: "detection.job",
+            tenantId: updated.tenantId,
+            cameraId: updated.cameraId,
+            correlationId: `det-${updated.id}`,
+            payload: {
+              jobId: updated.id,
+              status: updated.status,
+              errorCode,
+              errorMessage
+            }
+          })
+        });
+      } catch (error) {
+        app.log.warn({ error, jobId: updated.id }, "event_gateway.publish_failed");
+      }
+    }
+    return updated;
   };
 
   const completeDetectionJob = async (args: {
@@ -947,6 +975,15 @@ export async function buildApp() {
         }
       });
     }
+
+    const incidentsCreated: Array<{
+      id: string;
+      type: string;
+      severity: string;
+      summary: string;
+      cameraId: string;
+      tenantId: string;
+    }> = [];
 
     await prisma.$transaction(async (tx) => {
       for (let i = 0; i < args.detections.length; i += 1) {
@@ -1037,6 +1074,14 @@ export async function buildApp() {
             })
           }
         });
+        incidentsCreated.push({
+          id: incidentEvent.id,
+          type: incidentEvent.type,
+          severity: incidentEvent.severity,
+          summary: incidentEvent.summary,
+          cameraId: incidentEvent.cameraId,
+          tenantId: incidentEvent.tenantId
+        });
 
         await tx.incidentEvidence.create({
           data: {
@@ -1060,7 +1105,54 @@ export async function buildApp() {
       });
     });
 
-    return prisma.detectionJob.findUnique({ where: { id: job.id } });
+    const updated = await prisma.detectionJob.findUnique({ where: { id: job.id } });
+    if (updated && eventGatewayUrl) {
+      try {
+        await fetch(`${eventGatewayUrl}/internal/events/publish`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-event-publish-secret": eventPublishSecret
+          },
+          body: JSON.stringify({
+            eventType: "detection.job",
+            tenantId: updated.tenantId,
+            cameraId: updated.cameraId,
+            correlationId: `det-${updated.id}`,
+            payload: {
+              jobId: updated.id,
+              status: updated.status
+            }
+          })
+        });
+        for (const incident of incidentsCreated) {
+          await fetch(`${eventGatewayUrl}/internal/events/publish`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-event-publish-secret": eventPublishSecret
+            },
+            body: JSON.stringify({
+              eventType: "incident",
+              tenantId: incident.tenantId,
+              cameraId: incident.cameraId,
+              correlationId: `det-${updated.id}`,
+              payload: {
+                incidentId: incident.id,
+                type: incident.type,
+                severity: incident.severity,
+                summary: incident.summary,
+                jobId: updated.id
+              }
+            })
+          });
+        }
+      } catch (error) {
+        app.log.warn({ error, jobId: updated.id }, "event_gateway.publish_failed");
+      }
+    }
+
+    return updated;
   };
 
   const runDetectionJobPipeline = async (jobId: string) => {

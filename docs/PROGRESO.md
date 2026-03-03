@@ -29,6 +29,7 @@
 - Etapa activa: ejecución pipeline detección v1 (NH-DP-13) completada
 - Etapa activa: dispatch Temporal desde API (NH-DP-14) completada
 - Etapa activa: callback resultados Temporal->API (NH-DP-15) completada
+- Etapa activa: eventos realtime detección/incidentes (NH-DP-16) completada
 
 ## Progreso completado
 
@@ -151,6 +152,11 @@
    - worker Temporal reporta al API al cerrar workflow.
    - persistencia de observaciones/tracks/incidentes vía callback de éxito.
    - fallback de callback de falla con transición a `failed`.
+30. Realtime detection/incident publish (NH-DP-16):
+   - API publica `detection.job` y `incident` en `event-gateway` al persistir callbacks.
+   - `event-gateway` agrega endpoint interno `POST /internal/events/publish`.
+   - SSE extiende soporte de replay (`replay`) y filtro por tópicos (`topics`).
+   - tests en API y en `event-gateway` cubren publish + replay.
 
 ## Cambios técnicos relevantes
 
@@ -321,9 +327,11 @@
 - `pnpm test:e2e:portal`: `2 passed`
 - `pnpm --filter @app/api test`: `42 passed` (incluye NH-DP-14 dispatch temporal)
 - `pnpm --filter @app/api test`: `44 passed` (incluye NH-DP-15 callback Temporal->API)
+- `pnpm --filter @app/api test`: `44 passed` (incluye NH-DP-16 publish realtime)
+- `pnpm --filter @app/event-gateway test`: `2 passed` (publish secret + replay SSE)
 
 ## Próximo bloque recomendado
 
 1. NH-015: asignación de cámaras por `client_user` (subset real y enforcement integral).
 2. Endurecimiento e2e multi-tenant para concurrencia de playback (escenarios simultáneos por tenant).
-3. NH-DP-16: evento realtime (`event-gateway`) para `detection.job`/`incident` emitido al persistir callback.
+3. NH-DP-17: propagar eventos realtime al portal/admin (suscripción WS/SSE con filtros por tenant/topic).

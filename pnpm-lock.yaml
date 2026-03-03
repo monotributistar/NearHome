@@ -173,6 +173,9 @@ importers:
       typescript:
         specifier: ^5.7.3
         version: 5.9.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/node@22.19.11)(jiti@2.6.1)(tsx@4.21.0)
 
   apps/portal:
     dependencies:

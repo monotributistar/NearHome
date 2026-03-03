@@ -71,6 +71,17 @@ Cobertura incluida:
   - callback `complete` persiste detecciones/incidentes y deja job `succeeded`
   - callback `fail` marca job `failed` con código de error
   - endpoint interno rechaza requests sin secret (`401`)
+- NH-DP-16 publicación realtime detección/incidentes
+  - callback `complete` publica `detection.job` e `incident` hacia event-gateway
+  - callback `fail` publica `detection.job` con estado `failed`
+  - assertions por payload publicado (`jobId`, `status`, `incident.type`)
+
+## Event-gateway tests
+
+Archivo: `apps/event-gateway/test/app.spec.ts`
+
+- Rechazo de publish sin secret (`401`)
+- Publish aceptado (`202`) y replay por SSE (`/events/stream?replay=1&topics=detection&once=1`)
 
 ## Data-plane integration tests
 

@@ -15,6 +15,8 @@ services:
       DETECTION_EXECUTION_MODE: temporal
       DETECTION_TEMPORAL_DISPATCH_URL: http://detection-dispatcher:8072
       DETECTION_CALLBACK_SECRET: dev-detection-callback-secret
+      EVENT_GATEWAY_URL: http://event-gateway:3011
+      EVENT_PUBLISH_SECRET: dev-event-publish-secret
       CORS_ORIGIN_ADMIN: http://localhost:5173
       CORS_ORIGIN_PORTAL: http://localhost:5174
       TEMPORAL_ADDRESS: temporal:7233
@@ -53,6 +55,7 @@ services:
     environment:
       PORT: 3011
       JWT_SECRET: dev-super-secret
+      EVENT_PUBLISH_SECRET: dev-event-publish-secret
     ports:
       - "3011:3011"
     depends_on:

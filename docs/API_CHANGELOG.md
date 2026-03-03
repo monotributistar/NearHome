@@ -129,6 +129,14 @@
   - `detection-worker` reporta cierre de job al API:
     - éxito: persiste observaciones/tracks/incidentes/evidencia y marca `succeeded`.
     - falla: marca `failed` con `errorCode=DETECTION_WORKFLOW_ERROR` (u otro provisto).
+- NH-DP-16: publicación realtime de detección/incidentes:
+  - API publica en `event-gateway` al cerrar jobs:
+    - `eventType=detection.job` para `succeeded|failed`
+    - `eventType=incident` por cada incidente persistido
+  - `event-gateway` agrega contrato interno:
+    - `POST /internal/events/publish` con `x-event-publish-secret`
+  - `event-gateway` SSE soporta replay corto:
+    - `GET /events/stream?replay=<n>&topics=<csv>`
 - NH-028: ciclo de vida de sesiones de stream:
   - `GET /stream-sessions`
   - `GET /stream-sessions/:id`
