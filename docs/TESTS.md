@@ -67,6 +67,10 @@ Cobertura incluida:
 - NH-DP-14 dispatch Temporal desde API
   - modo `temporal` envía dispatch a `/v1/workflows/detection-jobs` y persiste `workflowId`/`runId`
   - fallback de error marca job `failed` con `TEMPORAL_DISPATCH_ERROR`
+- NH-DP-15 callback de resultados Temporal -> API
+  - callback `complete` persiste detecciones/incidentes y deja job `succeeded`
+  - callback `fail` marca job `failed` con código de error
+  - endpoint interno rechaza requests sin secret (`401`)
 
 ## Data-plane integration tests
 

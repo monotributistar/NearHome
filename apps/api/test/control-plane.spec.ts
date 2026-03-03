@@ -1877,3 +1877,209 @@ describe("NH-DP-14 temporal workflow dispatch", () => {
     }
   });
 });
+
+describe("NH-DP-15 temporal callback ingestion", () => {
+  it("ingests workflow completion and persists detections/incidents", async () => {
+    const previousBridge = process.env.DETECTION_BRIDGE_URL;
+    const previousMode = process.env.DETECTION_EXECUTION_MODE;
+    const previousCallbackSecret = process.env.DETECTION_CALLBACK_SECRET;
+
+    process.env.DETECTION_BRIDGE_URL = "";
+    process.env.DETECTION_EXECUTION_MODE = "inline";
+    process.env.DETECTION_CALLBACK_SECRET = "test-callback-secret";
+
+    const callbackApp = await buildApp();
+    await callbackApp.ready();
+
+    try {
+      const loginResponse = await callbackApp.inject({
+        method: "POST",
+        url: "/auth/login",
+        headers: { "x-forwarded-for": `test-callback-complete-${Date.now()}` },
+        payload: { email: "admin@nearhome.dev", password: "demo1234" }
+      });
+      expect(loginResponse.statusCode).toBe(200);
+      const token = loginResponse.json<{ accessToken: string }>().accessToken;
+
+      const meResponse = await callbackApp.inject({
+        method: "GET",
+        url: "/auth/me",
+        headers: { authorization: `Bearer ${token}` }
+      });
+      expect(meResponse.statusCode).toBe(200);
+      const tenantId = meResponse.json<{ memberships: Array<{ tenantId: string }> }>().memberships[0]?.tenantId;
+      expect(tenantId).toBeTruthy();
+
+      const camerasResponse = await callbackApp.inject({
+        method: "GET",
+        url: "/cameras?_start=0&_end=1",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "x-tenant-id": tenantId!
+        }
+      });
+      expect(camerasResponse.statusCode).toBe(200);
+      const cameraId = camerasResponse.json<{ data: Array<{ id: string }> }>().data[0]?.id;
+      expect(cameraId).toBeTruthy();
+
+      const createResponse = await callbackApp.inject({
+        method: "POST",
+        url: "/v1/detections/jobs",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "x-tenant-id": tenantId!
+        },
+        payload: {
+          cameraId,
+          mode: "realtime",
+          source: "snapshot",
+          provider: "onprem_bento"
+        }
+      });
+      expect(createResponse.statusCode).toBe(200);
+      const jobId = createResponse.json<{ data: { id: string } }>().data.id;
+
+      const completeUnauthorized = await callbackApp.inject({
+        method: "POST",
+        url: `/internal/detections/jobs/${jobId}/complete`,
+        payload: { detections: [] }
+      });
+      expect(completeUnauthorized.statusCode).toBe(401);
+
+      const completeResponse = await callbackApp.inject({
+        method: "POST",
+        url: `/internal/detections/jobs/${jobId}/complete`,
+        headers: {
+          "x-detection-callback-secret": "test-callback-secret"
+        },
+        payload: {
+          detections: [
+            {
+              label: "person",
+              confidence: 0.87,
+              bbox: { x: 0.2, y: 0.3, w: 0.2, h: 0.3 },
+              attributes: { motion: true }
+            }
+          ],
+          providerMeta: { nodeId: "node-yolo-cpu" }
+        }
+      });
+      expect(completeResponse.statusCode).toBe(200);
+      expect(completeResponse.json<{ data: { status: string } }>().data.status).toBe("succeeded");
+
+      const resultsResponse = await callbackApp.inject({
+        method: "GET",
+        url: `/v1/detections/jobs/${jobId}/results`,
+        headers: {
+          authorization: `Bearer ${token}`,
+          "x-tenant-id": tenantId!
+        }
+      });
+      expect(resultsResponse.statusCode).toBe(200);
+      const results = resultsResponse.json<{ total: number; data: Array<{ label: string }> }>();
+      expect(results.total).toBeGreaterThan(0);
+      expect(results.data[0]?.label).toBe("person");
+
+      const incidentsResponse = await callbackApp.inject({
+        method: "GET",
+        url: "/v1/incidents?_start=0&_end=20",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "x-tenant-id": tenantId!
+        }
+      });
+      expect(incidentsResponse.statusCode).toBe(200);
+      const incidents = incidentsResponse.json<{ data: Array<{ type: string }> }>().data;
+      expect(incidents.some((entry) => entry.type === "person_approached_front_window")).toBe(true);
+    } finally {
+      await callbackApp.close();
+      process.env.DETECTION_BRIDGE_URL = previousBridge;
+      process.env.DETECTION_EXECUTION_MODE = previousMode;
+      process.env.DETECTION_CALLBACK_SECRET = previousCallbackSecret;
+    }
+  });
+
+  it("ingests workflow failure callback and marks job as failed", async () => {
+    const previousBridge = process.env.DETECTION_BRIDGE_URL;
+    const previousMode = process.env.DETECTION_EXECUTION_MODE;
+    const previousCallbackSecret = process.env.DETECTION_CALLBACK_SECRET;
+
+    process.env.DETECTION_BRIDGE_URL = "";
+    process.env.DETECTION_EXECUTION_MODE = "inline";
+    process.env.DETECTION_CALLBACK_SECRET = "test-callback-secret";
+
+    const callbackApp = await buildApp();
+    await callbackApp.ready();
+
+    try {
+      const loginResponse = await callbackApp.inject({
+        method: "POST",
+        url: "/auth/login",
+        headers: { "x-forwarded-for": `test-callback-fail-${Date.now()}` },
+        payload: { email: "admin@nearhome.dev", password: "demo1234" }
+      });
+      expect(loginResponse.statusCode).toBe(200);
+      const token = loginResponse.json<{ accessToken: string }>().accessToken;
+
+      const meResponse = await callbackApp.inject({
+        method: "GET",
+        url: "/auth/me",
+        headers: { authorization: `Bearer ${token}` }
+      });
+      expect(meResponse.statusCode).toBe(200);
+      const tenantId = meResponse.json<{ memberships: Array<{ tenantId: string }> }>().memberships[0]?.tenantId;
+      expect(tenantId).toBeTruthy();
+
+      const camerasResponse = await callbackApp.inject({
+        method: "GET",
+        url: "/cameras?_start=0&_end=1",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "x-tenant-id": tenantId!
+        }
+      });
+      expect(camerasResponse.statusCode).toBe(200);
+      const cameraId = camerasResponse.json<{ data: Array<{ id: string }> }>().data[0]?.id;
+      expect(cameraId).toBeTruthy();
+
+      const createResponse = await callbackApp.inject({
+        method: "POST",
+        url: "/v1/detections/jobs",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "x-tenant-id": tenantId!
+        },
+        payload: {
+          cameraId,
+          mode: "realtime",
+          source: "snapshot",
+          provider: "onprem_bento"
+        }
+      });
+      expect(createResponse.statusCode).toBe(200);
+      const jobId = createResponse.json<{ data: { id: string } }>().data.id;
+
+      const failResponse = await callbackApp.inject({
+        method: "POST",
+        url: `/internal/detections/jobs/${jobId}/fail`,
+        headers: {
+          "x-detection-callback-secret": "test-callback-secret"
+        },
+        payload: {
+          errorCode: "DETECTION_WORKFLOW_ERROR",
+          errorMessage: "bridge timeout"
+        }
+      });
+      expect(failResponse.statusCode).toBe(200);
+      expect(failResponse.json<{ data: { status: string; errorCode: string | null } }>().data).toMatchObject({
+        status: "failed",
+        errorCode: "DETECTION_WORKFLOW_ERROR"
+      });
+    } finally {
+      await callbackApp.close();
+      process.env.DETECTION_BRIDGE_URL = previousBridge;
+      process.env.DETECTION_EXECUTION_MODE = previousMode;
+      process.env.DETECTION_CALLBACK_SECRET = previousCallbackSecret;
+    }
+  });
+});

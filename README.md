@@ -128,6 +128,7 @@ Nota: `STREAM_TOKEN_SECRET` debe coincidir entre `apps/api` y `apps/stream-gatew
 Nota: el sync automático de health en API se controla con `STREAM_HEALTH_SYNC_ENABLED`, `STREAM_HEALTH_SYNC_INTERVAL_MS` y `STREAM_HEALTH_SYNC_BATCH_SIZE`.
 Nota: el pipeline de detección v1 se activa en API cuando `DETECTION_BRIDGE_URL` está configurado (modo `DETECTION_EXECUTION_MODE=inline`).
 Nota: para modo `DETECTION_EXECUTION_MODE=temporal`, API despacha workflows vía `DETECTION_TEMPORAL_DISPATCH_URL` (`/v1/workflows/detection-jobs`).
+Nota: el worker reporta resultado/falla a API vía callbacks internos protegidos con `DETECTION_CALLBACK_SECRET`.
 
 ## Detection Plane / Infra On-Prem
 

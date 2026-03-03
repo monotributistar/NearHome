@@ -14,6 +14,7 @@ services:
       STREAM_GATEWAY_URL: http://stream-gateway:3010
       DETECTION_EXECUTION_MODE: temporal
       DETECTION_TEMPORAL_DISPATCH_URL: http://detection-dispatcher:8072
+      DETECTION_CALLBACK_SECRET: dev-detection-callback-secret
       CORS_ORIGIN_ADMIN: http://localhost:5173
       CORS_ORIGIN_PORTAL: http://localhost:5174
       TEMPORAL_ADDRESS: temporal:7233
@@ -78,6 +79,8 @@ services:
       TEMPORAL_SERVER: temporal:7233
       TEMPORAL_TASK_QUEUE: nearhome-detection
       INFERENCE_BRIDGE_URL: http://inference-bridge:8090
+      CONTROL_PLANE_URL: http://api:3001
+      DETECTION_CALLBACK_SECRET: dev-detection-callback-secret
     depends_on:
       - temporal
       - inference-bridge

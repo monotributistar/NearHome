@@ -122,6 +122,13 @@
   - en `DETECTION_EXECUTION_MODE=temporal`, `POST /detections/jobs` llama `POST {DETECTION_TEMPORAL_DISPATCH_URL}/v1/workflows/detection-jobs`.
   - si el dispatch responde `200`, el job conserva estado `queued` y persiste `workflowId`/`runId`.
   - si el dispatch falla, el job pasa a `failed` con `errorCode=TEMPORAL_DISPATCH_ERROR`.
+- NH-DP-15: callback de resultados Temporal -> API:
+  - nuevos endpoints internos protegidos por `x-detection-callback-secret`:
+    - `POST /internal/detections/jobs/:id/complete`
+    - `POST /internal/detections/jobs/:id/fail`
+  - `detection-worker` reporta cierre de job al API:
+    - éxito: persiste observaciones/tracks/incidentes/evidencia y marca `succeeded`.
+    - falla: marca `failed` con `errorCode=DETECTION_WORKFLOW_ERROR` (u otro provisto).
 - NH-028: ciclo de vida de sesiones de stream:
   - `GET /stream-sessions`
   - `GET /stream-sessions/:id`

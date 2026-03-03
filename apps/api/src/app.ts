@@ -885,6 +885,7 @@ export async function buildApp() {
   const streamGatewayUrl = process.env.STREAM_GATEWAY_URL?.replace(/\/$/, "") ?? null;
   const detectionBridgeUrl = process.env.DETECTION_BRIDGE_URL?.replace(/\/$/, "") ?? null;
   const temporalDispatchUrl = process.env.DETECTION_TEMPORAL_DISPATCH_URL?.replace(/\/$/, "") ?? null;
+  const detectionCallbackSecret = process.env.DETECTION_CALLBACK_SECRET ?? "dev-detection-callback-secret";
   const detectionExecutionMode = process.env.DETECTION_EXECUTION_MODE ?? "inline";
   const streamHealthSyncEnabled = process.env.STREAM_HEALTH_SYNC_ENABLED === "1";
   const streamHealthSyncIntervalMs = Number(process.env.STREAM_HEALTH_SYNC_INTERVAL_MS ?? 30_000);
@@ -896,14 +897,178 @@ export async function buildApp() {
   let streamSyncTimer: NodeJS.Timeout | null = null;
   let streamSyncInFlight = false;
 
+  const failDetectionJob = async (jobId: string, errorCode: string, errorMessage: string) => {
+    const existing = await prisma.detectionJob.findUnique({ where: { id: jobId } });
+    if (!existing) return null;
+    const status = DetectionJobStatusSchema.parse(existing.status);
+    if (["succeeded", "failed", "canceled"].includes(status)) return existing;
+    return prisma.detectionJob.update({
+      where: { id: jobId },
+      data: {
+        status: "failed",
+        finishedAt: new Date(),
+        errorCode,
+        errorMessage
+      }
+    });
+  };
+
+  const completeDetectionJob = async (args: {
+    jobId: string;
+    detections: Array<{
+      label?: string;
+      confidence?: number;
+      bbox?: { x?: number; y?: number; w?: number; h?: number };
+      keypoints?: unknown;
+      attributes?: Record<string, unknown>;
+      providerMeta?: Record<string, unknown>;
+      frameTs?: string;
+    }>;
+    providerMeta?: Record<string, unknown>;
+  }) => {
+    const job = await prisma.detectionJob.findUnique({
+      where: { id: args.jobId },
+      include: {
+        camera: {
+          include: { profile: true }
+        }
+      }
+    });
+    if (!job) return null;
+    const status = DetectionJobStatusSchema.parse(job.status);
+    if (["succeeded", "failed", "canceled"].includes(status)) return job;
+    if (status === "queued") {
+      await prisma.detectionJob.update({
+        where: { id: job.id },
+        data: {
+          status: "running",
+          startedAt: new Date(),
+          workflowId: job.workflowId ?? `inline-${job.id}`
+        }
+      });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      for (let i = 0; i < args.detections.length; i += 1) {
+        const det = args.detections[i];
+        const label = typeof det.label === "string" && det.label.length > 0 ? det.label : "unknown";
+        const confidence = typeof det.confidence === "number" ? det.confidence : 0;
+        const bbox = {
+          x: typeof det.bbox?.x === "number" ? det.bbox.x : 0,
+          y: typeof det.bbox?.y === "number" ? det.bbox.y : 0,
+          w: typeof det.bbox?.w === "number" ? det.bbox.w : 0.1,
+          h: typeof det.bbox?.h === "number" ? det.bbox.h : 0.1
+        };
+        const frameTs = typeof det.frameTs === "string" ? new Date(det.frameTs) : new Date();
+        const zoneId = resolveZoneFromProfile(job.camera.profile?.zoneMap ?? null, bbox);
+        const incident = deriveIncidentFromDetection({ label, zoneId, location: job.camera.location });
+
+        const observation = await tx.detectionObservation.create({
+          data: {
+            jobId: job.id,
+            tenantId: job.tenantId,
+            cameraId: job.cameraId,
+            frameTs,
+            label,
+            confidence,
+            bbox: JSON.stringify(bbox),
+            keypoints: det.keypoints ? JSON.stringify(det.keypoints) : null,
+            attributes: det.attributes ? JSON.stringify(det.attributes) : null,
+            providerMeta: det.providerMeta
+              ? JSON.stringify(det.providerMeta)
+              : args.providerMeta
+                ? JSON.stringify(args.providerMeta)
+                : null
+          }
+        });
+
+        const track = await tx.track.create({
+          data: {
+            jobId: job.id,
+            tenantId: job.tenantId,
+            cameraId: job.cameraId,
+            classLabel: label,
+            trackExternalId: `${job.id}-${i + 1}`,
+            startedAt: frameTs,
+            metadata: JSON.stringify({ zoneId })
+          }
+        });
+
+        await tx.trackPoint.create({
+          data: {
+            trackId: track.id,
+            ts: frameTs,
+            x: bbox.x + bbox.w / 2,
+            y: bbox.y + bbox.h / 2,
+            zoneId
+          }
+        });
+
+        const primitive = await tx.scenePrimitiveEvent.create({
+          data: {
+            tenantId: job.tenantId,
+            cameraId: job.cameraId,
+            jobId: job.id,
+            type: `object_detected.${label.toLowerCase()}`,
+            severity: confidence >= 0.8 ? "high" : confidence >= 0.5 ? "medium" : "low",
+            startedAt: frameTs,
+            payload: JSON.stringify({
+              confidence,
+              zoneId,
+              observationId: observation.id
+            })
+          }
+        });
+
+        const incidentEvent = await tx.incidentEvent.create({
+          data: {
+            tenantId: job.tenantId,
+            cameraId: job.cameraId,
+            jobId: job.id,
+            type: incident.type,
+            severity: confidence >= 0.8 ? "high" : confidence >= 0.5 ? "medium" : "low",
+            status: "open",
+            summary: incident.summary,
+            startedAt: frameTs,
+            payload: JSON.stringify({
+              label,
+              confidence,
+              zoneId
+            })
+          }
+        });
+
+        await tx.incidentEvidence.create({
+          data: {
+            tenantId: job.tenantId,
+            incidentId: incidentEvent.id,
+            observationId: observation.id,
+            trackId: track.id,
+            scenePrimitiveEventId: primitive.id
+          }
+        });
+      }
+
+      await tx.detectionJob.update({
+        where: { id: job.id },
+        data: {
+          status: "succeeded",
+          finishedAt: new Date(),
+          errorCode: null,
+          errorMessage: null
+        }
+      });
+    });
+
+    return prisma.detectionJob.findUnique({ where: { id: job.id } });
+  };
+
   const runDetectionJobPipeline = async (jobId: string) => {
     if (!detectionBridgeUrl) return;
     const job = await prisma.detectionJob.findUnique({
       where: { id: jobId },
       include: {
-        camera: {
-          include: { profile: true }
-        }
+        camera: true
       }
     });
     if (!job) return;
@@ -959,123 +1124,18 @@ export async function buildApp() {
         providerMeta?: Record<string, unknown>;
       };
       const detections = Array.isArray(body.detections) ? body.detections : [];
-
-      await prisma.$transaction(async (tx) => {
-        for (let i = 0; i < detections.length; i += 1) {
-          const det = detections[i];
-          const label = typeof det.label === "string" && det.label.length > 0 ? det.label : "unknown";
-          const confidence = typeof det.confidence === "number" ? det.confidence : 0;
-          const bbox = {
-            x: typeof det.bbox?.x === "number" ? det.bbox.x : 0,
-            y: typeof det.bbox?.y === "number" ? det.bbox.y : 0,
-            w: typeof det.bbox?.w === "number" ? det.bbox.w : 0.1,
-            h: typeof det.bbox?.h === "number" ? det.bbox.h : 0.1
-          };
-          const frameTs = new Date();
-          const zoneId = resolveZoneFromProfile(job.camera.profile?.zoneMap ?? null, bbox);
-          const incident = deriveIncidentFromDetection({ label, zoneId, location: job.camera.location });
-
-          const observation = await tx.detectionObservation.create({
-            data: {
-              jobId: job.id,
-              tenantId: job.tenantId,
-              cameraId: job.cameraId,
-              frameTs,
-              label,
-              confidence,
-              bbox: JSON.stringify(bbox),
-              keypoints: det.keypoints ? JSON.stringify(det.keypoints) : null,
-              attributes: det.attributes ? JSON.stringify(det.attributes) : null,
-              providerMeta: det.providerMeta ? JSON.stringify(det.providerMeta) : body.providerMeta ? JSON.stringify(body.providerMeta) : null
-            }
-          });
-
-          const track = await tx.track.create({
-            data: {
-              jobId: job.id,
-              tenantId: job.tenantId,
-              cameraId: job.cameraId,
-              classLabel: label,
-              trackExternalId: `${job.id}-${i + 1}`,
-              startedAt: frameTs,
-              metadata: JSON.stringify({ zoneId })
-            }
-          });
-
-          await tx.trackPoint.create({
-            data: {
-              trackId: track.id,
-              ts: frameTs,
-              x: bbox.x + bbox.w / 2,
-              y: bbox.y + bbox.h / 2,
-              zoneId
-            }
-          });
-
-          const primitive = await tx.scenePrimitiveEvent.create({
-            data: {
-              tenantId: job.tenantId,
-              cameraId: job.cameraId,
-              jobId: job.id,
-              type: `object_detected.${label.toLowerCase()}`,
-              severity: confidence >= 0.8 ? "high" : confidence >= 0.5 ? "medium" : "low",
-              startedAt: frameTs,
-              payload: JSON.stringify({
-                confidence,
-                zoneId,
-                observationId: observation.id
-              })
-            }
-          });
-
-          const incidentEvent = await tx.incidentEvent.create({
-            data: {
-              tenantId: job.tenantId,
-              cameraId: job.cameraId,
-              jobId: job.id,
-              type: incident.type,
-              severity: confidence >= 0.8 ? "high" : confidence >= 0.5 ? "medium" : "low",
-              status: "open",
-              summary: incident.summary,
-              startedAt: frameTs,
-              payload: JSON.stringify({
-                label,
-                confidence,
-                zoneId
-              })
-            }
-          });
-
-          await tx.incidentEvidence.create({
-            data: {
-              tenantId: job.tenantId,
-              incidentId: incidentEvent.id,
-              observationId: observation.id,
-              trackId: track.id,
-              scenePrimitiveEventId: primitive.id
-            }
-          });
-        }
-
-        await tx.detectionJob.update({
-          where: { id: job.id },
-          data: {
-            status: "succeeded",
-            finishedAt: new Date()
-          }
-        });
+      await completeDetectionJob({
+        jobId: job.id,
+        detections,
+        providerMeta: body.providerMeta
       });
     } catch (error) {
       app.log.error({ error, jobId: job.id }, "detection.pipeline_failed");
-      await prisma.detectionJob.update({
-        where: { id: job.id },
-        data: {
-          status: "failed",
-          finishedAt: new Date(),
-          errorCode: "DETECTION_PIPELINE_ERROR",
-          errorMessage: error instanceof Error ? error.message : "unknown error"
-        }
-      });
+      await failDetectionJob(
+        job.id,
+        "DETECTION_PIPELINE_ERROR",
+        error instanceof Error ? error.message : "unknown error"
+      );
     }
   };
 
@@ -2630,6 +2690,69 @@ export async function buildApp() {
       return { data, total: data.length };
     }
   );
+
+  app.post("/internal/detections/jobs/:id/complete", async (request: FastifyRequest, reply: FastifyReply) => {
+    const providedSecret = request.headers["x-detection-callback-secret"];
+    if (providedSecret !== detectionCallbackSecret) {
+      throw app.httpErrors.unauthorized("invalid callback secret");
+    }
+
+    const id = (request.params as { id: string }).id;
+    const body = z
+      .object({
+        detections: z
+          .array(
+            z.object({
+              label: z.string().optional(),
+              confidence: z.number().optional(),
+              bbox: z
+                .object({
+                  x: z.number().optional(),
+                  y: z.number().optional(),
+                  w: z.number().optional(),
+                  h: z.number().optional()
+                })
+                .optional(),
+              keypoints: z.unknown().optional(),
+              attributes: z.record(z.any()).optional(),
+              providerMeta: z.record(z.any()).optional(),
+              frameTs: z.string().optional()
+            })
+          )
+          .default([]),
+        providerMeta: z.record(z.any()).optional()
+      })
+      .parse(request.body);
+
+    const job = await completeDetectionJob({
+      jobId: id,
+      detections: body.detections,
+      providerMeta: body.providerMeta
+    });
+    if (!job) throw app.httpErrors.notFound();
+    reply.code(200);
+    return { data: detectionJobResponse(job) };
+  });
+
+  app.post("/internal/detections/jobs/:id/fail", async (request: FastifyRequest, reply: FastifyReply) => {
+    const providedSecret = request.headers["x-detection-callback-secret"];
+    if (providedSecret !== detectionCallbackSecret) {
+      throw app.httpErrors.unauthorized("invalid callback secret");
+    }
+
+    const id = (request.params as { id: string }).id;
+    const body = z
+      .object({
+        errorCode: z.string().default("DETECTION_WORKFLOW_ERROR"),
+        errorMessage: z.string().default("workflow failed")
+      })
+      .parse(request.body);
+
+    const job = await failDetectionJob(id, body.errorCode, body.errorMessage);
+    if (!job) throw app.httpErrors.notFound();
+    reply.code(200);
+    return { data: detectionJobResponse(job) };
+  });
 
   app.post("/detections/jobs", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
     const ctx = getTenantContext(request);

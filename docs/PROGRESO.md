@@ -28,6 +28,7 @@
 - Etapa activa: base detection plane + event-plane + infra on-prem (NH-DP-12) completada
 - Etapa activa: ejecución pipeline detección v1 (NH-DP-13) completada
 - Etapa activa: dispatch Temporal desde API (NH-DP-14) completada
+- Etapa activa: callback resultados Temporal->API (NH-DP-15) completada
 
 ## Progreso completado
 
@@ -145,6 +146,11 @@
    - persistencia de `workflowId` y `runId` al aceptar dispatch.
    - fallback de error con transición `queued -> failed` y `errorCode=TEMPORAL_DISPATCH_ERROR`.
    - servicio `detection-dispatcher` agregado al stack compose.
+29. Temporal callback ingestion (NH-DP-15):
+   - API agrega endpoints internos para callback de worker (`complete/fail`) protegidos por secret.
+   - worker Temporal reporta al API al cerrar workflow.
+   - persistencia de observaciones/tracks/incidentes vía callback de éxito.
+   - fallback de callback de falla con transición a `failed`.
 
 ## Cambios técnicos relevantes
 
@@ -314,9 +320,10 @@
 - `pnpm test:e2e:admin`: `7 passed`
 - `pnpm test:e2e:portal`: `2 passed`
 - `pnpm --filter @app/api test`: `42 passed` (incluye NH-DP-14 dispatch temporal)
+- `pnpm --filter @app/api test`: `44 passed` (incluye NH-DP-15 callback Temporal->API)
 
 ## Próximo bloque recomendado
 
 1. NH-015: asignación de cámaras por `client_user` (subset real y enforcement integral).
 2. Endurecimiento e2e multi-tenant para concurrencia de playback (escenarios simultáneos por tenant).
-3. NH-DP-15: completar callback/collector de resultados Temporal -> API para cerrar job y persistir observaciones vía worker.
+3. NH-DP-16: evento realtime (`event-gateway`) para `detection.job`/`incident` emitido al persistir callback.
