@@ -94,8 +94,20 @@ Cobertura incluida:
   - contador de requests lentos (`nearhome_playback_slow_requests_total`) con umbral configurable
   - validación de observabilidad QoS mediante adapter con latencia inducida
 
+## Data-plane load test (NH-DP-09)
+
+Archivo: `apps/stream-gateway/test/stream-gateway.load.spec.ts`
+
+Cobertura incluida:
+
+- ráfaga multi-tenant/multi-cámara de playback concurrente sobre `index.m3u8`
+- error budget de prueba (0 errores en burst de referencia)
+- verificación de conteo de requests y observaciones de latencia por tenant/cámara en métricas
+- presupuesto temporal de ejecución del burst para detectar regresiones severas
+
 ## Ejecutar
 
 1. `pnpm db:reset`
 2. `pnpm --filter @app/api test`
 3. `pnpm --filter @app/stream-gateway test`
+4. `pnpm --filter @app/stream-gateway test:load`

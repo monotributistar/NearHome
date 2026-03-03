@@ -81,6 +81,10 @@
   - nuevas métricas: `nearhome_playback_latency_ms_sum`, `nearhome_playback_latency_ms_count`, `nearhome_playback_slow_requests_total`.
   - umbral de request lenta configurable con `STREAM_PLAYBACK_SLOW_MS`.
   - cobertura de tests para latencia y requests lentos por tenant/cámara/asset.
+- NH-DP-09: prueba de carga multi-tenant de playback:
+  - nueva suite `stream-gateway.load.spec.ts` con burst concurrente multi-tenant/multi-cámara.
+  - assertions de error budget (sin errores) y presupuesto temporal de ejecución.
+  - validación de métricas de requests/latencia por tenant y cámara bajo carga.
 - NH-028: ciclo de vida de sesiones de stream:
   - `GET /stream-sessions`
   - `GET /stream-sessions/:id`

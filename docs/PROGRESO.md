@@ -23,6 +23,7 @@
 - Etapa activa: guardrail de concurrencia playback por tenant (NH-DP-08B) completada
 - Etapa activa: timeout operativo de playback (NH-DP-08C) completada
 - Etapa activa: observabilidad QoS de playback (NH-DP-08D) completada
+- Etapa activa: carga multi-tenant con error budget (NH-DP-09) completada
 
 ## Progreso completado
 
@@ -114,6 +115,10 @@
    - métricas de latencia de serving por tenant/cámara/asset (`nearhome_playback_latency_ms_sum/count`).
    - métrica de requests lentos por umbral (`nearhome_playback_slow_requests_total`).
    - umbral configurable con `STREAM_PLAYBACK_SLOW_MS`.
+24. Carga multi-tenant con error budget (NH-DP-09):
+   - suite dedicada de carga `stream-gateway.load.spec.ts`.
+   - burst concurrente sobre múltiples tenants/cámaras en playback `index.m3u8`.
+   - verificaciones de budget: tasa de error y tiempo total de ejecución.
 
 ## Cambios técnicos relevantes
 
@@ -225,6 +230,10 @@
   - medición de latencia por request de playback y clasificación de request lenta.
 - `apps/stream-gateway/test/stream-gateway.spec.ts`:
   - test NH-DP-08D para métricas QoS de latencia/slow requests.
+- `apps/stream-gateway/test/stream-gateway.load.spec.ts`:
+  - escenario NH-DP-09 de carga concurrente multi-tenant con assertions de budget y métricas.
+- `apps/stream-gateway/package.json`:
+  - nuevo comando `test:load`.
 - `docs/CONTROLPLANE_DATAPLANE_CONTRACT.md`:
   - contrato actualizado de provision y session tracking.
 
@@ -269,11 +278,13 @@
 - `pnpm --filter @app/stream-gateway test`: `21 passed` (incluye NH-DP-08B guardrail por tenant)
 - `pnpm --filter @app/stream-gateway test`: `23 passed` (incluye NH-DP-08C timeout operativo)
 - `pnpm --filter @app/stream-gateway test`: `24 passed` (incluye NH-DP-08D QoS playback)
+- `pnpm --filter @app/stream-gateway test:load`: `1 passed` (NH-DP-09 burst multi-tenant)
+- `pnpm --filter @app/stream-gateway test`: `25 passed` (incluye suite NH-DP-09)
 - `pnpm test:e2e:admin`: `7 passed`
 - `pnpm test:e2e:portal`: `2 passed`
 
 ## Próximo bloque recomendado
 
-1. NH-DP-09: prueba de carga multi-tenant playback con presupuesto de latencia y error budget.
+1. NH-DP-10: escenario soak (duración prolongada) + reporte automático de SLO/SLI.
 2. NH-015: asignación de cámaras por `client_user` (subset real y enforcement integral).
 3. Endurecimiento e2e multi-tenant para concurrencia de playback (escenarios simultáneos por tenant).

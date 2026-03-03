@@ -8,7 +8,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/apps/stream-gateway/src/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:load": "vitest run test/stream-gateway.load.spec.ts"
   },
   "dependencies": {
     "fastify": "^5.2.1",

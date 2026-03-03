@@ -20,7 +20,8 @@
     "test:e2e": "playwright test -c e2e/playwright.config.ts",
     "test:e2e:admin": "playwright test -c e2e/playwright.config.ts e2e/tests/admin*.spec.ts",
     "test:e2e:portal": "playwright test -c e2e/playwright.config.ts e2e/tests/portal*.spec.ts",
-    "test:stream": "pnpm --filter @app/stream-gateway test"
+    "test:stream": "pnpm --filter @app/stream-gateway test",
+    "test:stream:load": "pnpm --filter @app/stream-gateway test:load"
   },
   "devDependencies": {
     "@eslint/js": "^9.22.0",
