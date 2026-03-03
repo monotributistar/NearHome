@@ -1,0 +1,173 @@
+name: nearhome-stack
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile.node-workspace
+    command: ["pnpm", "--filter", "@app/api", "dev"]
+    environment:
+      PORT: 3001
+      JWT_SECRET: dev-super-secret
+      STREAM_TOKEN_SECRET: dev-stream-token-secret
+      DATABASE_URL: file:./dev.db
+      STREAM_GATEWAY_URL: http://stream-gateway:3010
+      CORS_ORIGIN_ADMIN: http://localhost:5173
+      CORS_ORIGIN_PORTAL: http://localhost:5174
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_TASK_QUEUE: nearhome-detection
+    ports:
+      - "3001:3001"
+    depends_on:
+      - stream-gateway
+      - temporal
+    networks:
+      - nearhome_net
+
+  stream-gateway:
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile.node-workspace
+    command: ["pnpm", "--filter", "@app/stream-gateway", "dev"]
+    environment:
+      PORT: 3010
+      STREAM_STORAGE_DIR: /data/storage
+      STREAM_TOKEN_SECRET: dev-stream-token-secret
+      STREAM_PROBE_INTERVAL_MS: 5000
+    ports:
+      - "3010:3010"
+    volumes:
+      - stream_storage:/data/storage
+    networks:
+      - nearhome_net
+
+  event-gateway:
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile.node-workspace
+    command: ["pnpm", "--filter", "@app/event-gateway", "dev"]
+    environment:
+      PORT: 3011
+      JWT_SECRET: dev-super-secret
+    ports:
+      - "3011:3011"
+    depends_on:
+      - redis
+    networks:
+      - nearhome_net
+
+  inference-bridge:
+    build:
+      context: ../apps/inference-bridge
+      dockerfile: Dockerfile
+    environment:
+      INFERENCE_TIMEOUT_MS: 15000
+    ports:
+      - "8090:8090"
+    networks:
+      - nearhome_net
+
+  detection-worker:
+    build:
+      context: ../apps/detection-worker
+      dockerfile: Dockerfile
+    environment:
+      TEMPORAL_SERVER: temporal:7233
+      TEMPORAL_TASK_QUEUE: nearhome-detection
+      INFERENCE_BRIDGE_URL: http://inference-bridge:8090
+    depends_on:
+      - temporal
+      - inference-bridge
+    networks:
+      - nearhome_net
+
+  inference-node-yolo:
+    build:
+      context: ../apps/inference-node-yolo
+      dockerfile: Dockerfile
+    ports:
+      - "8091:8091"
+    networks:
+      - nearhome_net
+
+  inference-node-mediapipe:
+    build:
+      context: ../apps/inference-node-mediapipe
+      dockerfile: Dockerfile
+    ports:
+      - "8092:8092"
+    networks:
+      - nearhome_net
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - nearhome_net
+
+  temporal-postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_PASSWORD: temporal
+      POSTGRES_USER: temporal
+      POSTGRES_DB: temporal
+    volumes:
+      - temporal_pg:/var/lib/postgresql/data
+    networks:
+      - nearhome_net
+
+  temporal:
+    image: temporalio/auto-setup:1.26.2
+    environment:
+      DB: postgresql
+      DB_PORT: 5432
+      POSTGRES_USER: temporal
+      POSTGRES_PWD: temporal
+      POSTGRES_SEEDS: temporal-postgres
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
+    depends_on:
+      - temporal-postgres
+    ports:
+      - "7233:7233"
+    networks:
+      - nearhome_net
+
+  temporal-ui:
+    image: temporalio/ui:2.31.0
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost:8088
+    ports:
+      - "8088:8080"
+    depends_on:
+      - temporal
+    networks:
+      - nearhome_net
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    profiles: ["observability"]
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    networks:
+      - nearhome_net
+
+  grafana:
+    image: grafana/grafana:11.1.5
+    profiles: ["observability"]
+    ports:
+      - "3005:3000"
+    networks:
+      - nearhome_net
+
+networks:
+  nearhome_net:
+    driver: bridge
+
+volumes:
+  stream_storage:
+  temporal_pg:

@@ -1365,3 +1365,161 @@ describe("NH-012 readiness endpoint", () => {
     }
   });
 });
+
+describe("NH-DP detection jobs and incidents", () => {
+  it("allows tenant_admin to create, read, list results and cancel detection jobs", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const adminMe = await me(adminToken);
+    const tenantId = adminMe.memberships[0]?.tenantId;
+    expect(tenantId).toBeTruthy();
+
+    const camerasResponse = await app.inject({
+      method: "GET",
+      url: "/cameras?_start=0&_end=1",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId!
+      }
+    });
+    expect(camerasResponse.statusCode).toBe(200);
+    const cameraId = camerasResponse.json<{ data: Array<{ id: string }> }>().data[0]?.id;
+    expect(cameraId).toBeTruthy();
+
+    const createResponse = await app.inject({
+      method: "POST",
+      url: "/v1/detections/jobs",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId!
+      },
+      payload: {
+        cameraId,
+        mode: "realtime",
+        source: "snapshot",
+        provider: "onprem_bento",
+        options: { modelRef: "yolo26n@1.0.0", minConfidence: 0.4 }
+      }
+    });
+    expect(createResponse.statusCode).toBe(200);
+    const jobId = createResponse.json<{ data: { id: string; status: string } }>().data.id;
+    expect(jobId).toBeTruthy();
+    expect(createResponse.json()).toMatchObject({ data: { status: "queued" } });
+
+    const getResponse = await app.inject({
+      method: "GET",
+      url: `/v1/detections/jobs/${jobId}`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId!
+      }
+    });
+    expect(getResponse.statusCode).toBe(200);
+    expect(getResponse.json()).toMatchObject({
+      data: {
+        id: jobId,
+        tenantId,
+        cameraId
+      }
+    });
+
+    const resultsResponse = await app.inject({
+      method: "GET",
+      url: `/v1/detections/jobs/${jobId}/results`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId!
+      }
+    });
+    expect(resultsResponse.statusCode).toBe(200);
+    expect(resultsResponse.json()).toMatchObject({ data: expect.any(Array), total: expect.any(Number) });
+
+    const cancelResponse = await app.inject({
+      method: "POST",
+      url: `/v1/detections/jobs/${jobId}/cancel`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId!
+      },
+      payload: {}
+    });
+    expect(cancelResponse.statusCode).toBe(200);
+    expect(cancelResponse.json()).toMatchObject({
+      data: { id: jobId, status: "canceled" }
+    });
+  });
+
+  it("denies detection job creation for client_user", async () => {
+    const clientToken = await login("client@nearhome.dev");
+    const clientMe = await me(clientToken);
+    const tenantId = clientMe.memberships[0]?.tenantId;
+    expect(tenantId).toBeTruthy();
+
+    const camerasResponse = await app.inject({
+      method: "GET",
+      url: "/cameras?_start=0&_end=1",
+      headers: {
+        authorization: `Bearer ${clientToken}`,
+        "x-tenant-id": tenantId!
+      }
+    });
+    expect(camerasResponse.statusCode).toBe(200);
+    const cameraId = camerasResponse.json<{ data: Array<{ id: string }> }>().data[0]?.id;
+    expect(cameraId).toBeTruthy();
+
+    const createResponse = await app.inject({
+      method: "POST",
+      url: "/v1/detections/jobs",
+      headers: {
+        authorization: `Bearer ${clientToken}`,
+        "x-tenant-id": tenantId!
+      },
+      payload: {
+        cameraId,
+        mode: "realtime",
+        source: "snapshot",
+        provider: "onprem_bento"
+      }
+    });
+    expect(createResponse.statusCode).toBe(403);
+    expect(createResponse.json()).toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("returns ws token and incidents list scoped by tenant", async () => {
+    const monitorToken = await login("monitor@nearhome.dev");
+    const monitorMe = await me(monitorToken);
+    const tenantId = monitorMe.memberships[0]?.tenantId;
+    expect(tenantId).toBeTruthy();
+
+    const wsTokenResponse = await app.inject({
+      method: "GET",
+      url: "/v1/events/ws-token",
+      headers: {
+        authorization: `Bearer ${monitorToken}`,
+        "x-tenant-id": tenantId!
+      }
+    });
+    expect(wsTokenResponse.statusCode).toBe(200);
+    expect(wsTokenResponse.json()).toMatchObject({
+      data: {
+        token: expect.any(String),
+        tenantId,
+        topicsAllowed: expect.any(Array),
+        expiresAt: expect.any(String)
+      }
+    });
+
+    const incidentsResponse = await app.inject({
+      method: "GET",
+      url: "/v1/incidents?_start=0&_end=20",
+      headers: {
+        authorization: `Bearer ${monitorToken}`,
+        "x-tenant-id": tenantId!
+      }
+    });
+    expect(incidentsResponse.statusCode).toBe(200);
+    expect(incidentsResponse.json()).toMatchObject({
+      data: expect.any(Array),
+      total: expect.any(Number)
+    });
+  });
+});

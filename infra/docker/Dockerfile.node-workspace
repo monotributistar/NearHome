@@ -1,0 +1,14 @@
+FROM node:20-slim
+
+WORKDIR /workspace
+
+RUN corepack enable
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.base.json ./
+COPY apps ./apps
+COPY packages ./packages
+COPY scripts ./scripts
+
+RUN pnpm i --frozen-lockfile
+
+CMD ["pnpm", "dev"]

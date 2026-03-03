@@ -90,6 +90,30 @@
   - reporte markdown automático con resultado `PASS/FAIL`.
   - gate por `error rate` y latencia `p95` configurable por env.
   - `test:soak:record` persiste histórico por run (`.md` + `.json`) y genera índice con deltas vs run previo.
+- NH-DP-12: base de Detection Plane y event-plane:
+  - endpoints nuevos:
+    - `POST /detections/jobs`
+    - `GET /detections/jobs/:id`
+    - `GET /detections/jobs/:id/results`
+    - `POST /detections/jobs/:id/cancel`
+    - `GET /cameras/:id/detections`
+    - `GET /incidents`
+    - `GET /incidents/:id`
+    - `GET /incidents/:id/evidence`
+    - `GET /events/ws-token`
+    - `GET /events/stream` (SSE fallback)
+  - tablas nuevas:
+    - `DetectionJob`
+    - `DetectionObservation`
+    - `Track`
+    - `TrackPoint`
+    - `ScenePrimitiveEvent`
+    - `IncidentEvent`
+    - `IncidentEvidence`
+    - `InferenceProviderConfig`
+    - `InferenceNodeSnapshot`
+  - `CameraProfile` extendido con `zoneMap`, `homography`, `sceneTags`, `rulesProfile`.
+  - nuevo servicio `apps/event-gateway` para WS/SSE y `infra/docker-compose.yml` para despliegue on-prem.
 - NH-028: ciclo de vida de sesiones de stream:
   - `GET /stream-sessions`
   - `GET /stream-sessions/:id`

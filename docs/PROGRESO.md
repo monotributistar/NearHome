@@ -25,6 +25,7 @@
 - Etapa activa: observabilidad QoS de playback (NH-DP-08D) completada
 - Etapa activa: carga multi-tenant con error budget (NH-DP-09) completada
 - Etapa activa: soak test con reporte SLO/SLI (NH-DP-10) completada
+- Etapa activa: base detection plane + event-plane + infra on-prem (NH-DP-12) completada
 
 ## Progreso completado
 
@@ -126,6 +127,12 @@
    - gate operacional por error rate y latencia p95.
    - histórico por corrida (`docs/reports/history/<runId>.md` + `.json`) e índice (`docs/reports/stream-soak-history.md`).
    - comparación automática contra corrida previa (delta de error rate y p95).
+26. Detection plane foundation (NH-DP-12):
+   - nuevos modelos DB para jobs/observations/tracks/incidents/providers/nodes.
+   - endpoints API para `detections/jobs`, `incidents`, `events/ws-token`, `events/stream`.
+   - `CameraProfile` extendido con contexto de escena (`zoneMap`, `homography`, `sceneTags`, `rulesProfile`).
+   - nuevo servicio `apps/event-gateway` (WS/SSE) y stack on-prem en `infra/docker-compose.yml`.
+   - scaffolding de `inference-bridge`, `detection-worker`, nodos on-prem (`yolo`, `mediapipe`).
 
 ## Cambios técnicos relevantes
 
@@ -299,4 +306,4 @@
 
 1. NH-015: asignación de cámaras por `client_user` (subset real y enforcement integral).
 2. Endurecimiento e2e multi-tenant para concurrencia de playback (escenarios simultáneos por tenant).
-3. NH-DP-12: gate en CI consumiendo el índice histórico y alertando regresiones sostenidas.
+3. NH-DP-13: integración real Temporal + inference-bridge + persistencia de observaciones/incidentes automáticas.

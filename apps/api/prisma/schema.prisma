@@ -8,16 +8,24 @@ datasource db {
 }
 
 model Tenant {
-  id            String         @id @default(cuid())
-  name          String
-  createdAt     DateTime       @default(now())
-  deletedAt     DateTime?
-  memberships   Membership[]
-  cameras       Camera[]
-  subscriptions Subscription[]
-  events        Event[]
-  streamSessions StreamSession[]
-  auditLogs     AuditLog[]
+  id                    String                   @id @default(cuid())
+  name                  String
+  createdAt             DateTime                 @default(now())
+  deletedAt             DateTime?
+  memberships           Membership[]
+  cameras               Camera[]
+  subscriptions         Subscription[]
+  events                Event[]
+  streamSessions        StreamSession[]
+  auditLogs             AuditLog[]
+  detectionJobs         DetectionJob[]
+  detectionObservations DetectionObservation[]
+  tracks                Track[]
+  scenePrimitiveEvents  ScenePrimitiveEvent[]
+  incidentEvents        IncidentEvent[]
+  incidentEvidence      IncidentEvidence[]
+  inferenceProviderConfigs InferenceProviderConfig[]
+  inferenceNodeSnapshots   InferenceNodeSnapshot[]
 }
 
 model User {
@@ -63,6 +71,11 @@ model Camera {
   lifecycleLogs         CameraLifecycleLog[]
   latestHealthSnapshot  CameraHealthSnapshot?
   streamSessions        StreamSession[]
+  detectionJobs         DetectionJob[]
+  detectionObservations DetectionObservation[]
+  tracks                Track[]
+  scenePrimitiveEvents  ScenePrimitiveEvent[]
+  incidentEvents        IncidentEvent[]
 }
 
 model CameraProfile {
@@ -75,6 +88,10 @@ model CameraProfile {
   detectorConfigKey   String
   detectorResultsKey  String
   detectorFlags       String
+  zoneMap             String?
+  homography          String?
+  sceneTags           String?
+  rulesProfile        String?
   status              String   @default("ready")
   lastHealthAt        DateTime?
   lastError           String?
@@ -187,4 +204,191 @@ model StreamSessionTransition {
   actorUserId     String?
   createdAt       DateTime      @default(now())
   streamSession   StreamSession @relation(fields: [streamSessionId], references: [id])
+}
+
+model DetectionJob {
+  id            String   @id @default(cuid())
+  tenantId      String
+  cameraId      String
+  mode          String
+  source        String
+  provider      String
+  status        String
+  workflowId    String?
+  runId         String?
+  errorCode     String?
+  errorMessage  String?
+  options       String?
+  queuedAt      DateTime @default(now())
+  startedAt     DateTime?
+  finishedAt    DateTime?
+  canceledAt    DateTime?
+  createdByUserId String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  camera        Camera   @relation(fields: [cameraId], references: [id])
+  observations  DetectionObservation[]
+  tracks        Track[]
+  scenePrimitiveEvents ScenePrimitiveEvent[]
+  incidentEvents IncidentEvent[]
+
+  @@index([tenantId, cameraId, status])
+}
+
+model DetectionObservation {
+  id              String   @id @default(cuid())
+  jobId           String
+  tenantId        String
+  cameraId        String
+  frameTs         DateTime
+  label           String
+  confidence      Float
+  bbox            String
+  keypoints       String?
+  attributes      String?
+  providerMeta    String?
+  createdAt       DateTime @default(now())
+  job             DetectionJob @relation(fields: [jobId], references: [id])
+  tenant          Tenant   @relation(fields: [tenantId], references: [id])
+  camera          Camera   @relation(fields: [cameraId], references: [id])
+  evidence        IncidentEvidence[]
+
+  @@index([tenantId, cameraId, frameTs])
+  @@index([jobId])
+}
+
+model Track {
+  id              String   @id @default(cuid())
+  jobId           String?
+  tenantId        String
+  cameraId        String
+  classLabel      String
+  trackExternalId String
+  startedAt       DateTime
+  endedAt         DateTime?
+  metadata        String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  job             DetectionJob? @relation(fields: [jobId], references: [id])
+  tenant          Tenant   @relation(fields: [tenantId], references: [id])
+  camera          Camera   @relation(fields: [cameraId], references: [id])
+  points          TrackPoint[]
+  evidence        IncidentEvidence[]
+
+  @@index([tenantId, cameraId, startedAt])
+  @@unique([tenantId, cameraId, trackExternalId])
+}
+
+model TrackPoint {
+  id          String   @id @default(cuid())
+  trackId     String
+  ts          DateTime
+  x           Float
+  y           Float
+  zoneId      String?
+  speed       Float?
+  createdAt   DateTime @default(now())
+  track       Track    @relation(fields: [trackId], references: [id])
+
+  @@index([trackId, ts])
+}
+
+model ScenePrimitiveEvent {
+  id            String   @id @default(cuid())
+  tenantId      String
+  cameraId      String
+  jobId         String?
+  type          String
+  severity      String
+  startedAt     DateTime
+  endedAt       DateTime?
+  payload       String?
+  createdAt     DateTime @default(now())
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  camera        Camera   @relation(fields: [cameraId], references: [id])
+  job           DetectionJob? @relation(fields: [jobId], references: [id])
+  incidents     IncidentEvidence[]
+
+  @@index([tenantId, cameraId, startedAt])
+}
+
+model IncidentEvent {
+  id            String   @id @default(cuid())
+  tenantId      String
+  cameraId      String
+  jobId         String?
+  type          String
+  severity      String
+  status        String
+  summary       String
+  startedAt     DateTime
+  endedAt       DateTime?
+  payload       String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  camera        Camera   @relation(fields: [cameraId], references: [id])
+  job           DetectionJob? @relation(fields: [jobId], references: [id])
+  evidence      IncidentEvidence[]
+
+  @@index([tenantId, cameraId, startedAt])
+}
+
+model IncidentEvidence {
+  id                   String   @id @default(cuid())
+  tenantId             String
+  incidentId           String
+  observationId        String?
+  trackId              String?
+  scenePrimitiveEventId String?
+  clipUrl              String?
+  snapshotUrl          String?
+  createdAt            DateTime @default(now())
+  tenant               Tenant   @relation(fields: [tenantId], references: [id])
+  incident             IncidentEvent @relation(fields: [incidentId], references: [id])
+  observation          DetectionObservation? @relation(fields: [observationId], references: [id])
+  track                Track? @relation(fields: [trackId], references: [id])
+  scenePrimitiveEvent  ScenePrimitiveEvent? @relation(fields: [scenePrimitiveEventId], references: [id])
+
+  @@index([tenantId, incidentId])
+}
+
+model InferenceProviderConfig {
+  id                 String   @id @default(cuid())
+  tenantId           String
+  providerType       String
+  endpoint           String
+  authType           String
+  authConfigEncrypted String?
+  model              String?
+  timeoutMs          Int      @default(15000)
+  retries            Int      @default(2)
+  isActive           Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  tenant             Tenant   @relation(fields: [tenantId], references: [id])
+}
+
+model InferenceNodeSnapshot {
+  id               String   @id @default(cuid())
+  tenantId         String?
+  nodeId           String
+  runtime          String
+  transport        String
+  endpoint         String
+  status           String
+  resources        String
+  capabilities     String
+  models           String
+  maxConcurrent    Int
+  queueDepth       Int
+  isDrained        Boolean  @default(false)
+  lastHeartbeatAt  DateTime
+  contractVersion  String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  tenant           Tenant?  @relation(fields: [tenantId], references: [id])
+
+  @@unique([nodeId])
 }

@@ -94,10 +94,18 @@ type DetectorFlags = {
 type ProfileStatus = "pending" | "ready" | "error";
 type CameraLifecycleStatus = "draft" | "provisioning" | "ready" | "degraded" | "offline" | "error" | "retired";
 type StreamSessionStatus = "requested" | "issued" | "active" | "ended" | "expired";
+type DetectionJobStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
+type DetectionMode = "realtime" | "batch";
+type DetectionSource = "snapshot" | "clip" | "range";
+type DetectionProvider = "onprem_bento" | "huggingface_space" | "external_http";
 
 const CameraLifecycleStatusSchema = z.enum(["draft", "provisioning", "ready", "degraded", "offline", "error", "retired"]);
 const CameraConnectivitySchema = z.enum(["online", "degraded", "offline"]);
 const StreamSessionStatusSchema = z.enum(["requested", "issued", "active", "ended", "expired"]);
+const DetectionJobStatusSchema = z.enum(["queued", "running", "succeeded", "failed", "canceled"]);
+const DetectionModeSchema = z.enum(["realtime", "batch"]);
+const DetectionSourceSchema = z.enum(["snapshot", "clip", "range"]);
+const DetectionProviderSchema = z.enum(["onprem_bento", "huggingface_space", "external_http"]);
 
 function canTransitionCameraLifecycle(from: CameraLifecycleStatus, to: CameraLifecycleStatus) {
   const allowed: Record<CameraLifecycleStatus, CameraLifecycleStatus[]> = {
@@ -142,6 +150,10 @@ function defaultCameraProfileData(tenantId: string, cameraId: string) {
     detectorConfigKey: `kv://nearhome/${tenantId}/detectors/${cameraId}/config.json`,
     detectorResultsKey: `s3://nearhome/${tenantId}/detectors/${cameraId}/results`,
     detectorFlags: JSON.stringify({ mediapipe: true, yolo: false, lpr: false } satisfies DetectorFlags),
+    zoneMap: null as string | null,
+    homography: null as string | null,
+    sceneTags: JSON.stringify([] as string[]),
+    rulesProfile: JSON.stringify({} as Record<string, unknown>),
     status: "ready" as ProfileStatus,
     lastHealthAt: new Date(),
     lastError: null as string | null
@@ -158,6 +170,10 @@ function profileResponse(profile: {
   detectorConfigKey: string;
   detectorResultsKey: string;
   detectorFlags: string;
+  zoneMap: string | null;
+  homography: string | null;
+  sceneTags: string | null;
+  rulesProfile: string | null;
   status: string;
   lastHealthAt: Date | null;
   lastError: string | null;
@@ -175,6 +191,10 @@ function profileResponse(profile: {
     detectorConfigKey: profile.detectorConfigKey,
     detectorResultsKey: profile.detectorResultsKey,
     detectorFlags: parseJson<DetectorFlags>(profile.detectorFlags),
+    zoneMap: profile.zoneMap ? parseJson<Record<string, unknown>>(profile.zoneMap) : undefined,
+    homography: profile.homography ? parseJson<Record<string, unknown>>(profile.homography) : undefined,
+    sceneTags: profile.sceneTags ? parseJson<string[]>(profile.sceneTags) : undefined,
+    rulesProfile: profile.rulesProfile ? parseJson<Record<string, unknown>>(profile.rulesProfile) : undefined,
     status: profile.status as ProfileStatus,
     configComplete,
     lastHealthAt: profile.lastHealthAt ? toISO(profile.lastHealthAt) : null,
@@ -207,6 +227,10 @@ function cameraResponse(camera: {
     detectorConfigKey: string;
     detectorResultsKey: string;
     detectorFlags: string;
+    zoneMap: string | null;
+    homography: string | null;
+    sceneTags: string | null;
+    rulesProfile: string | null;
     status: string;
     lastHealthAt: Date | null;
     lastError: string | null;
@@ -293,6 +317,136 @@ function auditLogResponse(entry: {
     resourceId: entry.resourceId,
     payload: entry.payload ? parseJson<Record<string, unknown>>(entry.payload) : null,
     createdAt: toISO(entry.createdAt)
+  };
+}
+
+function detectionJobResponse(job: {
+  id: string;
+  tenantId: string;
+  cameraId: string;
+  mode: string;
+  source: string;
+  provider: string;
+  status: string;
+  workflowId: string | null;
+  runId: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  options: string | null;
+  queuedAt: Date;
+  startedAt: Date | null;
+  finishedAt: Date | null;
+  canceledAt: Date | null;
+  createdByUserId: string;
+  createdAt: Date;
+  updatedAt: Date;
+}) {
+  return {
+    id: job.id,
+    tenantId: job.tenantId,
+    cameraId: job.cameraId,
+    mode: job.mode as DetectionMode,
+    source: job.source as DetectionSource,
+    provider: job.provider as DetectionProvider,
+    status: job.status as DetectionJobStatus,
+    workflowId: job.workflowId,
+    runId: job.runId,
+    errorCode: job.errorCode,
+    errorMessage: job.errorMessage,
+    options: job.options ? parseJson<Record<string, unknown>>(job.options) : null,
+    queuedAt: toISO(job.queuedAt),
+    startedAt: job.startedAt ? toISO(job.startedAt) : null,
+    finishedAt: job.finishedAt ? toISO(job.finishedAt) : null,
+    canceledAt: job.canceledAt ? toISO(job.canceledAt) : null,
+    createdByUserId: job.createdByUserId,
+    createdAt: toISO(job.createdAt),
+    updatedAt: toISO(job.updatedAt)
+  };
+}
+
+function detectionObservationResponse(observation: {
+  id: string;
+  jobId: string;
+  tenantId: string;
+  cameraId: string;
+  frameTs: Date;
+  label: string;
+  confidence: number;
+  bbox: string;
+  keypoints: string | null;
+  attributes: string | null;
+  providerMeta: string | null;
+  createdAt: Date;
+}) {
+  return {
+    id: observation.id,
+    jobId: observation.jobId,
+    tenantId: observation.tenantId,
+    cameraId: observation.cameraId,
+    frameTs: toISO(observation.frameTs),
+    label: observation.label,
+    confidence: observation.confidence,
+    bbox: parseJson<Record<string, number>>(observation.bbox),
+    keypoints: observation.keypoints ? parseJson<Array<Record<string, number>>>(observation.keypoints) : undefined,
+    attributes: observation.attributes ? parseJson<Record<string, unknown>>(observation.attributes) : undefined,
+    providerMeta: observation.providerMeta ? parseJson<Record<string, unknown>>(observation.providerMeta) : undefined,
+    createdAt: toISO(observation.createdAt)
+  };
+}
+
+function incidentEventResponse(incident: {
+  id: string;
+  tenantId: string;
+  cameraId: string;
+  jobId: string | null;
+  type: string;
+  severity: string;
+  status: string;
+  summary: string;
+  startedAt: Date;
+  endedAt: Date | null;
+  payload: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}) {
+  return {
+    id: incident.id,
+    tenantId: incident.tenantId,
+    cameraId: incident.cameraId,
+    jobId: incident.jobId,
+    type: incident.type,
+    severity: incident.severity,
+    status: incident.status,
+    summary: incident.summary,
+    startedAt: toISO(incident.startedAt),
+    endedAt: incident.endedAt ? toISO(incident.endedAt) : null,
+    payload: incident.payload ? parseJson<Record<string, unknown>>(incident.payload) : undefined,
+    createdAt: toISO(incident.createdAt),
+    updatedAt: toISO(incident.updatedAt)
+  };
+}
+
+function incidentEvidenceResponse(evidence: {
+  id: string;
+  tenantId: string;
+  incidentId: string;
+  observationId: string | null;
+  trackId: string | null;
+  scenePrimitiveEventId: string | null;
+  clipUrl: string | null;
+  snapshotUrl: string | null;
+  createdAt: Date;
+}) {
+  return {
+    id: evidence.id,
+    tenantId: evidence.tenantId,
+    incidentId: evidence.incidentId,
+    observationId: evidence.observationId,
+    trackId: evidence.trackId,
+    scenePrimitiveEventId: evidence.scenePrimitiveEventId,
+    clipUrl: evidence.clipUrl,
+    snapshotUrl: evidence.snapshotUrl,
+    createdAt: toISO(evidence.createdAt)
   };
 }
 
@@ -1676,6 +1830,10 @@ export async function buildApp() {
         recordingStorageKey: z.string().optional(),
         detectorConfigKey: z.string().optional(),
         detectorResultsKey: z.string().optional(),
+        zoneMap: z.record(z.any()).nullable().optional(),
+        homography: z.record(z.any()).nullable().optional(),
+        sceneTags: z.array(z.string()).optional(),
+        rulesProfile: z.record(z.any()).nullable().optional(),
         detectorFlags: z
           .object({
             mediapipe: z.boolean(),
@@ -1694,6 +1852,10 @@ export async function buildApp() {
           value.recordingStorageKey !== undefined ||
           value.detectorConfigKey !== undefined ||
           value.detectorResultsKey !== undefined ||
+          value.zoneMap !== undefined ||
+          value.homography !== undefined ||
+          value.sceneTags !== undefined ||
+          value.rulesProfile !== undefined ||
           value.detectorFlags !== undefined ||
           value.status !== undefined ||
           value.lastHealthAt !== undefined ||
@@ -1715,6 +1877,10 @@ export async function buildApp() {
         ...(body.recordingStorageKey !== undefined ? { recordingStorageKey: body.recordingStorageKey } : {}),
         ...(body.detectorConfigKey !== undefined ? { detectorConfigKey: body.detectorConfigKey } : {}),
         ...(body.detectorResultsKey !== undefined ? { detectorResultsKey: body.detectorResultsKey } : {}),
+        ...(body.zoneMap !== undefined ? { zoneMap: body.zoneMap ? JSON.stringify(body.zoneMap) : null } : {}),
+        ...(body.homography !== undefined ? { homography: body.homography ? JSON.stringify(body.homography) : null } : {}),
+        ...(body.sceneTags !== undefined ? { sceneTags: JSON.stringify(body.sceneTags) } : {}),
+        ...(body.rulesProfile !== undefined ? { rulesProfile: body.rulesProfile ? JSON.stringify(body.rulesProfile) : null } : {}),
         ...(body.detectorFlags !== undefined ? { detectorFlags: JSON.stringify(body.detectorFlags) } : {}),
         ...(body.status !== undefined ? { status: body.status } : {}),
         ...(body.lastHealthAt !== undefined ? { lastHealthAt: body.lastHealthAt ? new Date(body.lastHealthAt) : null } : {}),
@@ -1727,6 +1893,10 @@ export async function buildApp() {
         ...(body.recordingStorageKey !== undefined ? { recordingStorageKey: body.recordingStorageKey } : {}),
         ...(body.detectorConfigKey !== undefined ? { detectorConfigKey: body.detectorConfigKey } : {}),
         ...(body.detectorResultsKey !== undefined ? { detectorResultsKey: body.detectorResultsKey } : {}),
+        ...(body.zoneMap !== undefined ? { zoneMap: body.zoneMap ? JSON.stringify(body.zoneMap) : null } : {}),
+        ...(body.homography !== undefined ? { homography: body.homography ? JSON.stringify(body.homography) : null } : {}),
+        ...(body.sceneTags !== undefined ? { sceneTags: JSON.stringify(body.sceneTags) } : {}),
+        ...(body.rulesProfile !== undefined ? { rulesProfile: body.rulesProfile ? JSON.stringify(body.rulesProfile) : null } : {}),
         ...(body.detectorFlags !== undefined ? { detectorFlags: JSON.stringify(body.detectorFlags) } : {}),
         ...(body.status !== undefined ? { status: body.status } : {}),
         ...(body.lastHealthAt !== undefined ? { lastHealthAt: body.lastHealthAt ? new Date(body.lastHealthAt) : null } : {}),
@@ -2152,6 +2322,288 @@ export async function buildApp() {
       return { data, total: data.length };
     }
   );
+
+  app.post("/detections/jobs", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin", "monitor"]);
+
+    const body = z
+      .object({
+        cameraId: z.string(),
+        mode: DetectionModeSchema.default("realtime"),
+        source: DetectionSourceSchema.default("snapshot"),
+        provider: DetectionProviderSchema.default("onprem_bento"),
+        options: z.record(z.any()).optional()
+      })
+      .parse(request.body);
+
+    const camera = await prisma.camera.findFirst({
+      where: { id: body.cameraId, tenantId: ctx.tenantId, deletedAt: null }
+    });
+    if (!camera) throw app.httpErrors.notFound();
+
+    const job = await prisma.detectionJob.create({
+      data: {
+        tenantId: ctx.tenantId,
+        cameraId: camera.id,
+        mode: body.mode,
+        source: body.source,
+        provider: body.provider,
+        status: "queued",
+        options: body.options ? JSON.stringify(body.options) : null,
+        createdByUserId: ctx.userId
+      }
+    });
+
+    await appendAuditLog({
+      tenantId: ctx.tenantId,
+      actorUserId: ctx.userId,
+      resource: "detection_job",
+      action: "create",
+      resourceId: job.id,
+      payload: {
+        cameraId: job.cameraId,
+        mode: job.mode,
+        source: job.source,
+        provider: job.provider
+      }
+    });
+
+    return { data: detectionJobResponse(job) };
+  });
+
+  app.get("/detections/jobs/:id", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+    const id = (request.params as { id: string }).id;
+    const job = await prisma.detectionJob.findFirst({
+      where: { id, tenantId: ctx.tenantId }
+    });
+    if (!job) throw app.httpErrors.notFound();
+    return { data: detectionJobResponse(job) };
+  });
+
+  app.get("/detections/jobs/:id/results", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+    const id = (request.params as { id: string }).id;
+
+    const job = await prisma.detectionJob.findFirst({
+      where: { id, tenantId: ctx.tenantId }
+    });
+    if (!job) throw app.httpErrors.notFound();
+
+    const query = request.query as Record<string, unknown>;
+    const { skip, take } = parseListQuery(query);
+    const [rows, total] = await Promise.all([
+      prisma.detectionObservation.findMany({
+        where: { jobId: id, tenantId: ctx.tenantId },
+        orderBy: { frameTs: "desc" },
+        skip,
+        take
+      }),
+      prisma.detectionObservation.count({ where: { jobId: id, tenantId: ctx.tenantId } })
+    ]);
+
+    reply.header("x-total-count", String(total));
+    return { data: rows.map(detectionObservationResponse), total };
+  });
+
+  app.post("/detections/jobs/:id/cancel", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin", "monitor"]);
+    const id = (request.params as { id: string }).id;
+
+    const job = await prisma.detectionJob.findFirst({
+      where: { id, tenantId: ctx.tenantId }
+    });
+    if (!job) throw app.httpErrors.notFound();
+
+    const status = DetectionJobStatusSchema.parse(job.status);
+    if (!["queued", "running"].includes(status)) {
+      return { data: detectionJobResponse(job) };
+    }
+
+    const updated = await prisma.detectionJob.update({
+      where: { id: job.id },
+      data: {
+        status: "canceled",
+        canceledAt: new Date(),
+        finishedAt: new Date()
+      }
+    });
+
+    await appendAuditLog({
+      tenantId: ctx.tenantId,
+      actorUserId: ctx.userId,
+      resource: "detection_job",
+      action: "cancel",
+      resourceId: updated.id
+    });
+
+    return { data: detectionJobResponse(updated) };
+  });
+
+  app.get("/cameras/:id/detections", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+    const cameraId = (request.params as { id: string }).id;
+    const camera = await prisma.camera.findFirst({
+      where: { id: cameraId, tenantId: ctx.tenantId, deletedAt: null }
+    });
+    if (!camera) throw app.httpErrors.notFound();
+
+    const query = request.query as Record<string, unknown>;
+    const { skip, take, order, sort } = parseListQuery(query);
+    const from = typeof query.from === "string" ? new Date(query.from) : undefined;
+    const to = typeof query.to === "string" ? new Date(query.to) : undefined;
+    const label = typeof query.label === "string" ? query.label : undefined;
+    const minConfidence = typeof query.minConfidence === "string" ? Number(query.minConfidence) : undefined;
+    const orderByKey = sort === "confidence" ? "confidence" : "frameTs";
+
+    const where = {
+      tenantId: ctx.tenantId,
+      cameraId,
+      ...(label ? { label } : {}),
+      ...(Number.isFinite(minConfidence) ? { confidence: { gte: minConfidence as number } } : {}),
+      ...(from || to
+        ? {
+            frameTs: {
+              ...(from ? { gte: from } : {}),
+              ...(to ? { lte: to } : {})
+            }
+          }
+        : {})
+    };
+
+    const [rows, total] = await Promise.all([
+      prisma.detectionObservation.findMany({
+        where,
+        orderBy: { [orderByKey]: order },
+        skip,
+        take
+      }),
+      prisma.detectionObservation.count({ where })
+    ]);
+
+    reply.header("x-total-count", String(total));
+    return { data: rows.map(detectionObservationResponse), total };
+  });
+
+  app.get("/incidents", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+    const query = request.query as Record<string, unknown>;
+    const { skip, take, sort, order } = parseListQuery(query);
+    const cameraId = typeof query.cameraId === "string" ? query.cameraId : undefined;
+    const status = typeof query.status === "string" ? query.status : undefined;
+
+    const where = {
+      tenantId: ctx.tenantId,
+      ...(cameraId ? { cameraId } : {}),
+      ...(status ? { status } : {})
+    };
+    const orderByKey = sort === "createdAt" ? "createdAt" : "startedAt";
+
+    const [rows, total] = await Promise.all([
+      prisma.incidentEvent.findMany({
+        where,
+        orderBy: { [orderByKey]: order },
+        skip,
+        take
+      }),
+      prisma.incidentEvent.count({ where })
+    ]);
+
+    reply.header("x-total-count", String(total));
+    return { data: rows.map(incidentEventResponse), total };
+  });
+
+  app.get("/incidents/:id", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+    const id = (request.params as { id: string }).id;
+    const incident = await prisma.incidentEvent.findFirst({
+      where: { id, tenantId: ctx.tenantId }
+    });
+    if (!incident) throw app.httpErrors.notFound();
+    return { data: incidentEventResponse(incident) };
+  });
+
+  app.get("/incidents/:id/evidence", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+    const id = (request.params as { id: string }).id;
+    const incident = await prisma.incidentEvent.findFirst({
+      where: { id, tenantId: ctx.tenantId }
+    });
+    if (!incident) throw app.httpErrors.notFound();
+
+    const query = request.query as Record<string, unknown>;
+    const { skip, take } = parseListQuery(query);
+    const [rows, total] = await Promise.all([
+      prisma.incidentEvidence.findMany({
+        where: { incidentId: id, tenantId: ctx.tenantId },
+        orderBy: { createdAt: "desc" },
+        skip,
+        take
+      }),
+      prisma.incidentEvidence.count({ where: { incidentId: id, tenantId: ctx.tenantId } })
+    ]);
+
+    reply.header("x-total-count", String(total));
+    return { data: rows.map(incidentEvidenceResponse), total };
+  });
+
+  app.get("/events/ws-token", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+
+    const topicsAllowed =
+      ctx.role === "tenant_admin"
+        ? ["camera.status", "stream.session", "detection.job", "detection.object", "incident", "system.alert"]
+        : ["camera.status", "stream.session", "detection.job", "detection.object", "incident"];
+    const expiresInSec = 60;
+    const exp = Math.floor(Date.now() / 1000) + expiresInSec;
+    const token = await reply.jwtSign({
+      sub: ctx.userId,
+      tenantId: ctx.tenantId,
+      topics: topicsAllowed,
+      typ: "ws",
+      exp
+    });
+
+    return {
+      data: {
+        token,
+        tenantId: ctx.tenantId,
+        topicsAllowed,
+        expiresAt: new Date(exp * 1000).toISOString()
+      }
+    };
+  });
+
+  app.get("/events/stream", { preHandler: tenantScopedPreHandler }, async (request, reply) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+    reply.raw.setHeader("content-type", "text/event-stream");
+    reply.raw.setHeader("cache-control", "no-cache");
+    reply.raw.setHeader("connection", "keep-alive");
+    reply.raw.write(
+      `event: welcome\ndata: ${JSON.stringify({
+        eventId: `evt_${Date.now()}`,
+        eventVersion: "1.0",
+        eventType: "system.welcome",
+        tenantId: ctx.tenantId,
+        occurredAt: new Date().toISOString(),
+        correlationId: request.requestId ?? request.id,
+        sequence: 1,
+        payload: { message: "SSE stream ready" }
+      })}\n\n`
+    );
+    reply.raw.end();
+    return reply;
+  });
 
   app.get("/events", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
     const { tenantId } = getTenantContext(request);

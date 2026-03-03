@@ -53,6 +53,13 @@ Cobertura incluida:
 - NH-012 readiness
   - `GET /readiness` devuelve `200` con `db=up`
   - devuelve `503` en modo de falla forzada (`READINESS_FORCE_FAIL=1`)
+- NH-DP-12 detection plane base
+  - `POST /v1/detections/jobs` crea job tenant-scoped (`tenant_admin|monitor`)
+  - `GET /v1/detections/jobs/:id` y `GET /v1/detections/jobs/:id/results` (tenant-scoped)
+  - `POST /v1/detections/jobs/:id/cancel` cancela job abierto
+  - `GET /v1/events/ws-token` emite token corto para realtime
+  - `GET /v1/incidents` lista incidentes tenant-scoped
+  - `client_user` no puede crear jobs de detección (403)
 
 ## Data-plane integration tests
 

@@ -4,6 +4,11 @@ Monorepo PNPM + Turborepo con:
 
 - `apps/api`: Fastify + Prisma (SQLite) control-plane POC
 - `apps/stream-gateway`: data-plane MVP para playback (provision + playback tokenizado)
+- `apps/event-gateway`: event-plane WS/SSE (token short-lived + tenant scoped)
+- `apps/inference-bridge`: FastAPI bridge para seleccionar nodos/proveedores de inferencia
+- `apps/detection-worker`: Temporal worker para jobs de detección
+- `apps/inference-node-yolo`: nodo de inferencia on-prem (object detection)
+- `apps/inference-node-mediapipe`: nodo de inferencia on-prem (pose/actions)
 - `apps/admin`: Refine headless + React Router + simple-rest
 - `apps/portal`: cliente/monitor con React Router
 - `packages/shared`: contratos Zod + tipos compartidos
@@ -54,6 +59,7 @@ pnpm i
 ```bash
 cp apps/api/.env.example apps/api/.env
 cp apps/stream-gateway/.env.example apps/stream-gateway/.env
+cp apps/event-gateway/.env.example apps/event-gateway/.env
 cp apps/admin/.env.example apps/admin/.env
 cp apps/portal/.env.example apps/portal/.env
 ```
@@ -75,6 +81,10 @@ pnpm dev
 - API: `http://localhost:3001`
 - Stream gateway: `http://localhost:3010`
 - Stream gateway metrics: `http://localhost:3010/metrics`
+- Event gateway: `http://localhost:3011`
+- Inference bridge: `http://localhost:8090`
+- Inference node YOLO: `http://localhost:8091`
+- Inference node MediaPipe: `http://localhost:8092`
 - Admin: `http://localhost:5173`
 - Portal: `http://localhost:5174`
 
@@ -90,6 +100,7 @@ pnpm dev
 - `pnpm run setup`
 - `pnpm dev`
 - `pnpm dev:stream`
+- `pnpm dev:event`
 - `pnpm db:reset`
 - `pnpm typecheck`
 - `pnpm build`
@@ -100,6 +111,8 @@ pnpm dev
 - `pnpm test:stream:load`
 - `pnpm test:stream:soak`
 - `pnpm test:stream:soak:record`
+- `pnpm dev:stack:up`
+- `pnpm dev:stack:down`
 
 Reportes soak:
 
@@ -113,3 +126,19 @@ POC funcional orientado a control-plane + data-plane MVP de playback tokenizado.
 
 Nota: `STREAM_TOKEN_SECRET` debe coincidir entre `apps/api` y `apps/stream-gateway` para validar playback.
 Nota: el sync automático de health en API se controla con `STREAM_HEALTH_SYNC_ENABLED`, `STREAM_HEALTH_SYNC_INTERVAL_MS` y `STREAM_HEALTH_SYNC_BATCH_SIZE`.
+
+## Detection Plane / Infra On-Prem
+
+- Compose stack: `infra/docker-compose.yml`
+- Levantar servicios: `pnpm dev:stack:up`
+- Bajar servicios: `pnpm dev:stack:down`
+- Incluye:
+  - control-plane (`api`)
+  - stream-gateway
+  - event-gateway (WS/SSE)
+  - inference-bridge
+  - detection-worker (Temporal)
+  - nodos de inferencia on-prem (YOLO/MediaPipe)
+  - Temporal + UI
+  - Redis
+  - observability opcional (Prometheus/Grafana con profile `observability`)

@@ -55,6 +55,10 @@ export const CameraSchema = z.object({
         yolo: z.boolean(),
         lpr: z.boolean()
       }),
+      zoneMap: z.record(z.any()).optional(),
+      homography: z.record(z.any()).optional(),
+      sceneTags: z.array(z.string()).optional(),
+      rulesProfile: z.record(z.any()).optional(),
       status: z.enum(["pending", "ready", "error"]),
       configComplete: z.boolean(),
       lastHealthAt: z.string().nullable().optional(),
@@ -125,6 +129,158 @@ export const StreamSessionSchema = z.object({
   updatedAt: z.string()
 });
 
+export const DetectionJobStatusSchema = z.enum(["queued", "running", "succeeded", "failed", "canceled"]);
+export const DetectionJobModeSchema = z.enum(["realtime", "batch"]);
+export const DetectionJobSourceSchema = z.enum(["snapshot", "clip", "range"]);
+export const DetectionProviderSchema = z.enum(["onprem_bento", "huggingface_space", "external_http"]);
+
+export const DetectionJobSchema = z.object({
+  id: z.string(),
+  tenantId: z.string(),
+  cameraId: z.string(),
+  mode: DetectionJobModeSchema,
+  source: DetectionJobSourceSchema,
+  provider: DetectionProviderSchema,
+  status: DetectionJobStatusSchema,
+  workflowId: z.string().nullable().optional(),
+  runId: z.string().nullable().optional(),
+  errorCode: z.string().nullable().optional(),
+  errorMessage: z.string().nullable().optional(),
+  options: z.record(z.any()).nullable().optional(),
+  queuedAt: z.string(),
+  startedAt: z.string().nullable().optional(),
+  finishedAt: z.string().nullable().optional(),
+  canceledAt: z.string().nullable().optional(),
+  createdByUserId: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string()
+});
+
+export const DetectionObservationSchema = z.object({
+  id: z.string(),
+  jobId: z.string(),
+  tenantId: z.string(),
+  cameraId: z.string(),
+  frameTs: z.string(),
+  label: z.string(),
+  confidence: z.number(),
+  bbox: z.object({
+    x: z.number(),
+    y: z.number(),
+    w: z.number(),
+    h: z.number()
+  }),
+  keypoints: z.array(z.object({ x: z.number(), y: z.number(), score: z.number().optional() })).optional(),
+  attributes: z.record(z.any()).optional(),
+  providerMeta: z.record(z.any()).optional(),
+  createdAt: z.string()
+});
+
+export const TrackSchema = z.object({
+  id: z.string(),
+  jobId: z.string().nullable().optional(),
+  tenantId: z.string(),
+  cameraId: z.string(),
+  classLabel: z.string(),
+  trackExternalId: z.string(),
+  startedAt: z.string(),
+  endedAt: z.string().nullable().optional(),
+  metadata: z.record(z.any()).optional(),
+  createdAt: z.string(),
+  updatedAt: z.string()
+});
+
+export const TrackPointSchema = z.object({
+  id: z.string(),
+  trackId: z.string(),
+  ts: z.string(),
+  x: z.number(),
+  y: z.number(),
+  zoneId: z.string().nullable().optional(),
+  speed: z.number().nullable().optional(),
+  createdAt: z.string()
+});
+
+export const ScenePrimitiveEventSchema = z.object({
+  id: z.string(),
+  tenantId: z.string(),
+  cameraId: z.string(),
+  jobId: z.string().nullable().optional(),
+  type: z.string(),
+  severity: z.enum(["low", "medium", "high"]),
+  startedAt: z.string(),
+  endedAt: z.string().nullable().optional(),
+  payload: z.record(z.any()).optional(),
+  createdAt: z.string()
+});
+
+export const IncidentEventSchema = z.object({
+  id: z.string(),
+  tenantId: z.string(),
+  cameraId: z.string(),
+  jobId: z.string().nullable().optional(),
+  type: z.string(),
+  severity: z.enum(["low", "medium", "high"]),
+  status: z.enum(["open", "acknowledged", "resolved"]),
+  summary: z.string(),
+  startedAt: z.string(),
+  endedAt: z.string().nullable().optional(),
+  payload: z.record(z.any()).optional(),
+  createdAt: z.string(),
+  updatedAt: z.string()
+});
+
+export const IncidentEvidenceSchema = z.object({
+  id: z.string(),
+  tenantId: z.string(),
+  incidentId: z.string(),
+  observationId: z.string().nullable().optional(),
+  trackId: z.string().nullable().optional(),
+  scenePrimitiveEventId: z.string().nullable().optional(),
+  clipUrl: z.string().nullable().optional(),
+  snapshotUrl: z.string().nullable().optional(),
+  createdAt: z.string()
+});
+
+export const NodeCapabilitySchema = z.object({
+  capabilityId: z.string(),
+  taskTypes: z.array(z.string()),
+  models: z.array(z.string())
+});
+
+export const InferenceNodeSchema = z.object({
+  nodeId: z.string(),
+  tenantId: z.string().nullable().optional(),
+  runtime: z.string(),
+  transport: z.enum(["http", "grpc"]),
+  endpoint: z.string(),
+  status: z.enum(["online", "degraded", "offline"]),
+  resources: z.object({
+    cpu: z.number().int().nonnegative(),
+    gpu: z.number().int().nonnegative(),
+    vramMb: z.number().int().nonnegative()
+  }),
+  capabilities: z.array(NodeCapabilitySchema),
+  models: z.array(z.string()),
+  maxConcurrent: z.number().int().positive(),
+  queueDepth: z.number().int().nonnegative(),
+  isDrained: z.boolean().default(false),
+  lastHeartbeatAt: z.string(),
+  contractVersion: z.string()
+});
+
+export const EventEnvelopeSchema = z.object({
+  eventId: z.string(),
+  eventVersion: z.string(),
+  eventType: z.string(),
+  tenantId: z.string(),
+  cameraId: z.string().optional(),
+  occurredAt: z.string(),
+  correlationId: z.string(),
+  sequence: z.number().int().nonnegative(),
+  payload: z.record(z.any())
+});
+
 export const LoginInputSchema = z.object({
   email: z.string().email(),
   password: z.string().min(4)
@@ -146,3 +302,13 @@ export type Subscription = z.infer<typeof SubscriptionSchema>;
 export type Entitlements = z.infer<typeof EntitlementsSchema>;
 export type Event = z.infer<typeof EventSchema>;
 export type StreamSession = z.infer<typeof StreamSessionSchema>;
+export type DetectionJob = z.infer<typeof DetectionJobSchema>;
+export type DetectionObservation = z.infer<typeof DetectionObservationSchema>;
+export type Track = z.infer<typeof TrackSchema>;
+export type TrackPoint = z.infer<typeof TrackPointSchema>;
+export type ScenePrimitiveEvent = z.infer<typeof ScenePrimitiveEventSchema>;
+export type IncidentEvent = z.infer<typeof IncidentEventSchema>;
+export type IncidentEvidence = z.infer<typeof IncidentEvidenceSchema>;
+export type InferenceNode = z.infer<typeof InferenceNodeSchema>;
+export type NodeCapability = z.infer<typeof NodeCapabilitySchema>;
+export type EventEnvelope = z.infer<typeof EventEnvelopeSchema>;

@@ -4,6 +4,15 @@ import bcrypt from "bcryptjs";
 const prisma = new PrismaClient();
 
 async function main() {
+  await prisma.incidentEvidence.deleteMany();
+  await prisma.incidentEvent.deleteMany();
+  await prisma.scenePrimitiveEvent.deleteMany();
+  await prisma.trackPoint.deleteMany();
+  await prisma.track.deleteMany();
+  await prisma.detectionObservation.deleteMany();
+  await prisma.detectionJob.deleteMany();
+  await prisma.inferenceNodeSnapshot.deleteMany();
+  await prisma.inferenceProviderConfig.deleteMany();
   await prisma.event.deleteMany();
   await prisma.auditLog.deleteMany();
   await prisma.streamSessionTransition.deleteMany();
