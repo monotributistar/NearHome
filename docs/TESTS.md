@@ -111,3 +111,30 @@ Cobertura incluida:
 2. `pnpm --filter @app/api test`
 3. `pnpm --filter @app/stream-gateway test`
 4. `pnpm --filter @app/stream-gateway test:load`
+5. `pnpm --filter @app/stream-gateway test:soak`
+
+## Data-plane soak report (NH-DP-10)
+
+Runner: `apps/stream-gateway/scripts/soak-report.ts`
+
+Salida:
+
+- reporte markdown en `docs/reports/stream-soak-latest.md`
+- exit code `1` cuando incumple SLO configurados
+
+SLI/SLO evaluados:
+
+- `error rate` global del escenario
+- latencia `p95` de serving de playback (`index.m3u8`)
+
+Variables configurables:
+
+- `SOAK_TENANTS`
+- `SOAK_CAMERAS_PER_TENANT`
+- `SOAK_ROUNDS`
+- `SOAK_REQUESTS_PER_CAMERA_PER_ROUND`
+- `SOAK_ROUND_DELAY_MS`
+- `SOAK_MAX_ERROR_RATE`
+- `SOAK_MAX_P95_MS`
+- `SOAK_TOKEN_TTL_MS`
+- `SOAK_REPORT_PATH`

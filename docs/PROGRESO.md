@@ -24,6 +24,7 @@
 - Etapa activa: timeout operativo de playback (NH-DP-08C) completada
 - Etapa activa: observabilidad QoS de playback (NH-DP-08D) completada
 - Etapa activa: carga multi-tenant con error budget (NH-DP-09) completada
+- Etapa activa: soak test con reporte SLO/SLI (NH-DP-10) completada
 
 ## Progreso completado
 
@@ -119,6 +120,10 @@
    - suite dedicada de carga `stream-gateway.load.spec.ts`.
    - burst concurrente sobre múltiples tenants/cámaras en playback `index.m3u8`.
    - verificaciones de budget: tasa de error y tiempo total de ejecución.
+25. Soak test con reporte SLO/SLI (NH-DP-10):
+   - runner `scripts/soak-report.ts` con escenario configurable por env.
+   - reporte markdown `docs/reports/stream-soak-latest.md` con `PASS/FAIL`.
+   - gate operacional por error rate y latencia p95.
 
 ## Cambios técnicos relevantes
 
@@ -234,6 +239,10 @@
   - escenario NH-DP-09 de carga concurrente multi-tenant con assertions de budget y métricas.
 - `apps/stream-gateway/package.json`:
   - nuevo comando `test:load`.
+- `apps/stream-gateway/scripts/soak-report.ts`:
+  - ejecución de soak y generación de reporte SLO/SLI.
+- `apps/stream-gateway/package.json`:
+  - nuevo comando `test:soak`.
 - `docs/CONTROLPLANE_DATAPLANE_CONTRACT.md`:
   - contrato actualizado de provision y session tracking.
 
@@ -280,11 +289,12 @@
 - `pnpm --filter @app/stream-gateway test`: `24 passed` (incluye NH-DP-08D QoS playback)
 - `pnpm --filter @app/stream-gateway test:load`: `1 passed` (NH-DP-09 burst multi-tenant)
 - `pnpm --filter @app/stream-gateway test`: `25 passed` (incluye suite NH-DP-09)
+- `pnpm --filter @app/stream-gateway test:soak`: `PASS` (reporte generado)
 - `pnpm test:e2e:admin`: `7 passed`
 - `pnpm test:e2e:portal`: `2 passed`
 
 ## Próximo bloque recomendado
 
-1. NH-DP-10: escenario soak (duración prolongada) + reporte automático de SLO/SLI.
+1. NH-DP-11: export de resultados de soak a histórico (series temporales) para tendencia.
 2. NH-015: asignación de cámaras por `client_user` (subset real y enforcement integral).
 3. Endurecimiento e2e multi-tenant para concurrencia de playback (escenarios simultáneos por tenant).

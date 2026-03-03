@@ -9,7 +9,8 @@
     "start": "node dist/apps/stream-gateway/src/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "test:load": "vitest run test/stream-gateway.load.spec.ts"
+    "test:load": "vitest run test/stream-gateway.load.spec.ts",
+    "test:soak": "node --import tsx scripts/soak-report.ts"
   },
   "dependencies": {
     "fastify": "^5.2.1",

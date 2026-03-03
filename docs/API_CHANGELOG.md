@@ -85,6 +85,10 @@
   - nueva suite `stream-gateway.load.spec.ts` con burst concurrente multi-tenant/multi-cámara.
   - assertions de error budget (sin errores) y presupuesto temporal de ejecución.
   - validación de métricas de requests/latencia por tenant y cámara bajo carga.
+- NH-DP-10: soak test con reporte SLO/SLI:
+  - runner `test:soak` en data-plane.
+  - reporte markdown automático con resultado `PASS/FAIL`.
+  - gate por `error rate` y latencia `p95` configurable por env.
 - NH-028: ciclo de vida de sesiones de stream:
   - `GET /stream-sessions`
   - `GET /stream-sessions/:id`
