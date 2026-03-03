@@ -26,6 +26,7 @@ Servicio MVP para provisionar playback por cámara.
 - `STREAM_PLAYBACK_READ_RETRY_BASE_MS`
 - `STREAM_PLAYBACK_READ_RETRY_MAX_MS`
 - `STREAM_PLAYBACK_READ_TIMEOUT_MS`
+- `STREAM_PLAYBACK_SLOW_MS`
 - `STREAM_MAX_ACTIVE_SESSIONS_PER_TENANT` (`0` deshabilita límite)
 - `STREAM_MEDIA_ENGINE` (`mock` por defecto)
 - `STREAM_TRANSCODER_CMD` (cuando `STREAM_MEDIA_ENGINE=process`)
@@ -70,6 +71,9 @@ Servicio MVP para provisionar playback por cámara.
 - `nearhome_playback_requests_total{tenant_id,camera_id,asset,result}`
 - `nearhome_playback_errors_total{tenant_id,camera_id,asset,code}`
 - `nearhome_playback_read_retries_total{tenant_id,camera_id,asset}`
+- `nearhome_playback_slow_requests_total{tenant_id,camera_id,asset}`
+- `nearhome_playback_latency_ms_sum{tenant_id,camera_id,asset}`
+- `nearhome_playback_latency_ms_count{tenant_id,camera_id,asset}`
 - `nearhome_media_workers_total{state}`
 - `nearhome_media_worker_restarts_total`
 

@@ -22,6 +22,7 @@
 - Etapa activa: playback HLS con segmentos dinámicos + smoke ffmpeg (NH-DP-08A) completada
 - Etapa activa: guardrail de concurrencia playback por tenant (NH-DP-08B) completada
 - Etapa activa: timeout operativo de playback (NH-DP-08C) completada
+- Etapa activa: observabilidad QoS de playback (NH-DP-08D) completada
 
 ## Progreso completado
 
@@ -109,6 +110,10 @@
    - timeout de lectura de assets por request (`STREAM_PLAYBACK_READ_TIMEOUT_MS`).
    - error explícito `504 PLAYBACK_ASSET_TIMEOUT` para manifest/segment.
    - preservación del código de timeout (no degradar a 404) en contrato HTTP.
+23. Observabilidad QoS de playback (NH-DP-08D):
+   - métricas de latencia de serving por tenant/cámara/asset (`nearhome_playback_latency_ms_sum/count`).
+   - métrica de requests lentos por umbral (`nearhome_playback_slow_requests_total`).
+   - umbral configurable con `STREAM_PLAYBACK_SLOW_MS`.
 
 ## Cambios técnicos relevantes
 
@@ -216,6 +221,10 @@
   - timeout explícito en `readWithRetry` y mapeo de error `PLAYBACK_ASSET_TIMEOUT`.
 - `apps/stream-gateway/test/stream-gateway.spec.ts`:
   - tests NH-DP-08C para timeout de manifest y segment.
+- `apps/stream-gateway/src/app.ts`:
+  - medición de latencia por request de playback y clasificación de request lenta.
+- `apps/stream-gateway/test/stream-gateway.spec.ts`:
+  - test NH-DP-08D para métricas QoS de latencia/slow requests.
 - `docs/CONTROLPLANE_DATAPLANE_CONTRACT.md`:
   - contrato actualizado de provision y session tracking.
 
@@ -259,11 +268,12 @@
 - `pnpm --filter @app/stream-gateway test`: `19 passed` (incluye NH-DP-08A segmentos dinámicos + smoke ffmpeg)
 - `pnpm --filter @app/stream-gateway test`: `21 passed` (incluye NH-DP-08B guardrail por tenant)
 - `pnpm --filter @app/stream-gateway test`: `23 passed` (incluye NH-DP-08C timeout operativo)
+- `pnpm --filter @app/stream-gateway test`: `24 passed` (incluye NH-DP-08D QoS playback)
 - `pnpm test:e2e:admin`: `7 passed`
 - `pnpm test:e2e:portal`: `2 passed`
 
 ## Próximo bloque recomendado
 
-1. NH-DP-08D: validar pipeline real de video end-to-end con RTSP real persistente y QoS.
+1. NH-DP-09: prueba de carga multi-tenant playback con presupuesto de latencia y error budget.
 2. NH-015: asignación de cámaras por `client_user` (subset real y enforcement integral).
 3. Endurecimiento e2e multi-tenant para concurrencia de playback (escenarios simultáneos por tenant).

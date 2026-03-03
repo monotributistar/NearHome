@@ -77,6 +77,10 @@
   - `STREAM_PLAYBACK_READ_TIMEOUT_MS` para budget máximo de lectura de `manifest/segment`.
   - nuevo error `504 PLAYBACK_ASSET_TIMEOUT` sin degradarlo a `404`.
   - cobertura de tests para timeout de manifest y segment.
+- NH-DP-08D: observabilidad QoS de playback:
+  - nuevas métricas: `nearhome_playback_latency_ms_sum`, `nearhome_playback_latency_ms_count`, `nearhome_playback_slow_requests_total`.
+  - umbral de request lenta configurable con `STREAM_PLAYBACK_SLOW_MS`.
+  - cobertura de tests para latencia y requests lentos por tenant/cámara/asset.
 - NH-028: ciclo de vida de sesiones de stream:
   - `GET /stream-sessions`
   - `GET /stream-sessions/:id`

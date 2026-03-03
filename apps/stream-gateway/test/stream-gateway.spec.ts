@@ -55,6 +55,7 @@ afterEach(async () => {
   delete process.env.STREAM_PLAYBACK_READ_RETRY_BASE_MS;
   delete process.env.STREAM_PLAYBACK_READ_RETRY_MAX_MS;
   delete process.env.STREAM_PLAYBACK_READ_TIMEOUT_MS;
+  delete process.env.STREAM_PLAYBACK_SLOW_MS;
   delete process.env.STREAM_MEDIA_ENGINE;
   delete process.env.STREAM_TRANSCODER_CMD;
   delete process.env.STREAM_TRANSCODER_SHELL;
@@ -1163,6 +1164,58 @@ describe("stream-gateway", () => {
     expect(segment.json()).toMatchObject({
       code: "PLAYBACK_ASSET_TIMEOUT"
     });
+
+    await app.close();
+  });
+
+  it("tracks playback latency and slow-request QoS metrics", async () => {
+    process.env.STREAM_PLAYBACK_SLOW_MS = "50";
+    const mediaEngine: MediaEngine = {
+      name: "qos-adapter",
+      async provisionStream() {},
+      async deprovisionStream() {},
+      async readManifest() {
+        await new Promise((resolve) => setTimeout(resolve, 90));
+        return "#EXTM3U\n#EXTINF:5.0,\nsegment0.ts\n#EXT-X-ENDLIST";
+      },
+      async readSegment() {
+        return Buffer.from("SEGMENT");
+      },
+      async close() {}
+    };
+    const { app } = await setupApp({ mediaEngine });
+    const tenantId = "tenant-qos";
+    const cameraId = "camera-qos";
+
+    await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: { tenantId, cameraId, rtspUrl: "rtsp://demo/qos" }
+    });
+
+    const token = createPlaybackToken({
+      tenantId,
+      cameraId,
+      sid: "sid-qos",
+      expiresAt: new Date(Date.now() + 60_000)
+    });
+    const manifest = await app.inject({
+      method: "GET",
+      url: `/playback/${tenantId}/${cameraId}/index.m3u8?token=${encodeURIComponent(token)}`
+    });
+    expect(manifest.statusCode).toBe(200);
+
+    const metrics = await app.inject({ method: "GET", url: "/metrics" });
+    expect(metrics.statusCode).toBe(200);
+    expect(metrics.body).toContain(
+      `nearhome_playback_slow_requests_total{asset=\"manifest\",camera_id=\"${cameraId}\",tenant_id=\"${tenantId}\"} 1`
+    );
+    expect(metrics.body).toContain(
+      `nearhome_playback_latency_ms_count{asset=\"manifest\",camera_id=\"${cameraId}\",tenant_id=\"${tenantId}\"} 1`
+    );
+    expect(metrics.body).toContain(
+      `nearhome_playback_latency_ms_sum{asset=\"manifest\",camera_id=\"${cameraId}\",tenant_id=\"${tenantId}\"}`
+    );
 
     await app.close();
   });

@@ -89,6 +89,10 @@ Cobertura incluida:
   - timeout explícito de lectura de assets (`STREAM_PLAYBACK_READ_TIMEOUT_MS`)
   - retorno de `504 PLAYBACK_ASSET_TIMEOUT` para manifest y segment
   - error observado también en métricas por `code`
+- NH-DP-08D QoS observable de playback
+  - métricas de latencia (`nearhome_playback_latency_ms_sum/count`) por tenant/cámara/asset
+  - contador de requests lentos (`nearhome_playback_slow_requests_total`) con umbral configurable
+  - validación de observabilidad QoS mediante adapter con latencia inducida
 
 ## Ejecutar
 

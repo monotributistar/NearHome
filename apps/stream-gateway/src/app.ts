@@ -212,6 +212,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
   const playbackReadRetryBaseMs = Math.max(0, Number(process.env.STREAM_PLAYBACK_READ_RETRY_BASE_MS ?? 25));
   const playbackReadRetryMaxMs = Math.max(playbackReadRetryBaseMs, Number(process.env.STREAM_PLAYBACK_READ_RETRY_MAX_MS ?? 250));
   const playbackReadTimeoutMs = Math.max(50, Number(process.env.STREAM_PLAYBACK_READ_TIMEOUT_MS ?? 2000));
+  const playbackSlowRequestMs = Math.max(1, Number(process.env.STREAM_PLAYBACK_SLOW_MS ?? 500));
   const maxActiveSessionsPerTenant = Math.max(0, Number(process.env.STREAM_MAX_ACTIVE_SESSIONS_PER_TENANT ?? 0));
   let probeTimer: NodeJS.Timeout | null = null;
   let sessionSweepTimer: NodeJS.Timeout | null = null;
@@ -219,6 +220,9 @@ export async function buildApp(options: BuildAppOptions = {}) {
   const playbackRequestCounters = new Map<string, number>();
   const playbackErrorCounters = new Map<string, number>();
   const playbackReadRetryCounters = new Map<string, number>();
+  const playbackSlowRequestCounters = new Map<string, number>();
+  const playbackLatencySum = new Map<string, number>();
+  const playbackLatencyCount = new Map<string, number>();
 
   const metricKey = (labels: Record<string, string>) =>
     Object.entries(labels)
@@ -229,6 +233,11 @@ export async function buildApp(options: BuildAppOptions = {}) {
   const incCounter = (store: Map<string, number>, labels: Record<string, string>) => {
     const key = metricKey(labels);
     store.set(key, (store.get(key) ?? 0) + 1);
+  };
+
+  const observeValue = (store: Map<string, number>, labels: Record<string, string>, value: number) => {
+    const key = metricKey(labels);
+    store.set(key, (store.get(key) ?? 0) + value);
   };
 
   const formatMetricLines = (name: string, store: Map<string, number>) => {
@@ -547,14 +556,33 @@ export async function buildApp(options: BuildAppOptions = {}) {
     asset: "manifest" | "segment";
     handler: () => Promise<T>;
   }): Promise<T> {
+    const startedAt = Date.now();
     try {
       const result = await args.handler();
+      const durationMs = Date.now() - startedAt;
       incCounter(playbackRequestCounters, {
         tenant_id: args.tenantId,
         camera_id: args.cameraId,
         asset: args.asset,
         result: "ok"
       });
+      observeValue(
+        playbackLatencySum,
+        { tenant_id: args.tenantId, camera_id: args.cameraId, asset: args.asset },
+        durationMs
+      );
+      incCounter(playbackLatencyCount, {
+        tenant_id: args.tenantId,
+        camera_id: args.cameraId,
+        asset: args.asset
+      });
+      if (durationMs >= playbackSlowRequestMs) {
+        incCounter(playbackSlowRequestCounters, {
+          tenant_id: args.tenantId,
+          camera_id: args.cameraId,
+          asset: args.asset
+        });
+      }
       return result;
     } catch (error) {
       incCounter(playbackRequestCounters, {
@@ -648,6 +676,15 @@ export async function buildApp(options: BuildAppOptions = {}) {
       "# HELP nearhome_playback_read_retries_total Playback asset read retries by tenant/camera/asset",
       "# TYPE nearhome_playback_read_retries_total counter",
       ...formatMetricLines("nearhome_playback_read_retries_total", playbackReadRetryCounters),
+      "# HELP nearhome_playback_slow_requests_total Playback requests slower than STREAM_PLAYBACK_SLOW_MS by tenant/camera/asset",
+      "# TYPE nearhome_playback_slow_requests_total counter",
+      ...formatMetricLines("nearhome_playback_slow_requests_total", playbackSlowRequestCounters),
+      "# HELP nearhome_playback_latency_ms_sum Sum of successful playback request latency in ms by tenant/camera/asset",
+      "# TYPE nearhome_playback_latency_ms_sum counter",
+      ...formatMetricLines("nearhome_playback_latency_ms_sum", playbackLatencySum),
+      "# HELP nearhome_playback_latency_ms_count Count of successful playback request latency observations by tenant/camera/asset",
+      "# TYPE nearhome_playback_latency_ms_count counter",
+      ...formatMetricLines("nearhome_playback_latency_ms_count", playbackLatencyCount),
       "# HELP nearhome_media_workers_total Media engine workers by state",
       "# TYPE nearhome_media_workers_total gauge",
       `nearhome_media_workers_total{state=\"running\"} ${workerStats?.running ?? 0}`,
