@@ -1,0 +1,11 @@
+tunnel: nearhome-onprem
+credentials-file: /etc/cloudflared/credentials.json
+
+ingress:
+  - hostname: api.example.com
+    service: http://api:3001
+  - hostname: events.example.com
+    service: http://event-gateway:3011
+  - hostname: temporal.example.com
+    service: http://temporal-ui:8080
+  - service: http_status:404

@@ -21,6 +21,7 @@ Monorepo PNPM + Turborepo con:
 
 - Plan general por etapas: `/Users/monotributistar/SOURCES/NearHome/docs/PLAN_GENERAL.md`
 - Diagrama completo del sistema (Mermaid): `/Users/monotributistar/SOURCES/NearHome/docs/SISTEMA_COMPLETO.md`
+- Runbook de piloto (local + on-prem): `/Users/monotributistar/SOURCES/NearHome/docs/PILOT_RUNBOOK.md`
 - Contratos por componente/interfaz: `/Users/monotributistar/SOURCES/NearHome/docs/CONTRATOS_COMPONENTES.md`
 - Contrato ControlPlane/DataPlane: `/Users/monotributistar/SOURCES/NearHome/docs/CONTROLPLANE_DATAPLANE_CONTRACT.md`
 - Contrato de Entitlements: `/Users/monotributistar/SOURCES/NearHome/docs/ENTITLEMENTS_CONTRACT.md`
@@ -114,6 +115,12 @@ pnpm dev
 - `pnpm test:stream:soak:record`
 - `pnpm dev:stack:up`
 - `pnpm dev:stack:down`
+- `pnpm pilot:stack:up:local`
+- `pnpm pilot:stack:up:onprem`
+- `pnpm pilot:stack:up:onprem:tunnel`
+- `pnpm pilot:stack:down:local`
+- `pnpm pilot:stack:down:onprem`
+- `pnpm pilot:smoke`
 
 Reportes soak:
 

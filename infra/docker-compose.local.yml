@@ -1,0 +1,16 @@
+name: nearhome-stack-local
+
+services:
+  api:
+    environment:
+      CORS_ORIGIN_ADMIN: ${LOCAL_ADMIN_ORIGIN:-http://localhost:5173}
+      CORS_ORIGIN_PORTAL: ${LOCAL_PORTAL_ORIGIN:-http://localhost:5174}
+  stream-gateway:
+    environment:
+      STREAM_MEDIA_ENGINE: ${STREAM_MEDIA_ENGINE:-mock}
+      STREAM_DEFAULT_INGEST_TRANSPORT: ${STREAM_DEFAULT_INGEST_TRANSPORT:-auto}
+      STREAM_DEFAULT_INGEST_ENCRYPTION: ${STREAM_DEFAULT_INGEST_ENCRYPTION:-optional}
+      STREAM_DEFAULT_INGEST_TUNNEL: ${STREAM_DEFAULT_INGEST_TUNNEL:-none}
+  event-gateway:
+    environment:
+      JWT_SECRET: ${JWT_SECRET:-dev-super-secret}

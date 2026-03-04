@@ -1,0 +1,27 @@
+name: nearhome-stack-onprem
+
+services:
+  api:
+    environment:
+      CORS_ORIGIN_ADMIN: ${ONPREM_ADMIN_ORIGIN}
+      CORS_ORIGIN_PORTAL: ${ONPREM_PORTAL_ORIGIN}
+      STREAM_GATEWAY_URL: http://stream-gateway:3010
+      EVENT_GATEWAY_URL: http://event-gateway:3011
+  stream-gateway:
+    environment:
+      STREAM_MEDIA_ENGINE: ${STREAM_MEDIA_ENGINE:-process-mediamtx}
+      STREAM_TRANSCODER_DRY_RUN: ${STREAM_TRANSCODER_DRY_RUN:-1}
+      STREAM_MEDIAMTX_BIN: ${STREAM_MEDIAMTX_BIN:-mediamtx}
+      STREAM_DEFAULT_INGEST_TRANSPORT: ${STREAM_DEFAULT_INGEST_TRANSPORT:-tcp}
+      STREAM_DEFAULT_INGEST_ENCRYPTION: ${STREAM_DEFAULT_INGEST_ENCRYPTION:-required}
+      STREAM_DEFAULT_INGEST_TUNNEL: ${STREAM_DEFAULT_INGEST_TUNNEL:-https}
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: ["tunnel"]
+    command: ["tunnel", "--no-autoupdate", "run", "--token", "${CLOUDFLARE_TUNNEL_TOKEN}"]
+    restart: unless-stopped
+    depends_on:
+      - api
+      - event-gateway
+    networks:
+      - nearhome_net
