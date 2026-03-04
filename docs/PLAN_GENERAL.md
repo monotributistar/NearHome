@@ -1,100 +1,115 @@
-# NearHome POC - Plan General
+# NearHome - Plan General Sincronizado
 
-## 1) Objetivo
+Fecha de actualización: `2026-03-04`
 
-Construir un control-plane multi-tenant productivo (POC) con:
+## 1) Estado de referencia
 
-- `apps/api`: auth, RBAC, tenants, cámaras, planes, suscripción, entitlements, eventos mock.
-- `apps/admin`: backoffice con Refine headless.
-- `apps/portal`: experiencia cliente/monitor.
-- `packages/*`: contratos, cliente API y UI reutilizable.
+- Plataforma actual (control-plane + data-plane + detection/event plane) está operativa en modo POC avanzado.
+- Sync GitHub: `18` issues abiertos, `1` issue cerrado.
+- Fuente de verdad de roadmap externo: issues de `monotributistar/NearHome`.
 
-## 2) Principios de arquitectura
+## 2) Objetivo de ejecución
 
-- Separación `Control Plane` (esta iteración) vs `Data Plane` (fase futura).
-- Contratos compartidos por Zod en `@app/shared`.
-- Tenant scoping obligatorio por `X-Tenant-Id`.
-- Permisos en backend (source of truth) + UI ACL (ergonomía).
-- Endpoints compatibles con refine simple-rest para listas CRUD.
+Cerrar la brecha entre el POC técnico actual y el roadmap funcional publicado en GitHub, priorizando:
 
-## 3) Plan por etapas
+1. hardening productivo (seguridad, CI/CD, docs API),
+2. integración real de ingest/detección,
+3. features de producto (incidencias, mensajería, dashboard, servicios cliente).
 
-### Etapa 0 - Bootstrap (completada)
+## 3) Principios de priorización
 
-- Monorepo pnpm + turbo.
-- Apps: api/admin/portal.
-- Packages: shared/api-client/ui.
-- Tailwind + daisyUI en ambos frontends.
+- Seguridad y despliegue antes de expansión funcional.
+- Cerrar dependencias técnicas antes de features UI.
+- Mantener contratos estables (`ControlPlane/DataPlane`) al introducir nuevos motores.
+- Cada fase con criterios de salida testeables.
 
-### Etapa 1 - Núcleo backend (completada)
+## 4) Plan de trabajo por fases (sincronizado con GitHub issues)
 
-- Prisma SQLite + schema entidades.
-- Auth JWT + middleware de contexto (`userId`, `tenantId`, `role`).
-- RBAC por endpoint.
-- CRUD cámaras tenant-scoped.
-- Plans/subscriptions/entitlements.
-- stream-token mock + events mock.
-- Seed con datos demo.
+### Fase A - Hardening de plataforma (actual)
 
-### Etapa 2 - Admin Backoffice (completada)
+Issues:
+- `#16` CI/CD con GitHub Actions
+- `#18` SSL/TLS con Let's Encrypt
+- `#19` Rate limiting por tenant
+- `#15` Documentación OpenAPI/Swagger
 
-- Login + sesión + selector tenant.
-- Refine headless + simple-rest.
-- Recursos: tenants, users, memberships, cameras, plans, subscriptions.
-- ACL de acciones por rol.
+Entregables:
+- pipeline CI para test/typecheck/build/e2e smoke,
+- terminación TLS en entorno deploy,
+- límites de tráfico por tenant/ruta sensible,
+- spec OpenAPI y publicación interna.
 
-### Etapa 3 - Portal Cliente/Monitor (completada)
+Criterio de salida:
+- deploy reproducible + políticas de seguridad básicas activas.
 
-- Login + select tenant.
-- Cámaras (list + detalle).
-- stream-token mock desde detalle.
-- Eventos con filtros.
-- Cuenta/perfil.
+### Fase B - Ingesta y detección operativa
 
-### Etapa 4 - Hardening POC (completada)
+Issues:
+- `#1` plugin Shinobi-YOLO para envío de frames
+- `#2` test integración YOLO con video real
+- `#3` endpoint gestión de máscaras por cámara
+- `#10` editor visual de zonas
 
-- Tests e2e críticos (auth, tenant scope, RBAC).
-- Manejo uniforme de errores y códigos.
-- Base de auditoría de cambios de cámara por lifecycle log.
-- Paginación/filtros extendidos.
+Entregables:
+- flujo end-to-end de frame ingest -> inferencia -> evento,
+- pruebas de video real automatizadas,
+- API de máscaras consistente con UI de zonas.
 
-### Etapa 5 - Lifecycle de cámara (en progreso)
+Criterio de salida:
+- detección validada con fuentes reales y configuración ROI usable.
 
-- Perfil interno por cámara activa (proxy/storage/detectores).
-- Estados de lifecycle (`draft/provisioning/ready/error/retired`).
-- Transiciones operativas (`validate`, `retire`, `reactivate`).
-- Snapshot de salud y timeline en Admin.
+### Fase C - Incidencias y mensajería
 
-### Etapa 6 - Stream session + tracking (completada)
+Issues:
+- `#5` workflow de incidencias
+- `#6` WhatsApp Business API
+- `#7` Telegram Bot
+- `#8` comandos básicos de agente/chatbot
 
-- Definir y exponer ciclo de vida de sesión de stream (token/session desacoplado).
-- Tracking operativo por cámara (última sesión, fallos, reconexión).
-- Contrato control-plane para integración futura con data-plane.
+Entregables:
+- workflow incidente con niveles/escalado,
+- gateway de salida de notificaciones multicanal,
+- comandos base del agente para consulta/acción.
 
-### Etapa 7 - Preparación scale-out (siguiente)
+Criterio de salida:
+- incidente puede nacer, escalar y notificarse en canales externos.
 
-- Extraer módulo auth/tenant/rbac en paquetes internos.
-- Versionado de contratos API.
-- Diseño de integración con futuro data-plane.
+### Fase D - Servicios y experiencia cliente
 
-## 4) Criterios de aceptación por release
+Issues:
+- `#11` botón de pánico
+- `#12` tracking GPS familia
+- `#13` mapa de propiedad
+- `#14` métricas y estadísticas dashboard
 
-- Usuario ve solo tenants propios.
-- `X-Tenant-Id` scopa datos siempre.
-- `client_user` no crea cámaras.
-- `monitor` no modifica suscripción/planes.
-- Admin y Portal operativos vía `pnpm dev`.
+Entregables:
+- funcionalidades cliente de emergencia y tracking,
+- dashboard visual con mapa + KPIs operativos.
 
-## 5) Backlog inmediato recomendado
+Criterio de salida:
+- experiencia portal lista para piloto controlado.
 
-1. NH-019 Estrategia de migración a Postgres para staging/prod.
-2. NH-017 Contrato ControlPlane->DataPlane.
-3. NH-018 Stream-token firmado.
-4. NH-020 CI pipeline.
+### Fase E - Reconocimiento facial
 
-Estado actual:
-- NH-011 completado.
-- NH-013 completado.
-- NH-014 completado.
-- NH-012 completado.
-- NH-016 completado.
+Issues:
+- `#9` registro de rostros
+
+Entregables:
+- registro/matching de rostros con controles de privacidad y auditoría.
+
+Criterio de salida:
+- feature habilitable por tenant con trazabilidad completa.
+
+## 5) Dependencias críticas
+
+- `#16` y `#18` bloquean cualquier salida productiva seria.
+- `#1/#2` son prerequisito técnico para estabilizar `#9/#10`.
+- `#3` desbloquea diseño final de `#10`.
+- `#5` es base para `#6/#7/#8`.
+
+## 6) Criterios de calidad transversales
+
+- `pnpm typecheck` en verde.
+- tests unit/integration de servicios tocados.
+- e2e smoke de Admin/Portal en verde.
+- documentación contractual actualizada por cambio de comportamiento.

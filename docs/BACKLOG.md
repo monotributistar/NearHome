@@ -6,6 +6,43 @@
 - Prioridad: `P0`, `P1`, `P2`.
 - Cada item tiene criterio de aceptación verificable.
 
+## Sincronización GitHub (corte `2026-03-04`)
+
+Repositorio: `monotributistar/NearHome`
+
+Resumen:
+- Issues abiertos: `18`
+- Issues cerrados: `1` (`#17`)
+
+Priorización recomendada (fuente: issues abiertos actuales):
+
+1. Hardening de plataforma:
+   - `#16` CI/CD con GitHub Actions
+   - `#18` SSL/TLS con Let's Encrypt
+   - `#19` Rate limiting por tenant
+   - `#15` OpenAPI/Swagger
+2. Ingesta/detección operativa:
+   - `#1` Shinobi-YOLO frames
+   - `#2` test YOLO con video real
+   - `#3` API máscaras por cámara
+   - `#10` editor visual de zonas
+3. Workflow de producto:
+   - `#5` incidencias y escalado
+   - `#6` WhatsApp Business
+   - `#7` Telegram Bot
+   - `#8` comandos básicos de agente
+4. Experiencia cliente:
+   - `#11` botón de pánico
+   - `#12` tracking GPS familia
+   - `#13` mapa de propiedad
+   - `#14` métricas dashboard
+5. Capacidad avanzada:
+   - `#9` registro de rostros
+
+Notas de alineación:
+- Este backlog conserva trazabilidad histórica interna (`NH-*`) y debe convivir con los issues de GitHub.
+- Para ejecución de sprint, priorizar la lista GitHub de esta sección por encima de items legacy ya completados.
+
 ## P0 - Seguridad, calidad y DX (inmediato)
 
 ### NH-001 (P0) - Estandarizar errores API

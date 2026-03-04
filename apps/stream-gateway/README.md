@@ -4,7 +4,7 @@ Servicio MVP para provisionar playback por cámara.
 
 ## Endpoints
 
-- `POST /provision` `{ tenantId, cameraId, rtspUrl, transport?, codecHint?, targetProfiles? }`
+- `POST /provision` `{ tenantId, cameraId, rtspUrl, transport?, encryption?, tunnel?, codecHint?, targetProfiles? }`
 - `POST /deprovision` `{ tenantId, cameraId }`
 - `GET /health`
 - `GET /health/:tenantId/:cameraId`
@@ -20,6 +20,9 @@ Servicio MVP para provisionar playback por cámara.
 - `STREAM_STORAGE_DIR`
 - `STREAM_TOKEN_SECRET`
 - `STREAM_PROBE_INTERVAL_MS`
+- `STREAM_DEFAULT_INGEST_TRANSPORT` (`auto|tcp|udp`, default `auto`)
+- `STREAM_DEFAULT_INGEST_ENCRYPTION` (`optional|required|disabled`, default `optional`)
+- `STREAM_DEFAULT_INGEST_TUNNEL` (`none|http|https|ws|wss|auto`, default `none`)
 - `STREAM_SESSION_IDLE_TTL_MS`
 - `STREAM_SESSION_SWEEP_MS`
 - `STREAM_PLAYBACK_READ_RETRIES`
@@ -28,16 +31,20 @@ Servicio MVP para provisionar playback por cámara.
 - `STREAM_PLAYBACK_READ_TIMEOUT_MS`
 - `STREAM_PLAYBACK_SLOW_MS`
 - `STREAM_MAX_ACTIVE_SESSIONS_PER_TENANT` (`0` deshabilita límite)
-- `STREAM_MEDIA_ENGINE` (`mock` por defecto)
+- `STREAM_MEDIA_ENGINE` (`mock|process|process-mediamtx`, `mock` por defecto)
 - `STREAM_TRANSCODER_CMD` (cuando `STREAM_MEDIA_ENGINE=process`)
 - `STREAM_TRANSCODER_SHELL`
 - `STREAM_TRANSCODER_START_TIMEOUT_MS`
 - `STREAM_TRANSCODER_STOP_TIMEOUT_MS`
-- `STREAM_TRANSCODER_PRESET` (`custom|ffmpeg-hls`)
+- `STREAM_TRANSCODER_PRESET` (`custom|ffmpeg-hls|mediamtx-rtsp-pull`)
 - `STREAM_TRANSCODER_DRY_RUN` (`1` para validar comando sin ejecutar proceso)
 - `STREAM_TRANSCODER_RESTART_MAX`
 - `STREAM_TRANSCODER_RESTART_BACKOFF_MS`
 - `STREAM_TRANSCODER_RESTART_BACKOFF_MAX_MS`
+- `STREAM_MEDIAMTX_BIN` (default `mediamtx`)
+- `STREAM_MEDIAMTX_ARGS` (args extra para binario MediaMTX)
+- `STREAM_MEDIAMTX_READ_TIMEOUT` (default `10s`)
+- `STREAM_MEDIAMTX_WRITE_TIMEOUT` (default `10s`)
 
 ## Notas
 
@@ -46,6 +53,7 @@ Servicio MVP para provisionar playback por cámara.
 - Worker interno de probes mock actualiza salud por stream (`online|degraded|offline`) cada `STREAM_PROBE_INTERVAL_MS`.
 - `GET /health/:tenantId/:cameraId` devuelve `status` y `health` para sincronización en control-plane.
 - Provisioning es idempotente por `tenantId+cameraId`; si la config no cambia, no reprovisiona.
+- `transport`, `encryption` y `tunnel` pueden venir por request o tomar defaults de env para perfiles LAN/Internet.
 - Session manager interno trackea `sid` del token (`issued|active|ended|expired`) con TTL y sweep.
 - El motor de media está desacoplado por adapter (`MediaEngine`) para integrar data-plane real sin cambiar el contrato HTTP.
 
@@ -93,6 +101,12 @@ Servicio MVP para provisionar playback por cámara.
 - Restart automático con backoff exponencial para workers que salen con error.
 - Preset `ffmpeg-hls` para comando de transcode sin romper contrato HTTP.
 - Diagnóstico por worker en health: `state`, `restartCount`, `command`, `lastExitCode`, `lastExitSignal`.
+
+## Process MediaMTX Alias (NH-DP-11)
+
+- Modo `STREAM_MEDIA_ENGINE=process-mediamtx` para arrancar engine de proceso con preset por defecto `mediamtx-rtsp-pull`.
+- El preset genera config YAML por cámara (`mediamtx.generated.yml`) y comando de arranque visible en diagnostics.
+- Mantiene el contrato HTTP del gateway para provision/playback/health, habilitando migración progresiva del motor interno.
 
 ## Dynamic Segments + ffmpeg smoke (NH-DP-08A)
 

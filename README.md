@@ -20,6 +20,7 @@ Monorepo PNPM + Turborepo con:
 ### Planificación y arquitectura
 
 - Plan general por etapas: `/Users/monotributistar/SOURCES/NearHome/docs/PLAN_GENERAL.md`
+- Diagrama completo del sistema (Mermaid): `/Users/monotributistar/SOURCES/NearHome/docs/SISTEMA_COMPLETO.md`
 - Contratos por componente/interfaz: `/Users/monotributistar/SOURCES/NearHome/docs/CONTRATOS_COMPONENTES.md`
 - Contrato ControlPlane/DataPlane: `/Users/monotributistar/SOURCES/NearHome/docs/CONTROLPLANE_DATAPLANE_CONTRACT.md`
 - Contrato de Entitlements: `/Users/monotributistar/SOURCES/NearHome/docs/ENTITLEMENTS_CONTRACT.md`
@@ -153,3 +154,4 @@ Event-gateway:
 - Publish interno: `POST /internal/events/publish` (header `x-event-publish-secret`)
 - SSE: `GET /events/stream` con `X-Tenant-Id`
 - Replay SSE: `GET /events/stream?replay=20&topics=incident,detection&once=1`
+- Frontends (Admin/Portal): configurar `VITE_EVENT_GATEWAY_URL` para realtime WS/SSE (`/ws`, `/events/stream`).

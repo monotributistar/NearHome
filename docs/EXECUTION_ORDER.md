@@ -1,36 +1,35 @@
 # Orden de Implementación Recomendado
 
-## Fase A - Estabilizar backend
+Fecha de actualización: `2026-03-04`
 
-1. NH-001
-2. NH-003
-3. NH-002
+## Fase A - Hardening de plataforma
 
-## Fase B - Calidad automatizada
+1. `#16` Infra: CI/CD con GitHub Actions
+2. `#18` Infra: SSL/TLS con Let's Encrypt
+3. `#19` Infra: Rate limiting por tenant
+4. `#15` Docs: OpenAPI/Swagger
 
-4. NH-004
-5. NH-005
-6. NH-006
-7. NH-007
+## Fase B - Ingesta y detección operativa
 
-## Fase C - DX base
+5. `#1` Shinobi-YOLO envío de frames
+6. `#2` Integración YOLO con video real
+7. `#3` API de máscaras por cámara
+8. `#10` Editor visual de zonas
 
-8. NH-008
-9. NH-009
-10. NH-010
+## Fase C - Incidencias y mensajería
 
-## Fase D - Evolución técnica
+9. `#5` Workflow de incidencias
+10. `#6` Integración WhatsApp
+11. `#7` Integración Telegram
+12. `#8` Agente chatbot MVP
 
-11. NH-011
-12. NH-012
-13. NH-013
-14. NH-014
-15. NH-015
-16. NH-016
+## Fase D - Servicios cliente y dashboard
 
-## Fase E - Preparación scale/prod
+13. `#11` Botón de pánico
+14. `#12` Tracking GPS familia
+15. `#13` Mapa de propiedad
+16. `#14` Métricas y estadísticas dashboard
 
-17. NH-017
-18. NH-018
-19. NH-019
-20. NH-020
+## Fase E - Reconocimiento facial
+
+17. `#9` Registro de rostros

@@ -51,6 +51,9 @@ afterEach(async () => {
   delete process.env.STREAM_TOKEN_SECRET;
   delete process.env.STREAM_SESSION_IDLE_TTL_MS;
   delete process.env.STREAM_SESSION_SWEEP_MS;
+  delete process.env.STREAM_DEFAULT_INGEST_TRANSPORT;
+  delete process.env.STREAM_DEFAULT_INGEST_ENCRYPTION;
+  delete process.env.STREAM_DEFAULT_INGEST_TUNNEL;
   delete process.env.STREAM_PLAYBACK_READ_RETRIES;
   delete process.env.STREAM_PLAYBACK_READ_RETRY_BASE_MS;
   delete process.env.STREAM_PLAYBACK_READ_RETRY_MAX_MS;
@@ -66,6 +69,10 @@ afterEach(async () => {
   delete process.env.STREAM_TRANSCODER_RESTART_MAX;
   delete process.env.STREAM_TRANSCODER_RESTART_BACKOFF_MS;
   delete process.env.STREAM_TRANSCODER_RESTART_BACKOFF_MAX_MS;
+  delete process.env.STREAM_MEDIAMTX_BIN;
+  delete process.env.STREAM_MEDIAMTX_ARGS;
+  delete process.env.STREAM_MEDIAMTX_READ_TIMEOUT;
+  delete process.env.STREAM_MEDIAMTX_WRITE_TIMEOUT;
   delete process.env.STREAM_PROCESS_SEED_ASSETS;
   delete process.env.STREAM_MAX_ACTIVE_SESSIONS_PER_TENANT;
   while (createdDirs.length) {
@@ -695,10 +702,20 @@ describe("stream-gateway", () => {
   it("keeps playback contract stable with injected media engine adapter", async () => {
     const manifests = new Map<string, string>();
     const segments = new Map<string, Buffer>();
+    const provisionCalls: Array<{
+      transport: string;
+      encryption: string;
+      tunnel: string;
+    }> = [];
     const key = (tenantId: string, cameraId: string) => `${tenantId}:${cameraId}`;
     const mediaEngine: MediaEngine = {
       name: "test-adapter",
       async provisionStream(input) {
+        provisionCalls.push({
+          transport: input.transport,
+          encryption: input.encryption,
+          tunnel: input.tunnel
+        });
         manifests.set(key(input.tenantId, input.cameraId), "#EXTM3U\n#EXTINF:5.0,\nsegment0.ts\n#EXT-X-ENDLIST");
         segments.set(key(input.tenantId, input.cameraId), Buffer.from("ADAPTER_SEGMENT"));
       },
@@ -740,6 +757,11 @@ describe("stream-gateway", () => {
       payload: { tenantId, cameraId, rtspUrl: "rtsp://adapter/test" }
     });
     expect(provision.statusCode).toBe(200);
+    expect(provisionCalls).toContainEqual({
+      transport: "auto",
+      encryption: "optional",
+      tunnel: "none"
+    });
 
     const token = createPlaybackToken({
       tenantId,
@@ -760,6 +782,56 @@ describe("stream-gateway", () => {
     });
     expect(segmentRes.statusCode).toBe(200);
     expect(segmentRes.body).toContain("ADAPTER_SEGMENT");
+
+    await app.close();
+  });
+
+  it("resolves ingest source from env defaults and request overrides", async () => {
+    process.env.STREAM_DEFAULT_INGEST_TRANSPORT = "tcp";
+    process.env.STREAM_DEFAULT_INGEST_ENCRYPTION = "required";
+    process.env.STREAM_DEFAULT_INGEST_TUNNEL = "https";
+    const { app } = await setupApp();
+    const tenantId = "tenant-ingest-defaults";
+    const cameraId = "camera-ingest-defaults";
+
+    const fromDefaults = await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: { tenantId, cameraId, rtspUrl: "rtsp://demo/ingest-defaults" }
+    });
+    expect(fromDefaults.statusCode).toBe(200);
+    expect(fromDefaults.json()).toMatchObject({
+      data: {
+        source: {
+          transport: "tcp",
+          encryption: "required",
+          tunnel: "https"
+        }
+      }
+    });
+
+    const withOverrides = await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: {
+        tenantId,
+        cameraId,
+        rtspUrl: "rtsp://demo/ingest-defaults-v2",
+        transport: "udp",
+        encryption: "disabled",
+        tunnel: "none"
+      }
+    });
+    expect(withOverrides.statusCode).toBe(200);
+    expect(withOverrides.json()).toMatchObject({
+      data: {
+        source: {
+          transport: "udp",
+          encryption: "disabled",
+          tunnel: "none"
+        }
+      }
+    });
 
     await app.close();
   });
@@ -853,6 +925,48 @@ describe("stream-gateway", () => {
     expect(detail?.command).toContain("ffmpeg");
     expect(detail?.command).toContain("index.m3u8");
     expect(detail?.command).toContain("segment%d.ts");
+
+    await app.close();
+  });
+
+  it("supports process-mediamtx engine alias with mediamtx preset diagnostics", async () => {
+    process.env.STREAM_MEDIA_ENGINE = "process-mediamtx";
+    process.env.STREAM_TRANSCODER_DRY_RUN = "1";
+    process.env.STREAM_MEDIAMTX_BIN = "mediamtx";
+    process.env.STREAM_MEDIAMTX_READ_TIMEOUT = "12s";
+    const { app } = await setupApp();
+    const tenantId = "tenant-mediamtx";
+    const cameraId = "camera-mediamtx";
+
+    const provision = await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: {
+        tenantId,
+        cameraId,
+        rtspUrl: "rtsp://demo/mediamtx",
+        transport: "udp",
+        encryption: "required"
+      }
+    });
+    expect(provision.statusCode).toBe(200);
+
+    const health = await app.inject({ method: "GET", url: "/health" });
+    expect(health.statusCode).toBe(200);
+    const body = health.json<{
+      mediaEngine: string;
+      mediaEngineDiagnostics?: {
+        workers?: {
+          details?: Array<{ tenantId: string; cameraId: string; command: string }>;
+        };
+      };
+    }>();
+    expect(body.mediaEngine).toBe("process-mediamtx");
+    const detail = body.mediaEngineDiagnostics?.workers?.details?.find((item) => item.tenantId === tenantId && item.cameraId === cameraId);
+    expect(detail?.command).toContain("mediamtx");
+    expect(detail?.command).toContain("mediamtx.generated.yml");
+    expect(detail?.command).toContain("sourceProtocol: udp");
+    expect(detail?.command).toContain('source: "rtsps://demo/mediamtx"');
 
     await app.close();
   });

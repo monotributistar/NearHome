@@ -2,7 +2,7 @@
 
 ## Corte actual
 
-- Fecha de corte: `2026-03-03`
+- Fecha de corte: `2026-03-04`
 - Etapa activa: lifecycle de cámara + validación funcional (API/E2E)
 - Etapa activa: stream sessions + tracking operativo (NH-028) completada
 - Etapa activa: observabilidad base (NH-011) completada
@@ -30,6 +30,17 @@
 - Etapa activa: dispatch Temporal desde API (NH-DP-14) completada
 - Etapa activa: callback resultados Temporal->API (NH-DP-15) completada
 - Etapa activa: eventos realtime detección/incidentes (NH-DP-16) completada
+- Etapa activa: consumo realtime en Portal/Admin via WS/SSE (NH-DP-17) completada
+- Etapa activa: políticas de ingesta por cámara (`transport/encryption/tunnel`) completada
+- Etapa activa: alias `process-mediamtx` para stream-gateway completada
+
+## Sync GitHub Issues
+
+- Fuente de verdad externa: `https://github.com/monotributistar/NearHome/issues`
+- Estado al corte:
+  - abiertos: `18`
+  - cerrados: `1` (`#17 Infra: Segmentacion de redes por funcion`)
+- Foco recomendado de ejecución: `#16`, `#18`, `#19`, `#15` antes de expandir features de producto.
 
 ## Progreso completado
 
@@ -157,6 +168,10 @@
    - `event-gateway` agrega endpoint interno `POST /internal/events/publish`.
    - SSE extiende soporte de replay (`replay`) y filtro por tópicos (`topics`).
    - tests en API y en `event-gateway` cubren publish + replay.
+31. Realtime consume in Portal/Admin (NH-DP-17):
+   - Portal y Admin agregan vista `Realtime` conectada a `event-gateway`.
+   - Suscripción tenant-scoped con filtro por `topics` (`incident,detection,stream` por default).
+   - Reconexión automática con backoff exponencial en `WS` y fallback a `SSE` por polling con replay.
 
 ## Cambios técnicos relevantes
 
@@ -170,8 +185,14 @@
 - `apps/admin/src/App.tsx`:
   - Sección lifecycle en detalle de cámara.
   - Acciones operativas y timeline de transiciones.
+- `apps/admin/src/App.tsx`:
+  - Nueva vista `Realtime` + menú de navegación.
+  - Conexión `WS` al `event-gateway` con fallback `SSE`, filtros por tópicos y reconexión.
 - `apps/portal/src/portal-app.tsx`:
   - Flujo completo de stream session en detalle de cámara (`issue -> activate -> end`).
+- `apps/portal/src/portal-app.tsx`:
+  - Nueva vista `Realtime` + navegación.
+  - Conexión `WS` al `event-gateway` con fallback `SSE`, filtros por tópicos y reconexión.
 - `packages/ui/src/index.tsx`:
   - `Badge` ahora propaga atributos HTML (`data-testid`, etc).
 - `apps/api/prisma/schema.prisma`:
@@ -334,4 +355,4 @@
 
 1. NH-015: asignación de cámaras por `client_user` (subset real y enforcement integral).
 2. Endurecimiento e2e multi-tenant para concurrencia de playback (escenarios simultáneos por tenant).
-3. NH-DP-17: propagar eventos realtime al portal/admin (suscripción WS/SSE con filtros por tenant/topic).
+3. NH-019: estrategia/migración a Postgres para staging/prod.

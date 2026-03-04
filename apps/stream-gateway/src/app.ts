@@ -4,12 +4,19 @@ import { z } from "zod";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { createMediaEngineFromEnv, type MediaEngine } from "./media-engine.js";
 
+const IngestTransportSchema = z.enum(["auto", "tcp", "udp"]);
+const IngestEncryptionSchema = z.enum(["optional", "required", "disabled"]);
+const IngestTunnelSchema = z.enum(["none", "http", "https", "ws", "wss", "auto"]);
+const CodecHintSchema = z.enum(["h264", "h265", "mpeg4", "unknown"]);
+
 const ProvisionSchema = z.object({
   tenantId: z.string().min(1),
   cameraId: z.string().min(1),
   rtspUrl: z.string().min(4),
-  transport: z.enum(["auto", "tcp", "udp"]).default("auto"),
-  codecHint: z.enum(["h264", "h265", "mpeg4", "unknown"]).default("unknown"),
+  transport: IngestTransportSchema.optional(),
+  encryption: IngestEncryptionSchema.optional(),
+  tunnel: IngestTunnelSchema.optional(),
+  codecHint: CodecHintSchema.default("unknown"),
   targetProfiles: z.array(z.string().min(1)).default(["main"])
 });
 
@@ -26,7 +33,9 @@ type StreamHealth = {
 };
 
 type StreamSource = {
-  transport: "auto" | "tcp" | "udp";
+  transport: z.infer<typeof IngestTransportSchema>;
+  encryption: z.infer<typeof IngestEncryptionSchema>;
+  tunnel: z.infer<typeof IngestTunnelSchema>;
   codecHint: "h264" | "h265" | "mpeg4" | "unknown";
   targetProfiles: string[];
 };
@@ -214,6 +223,9 @@ export async function buildApp(options: BuildAppOptions = {}) {
   const playbackReadTimeoutMs = Math.max(50, Number(process.env.STREAM_PLAYBACK_READ_TIMEOUT_MS ?? 2000));
   const playbackSlowRequestMs = Math.max(1, Number(process.env.STREAM_PLAYBACK_SLOW_MS ?? 500));
   const maxActiveSessionsPerTenant = Math.max(0, Number(process.env.STREAM_MAX_ACTIVE_SESSIONS_PER_TENANT ?? 0));
+  const defaultIngestTransport = IngestTransportSchema.catch("auto").parse(process.env.STREAM_DEFAULT_INGEST_TRANSPORT);
+  const defaultIngestEncryption = IngestEncryptionSchema.catch("optional").parse(process.env.STREAM_DEFAULT_INGEST_ENCRYPTION);
+  const defaultIngestTunnel = IngestTunnelSchema.catch("none").parse(process.env.STREAM_DEFAULT_INGEST_TUNNEL);
   let probeTimer: NodeJS.Timeout | null = null;
   let sessionSweepTimer: NodeJS.Timeout | null = null;
   let sessionSweepCount = 0;
@@ -713,8 +725,13 @@ export async function buildApp(options: BuildAppOptions = {}) {
   app.post("/provision", async (request) => {
     const body = ProvisionSchema.parse(request.body);
     const key = streamKey(body.tenantId, body.cameraId);
+    const resolvedTransport = body.transport ?? defaultIngestTransport;
+    const resolvedEncryption = body.encryption ?? defaultIngestEncryption;
+    const resolvedTunnel = body.tunnel ?? defaultIngestTunnel;
     const source: StreamSource = {
-      transport: body.transport,
+      transport: resolvedTransport,
+      encryption: resolvedEncryption,
+      tunnel: resolvedTunnel,
       codecHint: body.codecHint,
       targetProfiles: body.targetProfiles
     };
@@ -724,6 +741,8 @@ export async function buildApp(options: BuildAppOptions = {}) {
       existing &&
       existing.rtspUrl === body.rtspUrl &&
       existing.source.transport === source.transport &&
+      existing.source.encryption === source.encryption &&
+      existing.source.tunnel === source.tunnel &&
       existing.source.codecHint === source.codecHint &&
       JSON.stringify(existing.source.targetProfiles) === JSON.stringify(source.targetProfiles)
     ) {
@@ -750,7 +769,10 @@ export async function buildApp(options: BuildAppOptions = {}) {
     await mediaEngine.provisionStream({
       tenantId: body.tenantId,
       cameraId: body.cameraId,
-      rtspUrl: body.rtspUrl
+      rtspUrl: body.rtspUrl,
+      transport: source.transport,
+      encryption: source.encryption,
+      tunnel: source.tunnel
     });
 
     const ready: StreamEntry = {

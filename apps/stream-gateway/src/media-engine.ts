@@ -6,6 +6,9 @@ export type StreamMediaInput = {
   tenantId: string;
   cameraId: string;
   rtspUrl: string;
+  transport: "auto" | "tcp" | "udp";
+  encryption: "optional" | "required" | "disabled";
+  tunnel: "none" | "http" | "https" | "ws" | "wss" | "auto";
 };
 
 export type StreamMediaScope = {
@@ -143,7 +146,18 @@ function renderCommandTemplate(template: string, input: StreamMediaInput) {
   return template
     .replaceAll("{{tenantId}}", input.tenantId)
     .replaceAll("{{cameraId}}", input.cameraId)
-    .replaceAll("{{rtspUrl}}", input.rtspUrl);
+    .replaceAll("{{rtspUrl}}", input.rtspUrl)
+    .replaceAll("{{transport}}", input.transport)
+    .replaceAll("{{encryption}}", input.encryption)
+    .replaceAll("{{tunnel}}", input.tunnel);
+}
+
+function shellQuote(value: string) {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function yamlDoubleQuoted(value: string) {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
 function buildFfmpegHlsCommand(input: StreamMediaInput, storageDir: string) {
@@ -151,7 +165,10 @@ function buildFfmpegHlsCommand(input: StreamMediaInput, storageDir: string) {
   const playlist = path.join(outDir, "index.m3u8");
   const segmentPattern = path.join(outDir, "segment%d.ts");
   const isLavfi = input.rtspUrl.startsWith("lavfi:");
-  const inputArgs = isLavfi ? ["-f", "lavfi", "-i", `"${input.rtspUrl.slice("lavfi:".length)}"`] : ["-rtsp_transport", "tcp", "-i", `"${input.rtspUrl}"`];
+  const ffmpegTransport = input.transport === "udp" ? "udp" : "tcp";
+  const inputArgs = isLavfi
+    ? ["-f", "lavfi", "-i", `"${input.rtspUrl.slice("lavfi:".length)}"`]
+    : ["-rtsp_transport", ffmpegTransport, "-i", `"${input.rtspUrl}"`];
   const videoArgs = isLavfi
     ? ["-c:v", "mpeg2video", "-q:v", "4", "-pix_fmt", "yuv420p"]
     : ["-c:v", "copy"];
@@ -174,21 +191,70 @@ function buildFfmpegHlsCommand(input: StreamMediaInput, storageDir: string) {
   ].join(" ");
 }
 
-function resolveTranscoderCommand(input: StreamMediaInput, storageDir: string) {
-  const preset = process.env.STREAM_TRANSCODER_PRESET ?? "custom";
+function normalizeRtspUrlForEncryption(rtspUrl: string, encryption: StreamMediaInput["encryption"]) {
+  if (encryption !== "required") return rtspUrl;
+  if (rtspUrl.startsWith("rtsp://")) {
+    return `rtsps://${rtspUrl.slice("rtsp://".length)}`;
+  }
+  return rtspUrl;
+}
+
+function mapMediaMtxSourceProtocol(transport: StreamMediaInput["transport"]) {
+  if (transport === "tcp") return "tcp";
+  if (transport === "udp") return "udp";
+  return "automatic";
+}
+
+function buildMediaMtxPullCommand(input: StreamMediaInput, storageDir: string) {
+  const streamName = `${input.tenantId}_${input.cameraId}`.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const streamDir = cameraDir(storageDir, input.tenantId, input.cameraId);
+  const configPath = path.join(streamDir, "mediamtx.generated.yml");
+  const sourceUrl = normalizeRtspUrlForEncryption(input.rtspUrl, input.encryption);
+  const sourceProtocol = mapMediaMtxSourceProtocol(input.transport);
+  const readTimeout = process.env.STREAM_MEDIAMTX_READ_TIMEOUT ?? "10s";
+  const writeTimeout = process.env.STREAM_MEDIAMTX_WRITE_TIMEOUT ?? "10s";
+  const mediamtxBin = process.env.STREAM_MEDIAMTX_BIN ?? "mediamtx";
+  const mediamtxArgs = process.env.STREAM_MEDIAMTX_ARGS ?? "";
+  const config = [
+    "logLevel: info",
+    "readTimeout: " + readTimeout,
+    "writeTimeout: " + writeTimeout,
+    "hls: yes",
+    "hlsAlwaysRemux: yes",
+    "paths:",
+    `  ${streamName}:`,
+    `    source: ${yamlDoubleQuoted(sourceUrl)}`,
+    `    sourceProtocol: ${sourceProtocol}`
+  ].join("\n");
+  return [
+    `mkdir -p ${shellQuote(streamDir)}`,
+    `cat > ${shellQuote(configPath)} <<'NH_MEDIAMTX_CFG'\n${config}\nNH_MEDIAMTX_CFG`,
+    `${mediamtxBin}${mediamtxArgs ? ` ${mediamtxArgs}` : ""} ${shellQuote(configPath)}`
+  ].join(" && ");
+}
+
+function resolveTranscoderCommand(input: StreamMediaInput, storageDir: string, preset: string) {
   if (preset === "ffmpeg-hls") {
     return buildFfmpegHlsCommand(input, storageDir);
+  }
+  if (preset === "mediamtx-rtsp-pull") {
+    return buildMediaMtxPullCommand(input, storageDir);
   }
   const commandTemplate = process.env.STREAM_TRANSCODER_CMD ?? 'node -e "setInterval(() => {}, 1000)"';
   return renderCommandTemplate(commandTemplate, input);
 }
 
-export function createProcessMediaEngine(storageDir: string): MediaEngine {
+type ProcessEngineOptions = {
+  engineName?: string;
+  defaultPreset?: string;
+};
+
+export function createProcessMediaEngine(storageDir: string, options: ProcessEngineOptions = {}): MediaEngine {
   const shell = process.env.STREAM_TRANSCODER_SHELL ?? process.env.SHELL ?? "/bin/sh";
   const startTimeoutMs = Math.max(100, Number(process.env.STREAM_TRANSCODER_START_TIMEOUT_MS ?? 1000));
   const stopTimeoutMs = Math.max(100, Number(process.env.STREAM_TRANSCODER_STOP_TIMEOUT_MS ?? 800));
   const dryRun = process.env.STREAM_TRANSCODER_DRY_RUN === "1";
-  const preset = process.env.STREAM_TRANSCODER_PRESET ?? "custom";
+  const preset = process.env.STREAM_TRANSCODER_PRESET ?? options.defaultPreset ?? "custom";
   const seedAssetsByDefault = preset === "ffmpeg-hls" ? "0" : "1";
   const seedAssets = (process.env.STREAM_PROCESS_SEED_ASSETS ?? seedAssetsByDefault) !== "0";
   const maxRestarts = Math.max(0, Number(process.env.STREAM_TRANSCODER_RESTART_MAX ?? 3));
@@ -276,7 +342,7 @@ export function createProcessMediaEngine(storageDir: string): MediaEngine {
       existing.state = "stopped";
     }
 
-    const command = resolveTranscoderCommand(input, storageDir);
+    const command = resolveTranscoderCommand(input, storageDir, preset);
     const entry: ProcessWorkerEntry = {
       tenantId: input.tenantId,
       cameraId: input.cameraId,
@@ -357,7 +423,7 @@ export function createProcessMediaEngine(storageDir: string): MediaEngine {
   };
 
   return {
-    name: "process-shell",
+    name: options.engineName ?? "process-shell",
     provisionStream,
     deprovisionStream,
     readManifest: (scope) => readManifestFile(storageDir, scope),
@@ -374,6 +440,12 @@ export function createMediaEngineFromEnv(storageDir: string): MediaEngine {
   }
   if (engine === "process") {
     return createProcessMediaEngine(storageDir);
+  }
+  if (engine === "process-mediamtx") {
+    return createProcessMediaEngine(storageDir, {
+      engineName: "process-mediamtx",
+      defaultPreset: "mediamtx-rtsp-pull"
+    });
   }
   throw new Error(`Unsupported STREAM_MEDIA_ENGINE=${engine}`);
 }
