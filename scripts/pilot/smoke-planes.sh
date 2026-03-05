@@ -37,7 +37,7 @@ curl -fsS -X POST "$STREAM_URL/provision" \
 
 check_health stream_cam1 "$STREAM_URL/health/$TENANT_ID/$CAM1"
 check_health stream_cam2 "$STREAM_URL/health/$TENANT_ID/$CAM2"
-curl -fsS "$STREAM_URL/metrics" | rg -q 'nearhome_streams_total{status="ready"}'
+curl -fsS "$STREAM_URL/metrics" | rg -F -q 'nearhome_streams_total{status="ready"}'
 
 echo "== Event plane =="
 check_health event "$EVENT_URL/health"

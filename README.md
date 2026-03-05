@@ -121,6 +121,10 @@ pnpm dev
 - `pnpm pilot:stack:down:local`
 - `pnpm pilot:stack:down:onprem`
 - `pnpm pilot:smoke`
+- `pnpm pilot:harness:prepare`
+- `pnpm pilot:harness:run`
+- `pnpm pilot:harness:cleanup`
+- `pnpm pilot:harness`
 
 Reportes soak:
 

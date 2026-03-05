@@ -53,6 +53,12 @@ Servicios:
 pnpm pilot:smoke
 ```
 
+Harness virtual de 2 cámaras para detección E2E:
+
+```bash
+pnpm pilot:harness
+```
+
 Valida:
 - control-plane (`api`)
 - data-plane (`stream-gateway` + provision de 2 cámaras virtuales)

@@ -1,6 +1,6 @@
 # Pilot Runbook (Local + On-Prem)
 
-Fecha: `2026-03-04`
+Fecha: `2026-03-05`
 
 ## 1) Objetivo
 
@@ -88,7 +88,42 @@ pnpm pilot:stack:down:onprem
 - `inference-bridge`, `inference-node-yolo`, `inference-node-mediapipe`, `detection-dispatcher` responden `/health`.
 - `temporal-ui` responde.
 
-## 6) Riesgos conocidos
+## 6) Harness de 2 cámaras virtuales (PILOT-B1)
+
+Preparar (login + tenant + registro nodos + creación de 2 cámaras virtuales):
+
+```bash
+pnpm pilot:harness:prepare
+```
+
+Ejecutar detección E2E sobre ambas cámaras:
+
+```bash
+pnpm pilot:harness:run
+```
+
+Atajo de punta a punta:
+
+```bash
+pnpm pilot:harness
+```
+
+Limpieza:
+
+```bash
+pnpm pilot:harness:cleanup
+```
+
+Variables útiles:
+- `PILOT_EMAIL`, `PILOT_PASSWORD`
+- `PILOT_TENANT_ID`
+- `PILOT_CAM1_NAME`, `PILOT_CAM2_NAME`
+- `PILOT_CAM1_RTSP`, `PILOT_CAM2_RTSP`
+- `BRIDGE_URL`
+- `YOLO_URL`, `MEDIAPIPE_URL` (para registro de nodos)
+- `PILOT_JOB_TIMEOUT_S`, `PILOT_JOB_POLL_S`
+
+## 7) Riesgos conocidos
 
 - Integraciones externas (Telegram, Cloudflare API) pueden depender de credenciales y conectividad.
 - En on-prem, `STREAM_TRANSCODER_DRY_RUN=1` está seteado por defecto para arranque seguro; cambiar a `0` cuando se habilite ingesta real.
