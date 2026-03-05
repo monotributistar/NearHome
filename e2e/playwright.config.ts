@@ -1,5 +1,9 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const apiPort = Number(process.env.E2E_API_PORT ?? 3001);
+const adminPort = Number(process.env.E2E_ADMIN_PORT ?? 4173);
+const portalPort = Number(process.env.E2E_PORTAL_PORT ?? 4174);
+
 export default defineConfig({
   testDir: "./tests",
   timeout: 60_000,
@@ -17,20 +21,20 @@ export default defineConfig({
   webServer: [
     {
       command:
-        "pnpm --filter @app/api build && CORS_ORIGIN_ADMIN=http://localhost:4173 CORS_ORIGIN_PORTAL=http://localhost:4174 pnpm --filter @app/api start",
-      url: "http://localhost:3001/health",
+        `pnpm --filter @app/api build && PORT=${apiPort} CORS_ORIGIN_ADMIN=http://localhost:${adminPort} CORS_ORIGIN_PORTAL=http://localhost:${portalPort} pnpm --filter @app/api start`,
+      url: `http://localhost:${apiPort}/health`,
       reuseExistingServer: false,
       timeout: 120_000
     },
     {
-      command: "pnpm --filter @app/admin exec vite --port 4173",
-      url: "http://localhost:4173",
+      command: `VITE_API_URL=http://localhost:${apiPort} pnpm --filter @app/admin exec vite --port ${adminPort}`,
+      url: `http://localhost:${adminPort}`,
       reuseExistingServer: false,
       timeout: 120_000
     },
     {
-      command: "pnpm --filter @app/portal exec vite --port 4174",
-      url: "http://localhost:4174",
+      command: `VITE_API_URL=http://localhost:${apiPort} VITE_EVENT_GATEWAY_URL=http://localhost:3011 pnpm --filter @app/portal exec vite --port ${portalPort}`,
+      url: `http://localhost:${portalPort}`,
       reuseExistingServer: false,
       timeout: 120_000
     }
