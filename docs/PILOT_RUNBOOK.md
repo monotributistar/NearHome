@@ -116,6 +116,13 @@ Atajo de punta a punta:
 pnpm pilot:harness
 ```
 
+Switch rápido por entorno de cámaras:
+
+```bash
+pnpm pilot:harness:mock
+pnpm pilot:harness:lan
+```
+
 Limpieza:
 
 ```bash

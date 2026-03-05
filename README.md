@@ -125,6 +125,8 @@ pnpm dev
 - `pnpm pilot:harness:run`
 - `pnpm pilot:harness:cleanup`
 - `pnpm pilot:harness`
+- `pnpm pilot:harness:mock`
+- `pnpm pilot:harness:lan`
 
 Reportes soak:
 

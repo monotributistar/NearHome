@@ -6,6 +6,7 @@ build
 *.log
 .env
 .env.local
+infra/.env.pilot.cameras
 apps/api/prisma/dev.db
 apps/api/prisma/dev.db-journal
 test-results

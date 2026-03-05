@@ -25,6 +25,8 @@
     "pilot:harness:run": "bash scripts/pilot/virtual-harness.sh run",
     "pilot:harness:cleanup": "bash scripts/pilot/virtual-harness.sh cleanup",
     "pilot:harness": "bash scripts/pilot/virtual-harness.sh full",
+    "pilot:harness:mock": "bash scripts/pilot/harness-mode.sh mock full",
+    "pilot:harness:lan": "bash scripts/pilot/harness-mode.sh lan full",
     "db:reset": "pnpm --filter @app/api db:reset",
     "lint": "turbo lint",
     "lint:fix": "turbo lint -- --fix",

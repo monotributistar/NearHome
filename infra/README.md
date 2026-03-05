@@ -57,6 +57,8 @@ Harness virtual de 2 cámaras para detección E2E:
 
 ```bash
 pnpm pilot:harness
+pnpm pilot:harness:mock
+pnpm pilot:harness:lan
 ```
 
 Para cámaras físicas LAN:
