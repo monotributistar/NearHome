@@ -83,6 +83,16 @@ Archivo: `apps/event-gateway/test/app.spec.ts`
 - Rechazo de publish sin secret (`401`)
 - Publish aceptado (`202`) y replay por SSE (`/events/stream?replay=1&topics=detection&once=1`)
 
+## E2E portal/admin (Playwright)
+
+Archivos: `e2e/tests/*.spec.ts`
+
+- NH-031 aislamiento fuerte de cámaras multi-tenant (10 cámaras)
+  - alta de 3 tenants y siembra de 10 cámaras (mock + reales opcionales por env `E2E_REAL_CAM1_RTSP`/`E2E_REAL_CAM2_RTSP`)
+  - validación API de aislamiento por tenant para `monitor` y `client_user`
+  - validación UI en Portal: cambio de tenant, visibilidad correcta y no filtración de cámaras de otros tenants
+  - validación de acceso a detalle de cámara visible y bloqueo de tenant no asignado
+
 ## Data-plane integration tests
 
 Archivo: `apps/stream-gateway/test/stream-gateway.spec.ts`

@@ -36,6 +36,7 @@
     "test:e2e": "playwright test -c e2e/playwright.config.ts",
     "test:e2e:admin": "playwright test -c e2e/playwright.config.ts e2e/tests/admin*.spec.ts",
     "test:e2e:portal": "playwright test -c e2e/playwright.config.ts e2e/tests/portal*.spec.ts",
+    "test:e2e:cameras-isolation": "playwright test -c e2e/playwright.config.ts e2e/tests/portal.cameras-isolation.spec.ts",
     "test:stream": "pnpm --filter @app/stream-gateway test",
     "test:stream:load": "pnpm --filter @app/stream-gateway test:load",
     "test:stream:soak": "pnpm --filter @app/stream-gateway test:soak",
