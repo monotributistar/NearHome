@@ -1,9 +1,8 @@
 import { expect, test, type APIRequestContext } from "@playwright/test";
+import { apiUrl, portalUrl } from "./support/env";
 
-const API_PORT = process.env.E2E_API_PORT ?? "3001";
-const PORTAL_PORT = process.env.E2E_PORTAL_PORT ?? "4174";
-const API_URL = `http://localhost:${API_PORT}`;
-const PORTAL_URL = `http://localhost:${PORTAL_PORT}`;
+const API_URL = apiUrl;
+const PORTAL_URL = portalUrl;
 
 type TenantCtx = {
   id: string;

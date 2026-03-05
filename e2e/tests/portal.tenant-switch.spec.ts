@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
 
-const API_URL = "http://localhost:3001";
+import { apiUrl, portalUrl } from "./support/env";
+
+const API_URL = apiUrl;
 
 test("NH-030 portal monitor tenant switch shows only assigned tenant cameras", async ({ page, request }) => {
   const adminLogin = await request.post(`${API_URL}/auth/login`, {
@@ -58,7 +60,7 @@ test("NH-030 portal monitor tenant switch shows only assigned tenant cameras", a
   });
   expect(createCameraResponse.ok()).toBeTruthy();
 
-  await page.goto("http://localhost:4174/login");
+  await page.goto(`${portalUrl}/login`);
   await page.getByLabel("Email").fill("monitor@nearhome.dev");
   await page.getByLabel("Password").fill("demo1234");
   await page.getByRole("button", { name: "Login" }).click();

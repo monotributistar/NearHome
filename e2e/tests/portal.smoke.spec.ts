@@ -1,7 +1,8 @@
 import { expect, test } from "@playwright/test";
+import { portalUrl } from "./support/env";
 
 test("NH-007 portal smoke: login + cameras + stream token + events", async ({ page }) => {
-  await page.goto("http://localhost:4174/login");
+  await page.goto(`${portalUrl}/login`);
 
   await page.getByLabel("Email").fill("monitor@nearhome.dev");
   await page.getByLabel("Password").fill("demo1234");

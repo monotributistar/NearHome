@@ -1,7 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
+import { adminUrl } from "./support/env";
 
 async function loginAs(page: Page, email: string, password = "demo1234") {
-  await page.goto("http://localhost:4173/login");
+  await page.goto(`${adminUrl}/login`);
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Login" }).click();

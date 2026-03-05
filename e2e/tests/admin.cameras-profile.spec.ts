@@ -1,7 +1,8 @@
 import { expect, test } from "@playwright/test";
+import { adminUrl } from "./support/env";
 
 test("NH-026 admin camera profile flow: create camera + configure internal profile", async ({ page }) => {
-  await page.goto("http://localhost:4173/login");
+  await page.goto(`${adminUrl}/login`);
   await page.getByLabel("Email").fill("admin@nearhome.dev");
   await page.getByLabel("Password").fill("demo1234");
   await page.getByRole("button", { name: "Login" }).click();

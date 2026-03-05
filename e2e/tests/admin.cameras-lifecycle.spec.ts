@@ -1,7 +1,8 @@
 import { expect, test } from "@playwright/test";
+import { adminUrl } from "./support/env";
 
 test("NH-027 admin camera lifecycle flow: draft -> ready via validate", async ({ page }) => {
-  await page.goto("http://localhost:4173/login");
+  await page.goto(`${adminUrl}/login`);
   await page.getByLabel("Email").fill("admin@nearhome.dev");
   await page.getByLabel("Password").fill("demo1234");
   await page.getByRole("button", { name: "Login" }).click();

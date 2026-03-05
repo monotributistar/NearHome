@@ -1,7 +1,8 @@
 import { expect, test } from "@playwright/test";
+import { adminUrl } from "./support/env";
 
 test("NH-022 admin users flow: create + update role", async ({ page }) => {
-  await page.goto("http://localhost:4173/login");
+  await page.goto(`${adminUrl}/login`);
 
   await page.getByLabel("Email").fill("admin@nearhome.dev");
   await page.getByLabel("Password").fill("demo1234");
