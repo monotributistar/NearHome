@@ -88,7 +88,15 @@ pnpm pilot:stack:down:onprem
 - `inference-bridge`, `inference-node-yolo`, `inference-node-mediapipe`, `detection-dispatcher` responden `/health`.
 - `temporal-ui` responde.
 
-## 6) Harness de 2 cámaras virtuales (PILOT-B1)
+## 6) Harness de 2 cámaras (PILOT-B1)
+
+Para cámaras físicas en LAN (2 cámaras):
+
+```bash
+cp infra/.env.pilot.cameras.example infra/.env.pilot.cameras
+```
+
+Editar `infra/.env.pilot.cameras` con tus RTSP reales (`PILOT_CAM1_RTSP`, `PILOT_CAM2_RTSP`).
 
 Preparar (login + tenant + registro nodos + creación de 2 cámaras virtuales):
 
@@ -119,6 +127,7 @@ Variables útiles:
 - `PILOT_TENANT_ID`
 - `PILOT_CAM1_NAME`, `PILOT_CAM2_NAME`
 - `PILOT_CAM1_RTSP`, `PILOT_CAM2_RTSP`
+- `PILOT_ENV_FILE` (default: `infra/.env.pilot.cameras`)
 - `BRIDGE_URL`
 - `YOLO_URL`, `MEDIAPIPE_URL` (para registro de nodos)
 - `PILOT_JOB_TIMEOUT_S`, `PILOT_JOB_POLL_S`

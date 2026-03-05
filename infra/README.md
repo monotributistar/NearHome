@@ -59,6 +59,13 @@ Harness virtual de 2 cámaras para detección E2E:
 pnpm pilot:harness
 ```
 
+Para cámaras físicas LAN:
+
+```bash
+cp infra/.env.pilot.cameras.example infra/.env.pilot.cameras
+pnpm pilot:harness
+```
+
 Valida:
 - control-plane (`api`)
 - data-plane (`stream-gateway` + provision de 2 cámaras virtuales)

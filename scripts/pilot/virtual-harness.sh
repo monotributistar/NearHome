@@ -2,6 +2,14 @@
 set -euo pipefail
 
 CMD="${1:-full}"
+ENV_FILE="${PILOT_ENV_FILE:-infra/.env.pilot.cameras}"
+
+if [[ -f "$ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$ENV_FILE"
+  set +a
+fi
 
 API_URL="${API_URL:-http://localhost:3001}"
 EVENT_URL="${EVENT_URL:-http://localhost:3011}"
@@ -104,7 +112,7 @@ ensure_camera() {
   fi
   local payload
   payload="$(jq -nc --arg name "$camera_name" --arg rtsp "$rtsp_url" \
-    '{name:$name,description:"virtual harness camera",rtspUrl:$rtsp,location:"virtual-lab",tags:["pilot","virtual"],isActive:true}')"
+    '{name:$name,description:"pilot harness camera",rtspUrl:$rtsp,location:"pilot-lab",tags:["pilot","harness"],isActive:true}')"
   api POST "/cameras" "$payload" | jq -r '.data.id'
 }
 
@@ -205,7 +213,7 @@ run_jobs() {
     exit 1
   fi
 
-  echo "Virtual harness PASS"
+  echo "Pilot harness PASS"
 }
 
 cleanup() {
