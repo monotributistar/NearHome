@@ -15,6 +15,63 @@ Monorepo PNPM + Turborepo con:
 - `packages/api-client`: fetch client con auth + tenant header
 - `packages/ui`: componentes UI (daisyUI + primitive modal estilo shadcn)
 
+## Diagrama del sistema (Mermaid)
+
+```mermaid
+flowchart LR
+  subgraph "Clientes"
+    Admin["Admin UI"]
+    Portal["Portal UI"]
+  end
+
+  subgraph "Control Plane"
+    API["API (apps/api)"]
+    DB[("Prisma DB")]
+  end
+
+  subgraph "Data Plane"
+    SG["Stream Gateway"]
+    Vault[("Storage Vaults\n(local/LAN/VPN)")]
+  end
+
+  subgraph "Event Plane"
+    EG["Event Gateway (WS/SSE)"]
+    Redis[("Redis")]
+  end
+
+  subgraph "Detection Plane"
+    Bridge["Inference Bridge"]
+    Worker["Detection Worker"]
+    Temporal["Temporal"]
+    NodeY["Inference Node YOLO"]
+    NodeM["Inference Node MediaPipe"]
+  end
+
+  Cam["Cámaras RTSP/RTSPS"]
+
+  Admin --> API
+  Portal --> API
+  Admin --> EG
+  Portal --> EG
+
+  API --> DB
+  API --> SG
+  API --> EG
+  API --> Worker
+
+  SG --> Vault
+  SG --> Cam
+
+  EG --> Redis
+
+  Worker --> Temporal
+  Worker --> Bridge
+  Bridge --> NodeY
+  Bridge --> NodeM
+```
+
+Diagrama completo y extendido: `/Users/monotributistar/SOURCES/NearHome/docs/SISTEMA_COMPLETO.md`
+
 ## Documentación
 
 ### Planificación y arquitectura
@@ -91,6 +148,36 @@ pnpm dev
 - Admin: `http://localhost:5173`
 - Portal: `http://localhost:5174`
 
+## Storage y Recording (estado actual)
+
+El `stream-gateway` ya soporta políticas por cámara enviadas desde API (`/cameras/:id/stream-token` -> `/provision`):
+
+- `recordingMode=continuous`: grabación continua en vault + playback HLS.
+- `recordingMode=event_only`: sin estrategia de continuo funcional dedicada todavía; hoy se usa pipeline base y clips por evento.
+- `recordingMode=hybrid`: continuo + clips por evento.
+- `recordingMode=observe_only`: modo observación, sin escribir segmentos al vault (usa scratch efímero local y se limpia al deprovisionar).
+
+Parámetros de clip por evento:
+
+- `eventClipPreSeconds` (default `5`)
+- `eventClipPostSeconds` (default `10`)
+
+Endpoints relevantes:
+
+- API:
+  - `GET /cameras/:id/event-clips`
+  - `POST /cameras/:id/event-clips`
+- Stream gateway:
+  - `POST /events/clip`
+  - `GET /events/clips`
+  - `GET /playback/events/:tenantId/:cameraId/:eventId/index.m3u8`
+
+Notas operativas:
+
+- En `observe_only` los clips de evento están deshabilitados (`EVENT_CLIP_DISABLED_IN_OBSERVE_ONLY`).
+- El scratch efímero se configura con `STREAM_OBSERVE_SCRATCH_DIR` (default `/tmp/nearhome-observe`).
+- El detalle de vaults local/LAN/VPN está en: `/Users/monotributistar/SOURCES/NearHome/docs/STORAGE_VAULTS.md`
+
 ## Usuarios seed (password: `demo1234`)
 
 - `admin@nearhome.dev` (`tenant_admin` en tenant A, B y C)
@@ -137,7 +224,15 @@ Reportes soak:
 
 ## Estado
 
-POC funcional orientado a control-plane + data-plane MVP de playback tokenizado. Streaming productivo de baja latencia y pipeline de detección real quedan para la siguiente etapa.
+POC funcional orientado a control-plane + data-plane de playback tokenizado con:
+
+- selección de vault por plan/default (y failover entre vaults sanos),
+- retención por tiempo + presión de disco + cuota por tenant,
+- métricas de storage/playback,
+- políticas de recording por cámara (incluye `observe_only`),
+- clips por evento con reproducción HLS de clip.
+
+Streaming productivo de baja latencia hard real-time y evolución del pipeline de detección siguen en etapas siguientes.
 
 Nota: `STREAM_TOKEN_SECRET` debe coincidir entre `apps/api` y `apps/stream-gateway` para validar playback.
 Nota: el sync automático de health en API se controla con `STREAM_HEALTH_SYNC_ENABLED`, `STREAM_HEALTH_SYNC_INTERVAL_MS` y `STREAM_HEALTH_SYNC_BATCH_SIZE`.
@@ -151,6 +246,9 @@ Nota: API publica eventos realtime en `event-gateway` vía `EVENT_GATEWAY_URL` +
 - Compose stack: `infra/docker-compose.yml`
 - Levantar servicios: `pnpm dev:stack:up`
 - Bajar servicios: `pnpm dev:stack:down`
+- On-prem local (piloto): `pnpm pilot:stack:up:onprem`
+- On-prem con túnel/VPN: `pnpm pilot:stack:up:onprem:tunnel`
+- Bajar on-prem: `pnpm pilot:stack:down:onprem`
 - Incluye:
   - control-plane (`api`)
   - stream-gateway
