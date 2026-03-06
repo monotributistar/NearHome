@@ -142,4 +142,4 @@ Variables útiles:
 ## 7) Riesgos conocidos
 
 - Integraciones externas (Telegram, Cloudflare API) pueden depender de credenciales y conectividad.
-- En on-prem, `STREAM_TRANSCODER_DRY_RUN=1` está seteado por defecto para arranque seguro; cambiar a `0` cuando se habilite ingesta real.
+- En on-prem, el perfil ejemplo usa `STREAM_TRANSCODER_PRESET=ffmpeg-hls-retention` y `STREAM_TRANSCODER_DRY_RUN=0`; validar capacidad de disco y ajustar bitrate/segmentación antes de escalar cámaras.

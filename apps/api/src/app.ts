@@ -91,6 +91,12 @@ type DetectorFlags = {
   lpr: boolean;
 };
 
+type CameraRecordingPolicy = {
+  mode: "continuous" | "event_only" | "hybrid" | "observe_only";
+  eventClipPreSeconds: number;
+  eventClipPostSeconds: number;
+};
+
 type ProfileStatus = "pending" | "ready" | "error";
 type CameraLifecycleStatus = "draft" | "provisioning" | "ready" | "degraded" | "offline" | "error" | "retired";
 type StreamSessionStatus = "requested" | "issued" | "active" | "ended" | "expired";
@@ -158,6 +164,34 @@ function defaultCameraProfileData(tenantId: string, cameraId: string) {
     lastHealthAt: new Date(),
     lastError: null as string | null
   };
+}
+
+function parseCameraRecordingPolicy(rulesProfileRaw: string | null): CameraRecordingPolicy {
+  const fallback: CameraRecordingPolicy = {
+    mode: "continuous",
+    eventClipPreSeconds: 5,
+    eventClipPostSeconds: 10
+  };
+  if (!rulesProfileRaw) return fallback;
+  try {
+    const parsed = parseJson<Record<string, unknown>>(rulesProfileRaw);
+    const recording = parsed.recording;
+    if (!recording || typeof recording !== "object") return fallback;
+    const value = recording as Record<string, unknown>;
+    const mode = value.mode;
+    const preSeconds = typeof value.eventClipPreSeconds === "number" ? Math.floor(value.eventClipPreSeconds) : fallback.eventClipPreSeconds;
+    const postSeconds = typeof value.eventClipPostSeconds === "number" ? Math.floor(value.eventClipPostSeconds) : fallback.eventClipPostSeconds;
+    return {
+      mode:
+        mode === "event_only" || mode === "hybrid" || mode === "continuous" || mode === "observe_only"
+          ? mode
+          : fallback.mode,
+      eventClipPreSeconds: Math.max(0, Math.min(120, preSeconds)),
+      eventClipPostSeconds: Math.max(1, Math.min(300, postSeconds))
+    };
+  } catch {
+    return fallback;
+  }
 }
 
 function profileResponse(profile: {
@@ -2064,7 +2098,10 @@ export async function buildApp() {
     const ctx = getTenantContext(request);
     assertRole(request, ["tenant_admin", "monitor", "client_user"]);
     const id = (request.params as { id: string }).id;
-    const camera = await prisma.camera.findFirst({ where: { id, tenantId: ctx.tenantId, deletedAt: null } });
+    const camera = await prisma.camera.findFirst({
+      where: { id, tenantId: ctx.tenantId, deletedAt: null },
+      include: { profile: true }
+    });
     if (!camera) throw app.httpErrors.notFound();
 
     await expireStaleStreamSessions(ctx.tenantId);
@@ -2113,6 +2150,8 @@ export async function buildApp() {
       where: { id: session.id },
       data: { token }
     });
+    const entitlements = await getEntitlementsForTenant(ctx.tenantId);
+    const recordingPolicy = parseCameraRecordingPolicy(camera.profile?.rulesProfile ?? null);
 
     let playbackUrl: string | undefined;
     if (streamGatewayUrl) {
@@ -2123,7 +2162,11 @@ export async function buildApp() {
           body: JSON.stringify({
             tenantId: ctx.tenantId,
             cameraId: id,
-            rtspUrl: camera.rtspUrl
+            rtspUrl: camera.rtspUrl,
+            ...(entitlements ? { planCode: entitlements.planCode, retentionDays: entitlements.limits.retentionDays } : {}),
+            recordingMode: recordingPolicy.mode,
+            eventClipPreSeconds: recordingPolicy.eventClipPreSeconds,
+            eventClipPostSeconds: recordingPolicy.eventClipPostSeconds
           })
         });
         playbackUrl = `${streamGatewayUrl}/playback/${ctx.tenantId}/${id}/index.m3u8?token=${encodeURIComponent(token)}`;
@@ -2137,6 +2180,148 @@ export async function buildApp() {
       expiresAt: expiresAt.toISOString(),
       session: streamSessionResponse(sessionWithToken),
       ...(playbackUrl ? { playbackUrl } : {})
+    };
+  });
+
+  app.get("/cameras/:id/event-clips", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+    const id = (request.params as { id: string }).id;
+    if (!streamGatewayUrl) {
+      throw app.httpErrors.serviceUnavailable("STREAM_GATEWAY_URL is not configured");
+    }
+    const camera = await prisma.camera.findFirst({ where: { id, tenantId: ctx.tenantId, deletedAt: null } });
+    if (!camera) throw app.httpErrors.notFound();
+    const fromDb = await prisma.event.findMany({
+      where: {
+        tenantId: ctx.tenantId,
+        cameraId: id,
+        type: "camera.event_clip"
+      },
+      orderBy: { timestamp: "desc" },
+      take: 500
+    });
+    type EventClipRecord = Record<string, unknown> & { eventId: string };
+    const dbClips: EventClipRecord[] = [];
+    for (const entry of fromDb) {
+      try {
+        const payload = parseJson<Record<string, unknown>>(entry.payload);
+        const eventId = typeof payload.eventId === "string" ? payload.eventId : entry.id;
+        dbClips.push({
+          ...payload,
+          eventId,
+          persistedEventId: entry.id,
+          persistedAt: toISO(entry.timestamp)
+        });
+      } catch {
+        // ignore malformed legacy payloads
+      }
+    }
+
+    let gatewayClips: Array<Record<string, unknown>> = [];
+    const response = await fetch(
+      `${streamGatewayUrl}/events/clips?tenantId=${encodeURIComponent(ctx.tenantId)}&cameraId=${encodeURIComponent(id)}`
+    );
+    if (response.ok) {
+      const payload = (await response.json()) as { data: Array<Record<string, unknown>>; total: number };
+      gatewayClips = payload.data;
+    }
+    const mergedByEventId = new Map<string, Record<string, unknown>>();
+    for (const clip of dbClips) {
+      mergedByEventId.set(clip.eventId, clip);
+    }
+    for (const clip of gatewayClips) {
+      const key = typeof clip.eventId === "string" ? clip.eventId : `gw-${Math.random().toString(36).slice(2, 8)}`;
+      mergedByEventId.set(key, { ...(mergedByEventId.get(key) ?? {}), ...clip });
+    }
+    const data = Array.from(mergedByEventId.values()).sort((a, b) =>
+      String(a.createdAt ?? a.eventTs ?? "") < String(b.createdAt ?? b.eventTs ?? "") ? 1 : -1
+    );
+    return { data, total: data.length };
+  });
+
+  app.post("/cameras/:id/event-clips", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin", "monitor"]);
+    const id = (request.params as { id: string }).id;
+    if (!streamGatewayUrl) {
+      throw app.httpErrors.serviceUnavailable("STREAM_GATEWAY_URL is not configured");
+    }
+    const camera = await prisma.camera.findFirst({ where: { id, tenantId: ctx.tenantId, deletedAt: null } });
+    if (!camera) throw app.httpErrors.notFound();
+
+    const body = z
+      .object({
+        eventId: z.string().min(1).optional(),
+        source: z.enum(["manual", "detection", "rule"]).optional(),
+        eventTs: z.string().datetime().optional(),
+        preSeconds: z.number().int().min(0).max(120).optional(),
+        postSeconds: z.number().int().min(1).max(300).optional()
+      })
+      .parse(request.body ?? {});
+
+    const response = await fetch(`${streamGatewayUrl}/events/clip`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        tenantId: ctx.tenantId,
+        cameraId: id,
+        ...body
+      })
+    });
+    if (!response.ok) {
+      const errorBody = (await response.json().catch(() => null)) as { code?: string; message?: string; details?: unknown } | null;
+      throw new ApiDomainError({
+        statusCode: response.status === 409 ? 409 : 502,
+        apiCode: errorBody?.code ?? "STREAM_GATEWAY_EVENT_CLIP_ERROR",
+        message: errorBody?.message ?? "stream gateway event clip creation failed",
+        details: errorBody?.details
+      });
+    }
+    const payload = (await response.json()) as {
+      data: {
+        tenantId: string;
+        cameraId: string;
+        eventId: string;
+        source?: string;
+        eventTs?: string;
+        startedAt?: string;
+        endedAt?: string;
+        clipBytes?: number;
+        sourceSegments?: string[];
+        playbackPath: string;
+      };
+    };
+    await prisma.event.create({
+      data: {
+        tenantId: ctx.tenantId,
+        cameraId: id,
+        type: "camera.event_clip",
+        severity: "info",
+        timestamp: payload.data.eventTs ? new Date(payload.data.eventTs) : new Date(),
+        payload: JSON.stringify(payload.data)
+      }
+    });
+    const expiresAt = new Date(Date.now() + 1000 * 60 * 5);
+    const token = signStreamToken(
+      {
+        sub: ctx.userId,
+        tid: ctx.tenantId,
+        cid: id,
+        sid: `evtclip-${Date.now()}`,
+        exp: Math.floor(expiresAt.getTime() / 1000),
+        iat: Math.floor(Date.now() / 1000),
+        v: 1
+      },
+      streamTokenSecret
+    );
+    return {
+      data: {
+        ...payload.data,
+        token,
+        expiresAt: expiresAt.toISOString(),
+        playbackUrl: `${streamGatewayUrl}${payload.data.playbackPath}?token=${encodeURIComponent(token)}`
+      }
     };
   });
 

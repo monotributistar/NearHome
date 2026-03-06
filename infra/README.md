@@ -24,6 +24,9 @@ Stack principal para laboratorio/on-prem:
 
 - Local: copiar `infra/.env.local.example` a `infra/.env.local`
 - On-prem: copiar `infra/.env.onprem.example` a `infra/.env.onprem`
+- On-prem con vault remoto: usar `infra/.env.onprem.remote`
+- En on-prem, el ejemplo activa `ffmpeg-hls-retention` con retención semanal y sweep automático.
+- Vaults/local-LAN-VPN: ver `/Users/monotributistar/SOURCES/NearHome/docs/STORAGE_VAULTS.md`
 
 ## Levantar / Bajar (recomendado)
 
@@ -32,9 +35,14 @@ pnpm pilot:stack:up:local
 pnpm pilot:stack:down:local
 
 pnpm pilot:stack:up:onprem
+pnpm pilot:stack:up:onprem:remote
 pnpm pilot:stack:up:onprem:tunnel
 pnpm pilot:stack:down:onprem
+pnpm pilot:stack:down:onprem:remote
 ```
+
+Para `onprem:remote`, `stream-gateway` monta `${ONPREM_VAULT_REMOTE_PATH}` del host en `/data/storage-remote`.
+Ese path debe existir y ser un mount real (NFS/CIFS/SSHFS/WireGuard+NFS) o un path local de prueba.
 
 ## Observabilidad opcional
 

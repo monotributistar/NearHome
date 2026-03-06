@@ -6,6 +6,7 @@ export type StreamMediaInput = {
   tenantId: string;
   cameraId: string;
   rtspUrl: string;
+  storageDir?: string;
   transport: "auto" | "tcp" | "udp";
   encryption: "optional" | "required" | "disabled";
   tunnel: "none" | "http" | "https" | "ws" | "wss" | "auto";
@@ -89,20 +90,28 @@ async function readSegmentFile(storageDir: string, scope: StreamMediaScope, segm
 }
 
 export function createMockMediaEngine(storageDir: string): MediaEngine {
+  const streamStorageDirs = new Map<string, string>();
+
   const provisionStream = async (input: StreamMediaInput) => {
-    await ensurePlaybackAssets(storageDir, { tenantId: input.tenantId, cameraId: input.cameraId });
+    const scope = { tenantId: input.tenantId, cameraId: input.cameraId };
+    const resolvedStorageDir = input.storageDir ?? storageDir;
+    streamStorageDirs.set(streamKey(scope), resolvedStorageDir);
+    await ensurePlaybackAssets(resolvedStorageDir, scope);
   };
 
-  const deprovisionStream = async (_scope: StreamMediaScope) => {
+  const deprovisionStream = async (scope: StreamMediaScope) => {
     // Mock engine keeps files on disk; stream state is enforced in memory by app layer.
+    streamStorageDirs.delete(streamKey(scope));
   };
+
+  const resolveStorageDir = (scope: StreamMediaScope) => streamStorageDirs.get(streamKey(scope)) ?? storageDir;
 
   return {
     name: "mock-filesystem",
     provisionStream,
     deprovisionStream,
-    readManifest: (scope) => readManifestFile(storageDir, scope),
-    readSegment: (scope, segmentName) => readSegmentFile(storageDir, scope, segmentName),
+    readManifest: (scope) => readManifestFile(resolveStorageDir(scope), scope),
+    readSegment: (scope, segmentName) => readSegmentFile(resolveStorageDir(scope), scope, segmentName),
     close: async () => {}
   };
 }
@@ -191,6 +200,61 @@ function buildFfmpegHlsCommand(input: StreamMediaInput, storageDir: string) {
   ].join(" ");
 }
 
+function buildFfmpegHlsRetentionCommand(input: StreamMediaInput, storageDir: string) {
+  const outDir = cameraDir(storageDir, input.tenantId, input.cameraId);
+  const playlist = path.join(outDir, "index.m3u8");
+  const segmentPattern = path.join(outDir, "segment-%Y%m%dT%H%M%S.ts");
+  const isLavfi = input.rtspUrl.startsWith("lavfi:");
+  const ffmpegTransport = input.transport === "udp" ? "udp" : "tcp";
+  const inputArgs = isLavfi
+    ? ["-f", "lavfi", "-i", `"${input.rtspUrl.slice("lavfi:".length)}"`]
+    : ["-rtsp_transport", ffmpegTransport, "-i", `"${input.rtspUrl}"`];
+  const videoMode = process.env.STREAM_FFMPEG_VIDEO_MODE ?? "copy";
+  const targetBitrateKbps = Math.max(128, Number(process.env.STREAM_FFMPEG_TARGET_BITRATE_KBPS ?? 2500));
+  const maxRateKbps = Math.max(targetBitrateKbps, Number(process.env.STREAM_FFMPEG_MAXRATE_KBPS ?? targetBitrateKbps));
+  const bufferKbps = Math.max(maxRateKbps, Number(process.env.STREAM_FFMPEG_BUFSIZE_KBPS ?? maxRateKbps * 2));
+  const segmentSeconds = Math.max(1, Number(process.env.STREAM_RETENTION_SEGMENT_SECONDS ?? 4));
+  const liveListSize = Math.max(3, Number(process.env.STREAM_RETENTION_LIVE_LIST_SIZE ?? 15));
+  const videoArgs =
+    videoMode === "cbr"
+      ? [
+          "-c:v",
+          "libx264",
+          "-preset",
+          "veryfast",
+          "-tune",
+          "zerolatency",
+          "-pix_fmt",
+          "yuv420p",
+          "-b:v",
+          `${targetBitrateKbps}k`,
+          "-maxrate",
+          `${maxRateKbps}k`,
+          "-bufsize",
+          `${bufferKbps}k`
+        ]
+      : ["-c:v", "copy"];
+  return [
+    "ffmpeg",
+    ...inputArgs,
+    "-an",
+    ...videoArgs,
+    "-f",
+    "hls",
+    "-hls_time",
+    `${segmentSeconds}`,
+    "-hls_list_size",
+    `${liveListSize}`,
+    "-hls_flags",
+    "append_list+omit_endlist+program_date_time",
+    "-strftime",
+    "1",
+    "-hls_segment_filename",
+    `"${segmentPattern}"`,
+    `"${playlist}"`
+  ].join(" ");
+}
+
 function normalizeRtspUrlForEncryption(rtspUrl: string, encryption: StreamMediaInput["encryption"]) {
   if (encryption !== "required") return rtspUrl;
   if (rtspUrl.startsWith("rtsp://")) {
@@ -237,6 +301,9 @@ function resolveTranscoderCommand(input: StreamMediaInput, storageDir: string, p
   if (preset === "ffmpeg-hls") {
     return buildFfmpegHlsCommand(input, storageDir);
   }
+  if (preset === "ffmpeg-hls-retention") {
+    return buildFfmpegHlsRetentionCommand(input, storageDir);
+  }
   if (preset === "mediamtx-rtsp-pull") {
     return buildMediaMtxPullCommand(input, storageDir);
   }
@@ -255,12 +322,13 @@ export function createProcessMediaEngine(storageDir: string, options: ProcessEng
   const stopTimeoutMs = Math.max(100, Number(process.env.STREAM_TRANSCODER_STOP_TIMEOUT_MS ?? 800));
   const dryRun = process.env.STREAM_TRANSCODER_DRY_RUN === "1";
   const preset = process.env.STREAM_TRANSCODER_PRESET ?? options.defaultPreset ?? "custom";
-  const seedAssetsByDefault = preset === "ffmpeg-hls" ? "0" : "1";
+  const seedAssetsByDefault = preset === "ffmpeg-hls" || preset === "ffmpeg-hls-retention" ? "0" : "1";
   const seedAssets = (process.env.STREAM_PROCESS_SEED_ASSETS ?? seedAssetsByDefault) !== "0";
   const maxRestarts = Math.max(0, Number(process.env.STREAM_TRANSCODER_RESTART_MAX ?? 3));
   const restartBackoffMs = Math.max(0, Number(process.env.STREAM_TRANSCODER_RESTART_BACKOFF_MS ?? 200));
   const restartBackoffMaxMs = Math.max(restartBackoffMs, Number(process.env.STREAM_TRANSCODER_RESTART_BACKOFF_MAX_MS ?? 3000));
   const workers = new Map<string, ProcessWorkerEntry>();
+  const streamStorageDirs = new Map<string, string>();
   let closing = false;
 
   const clearRestartTimer = (entry: ProcessWorkerEntry) => {
@@ -326,10 +394,12 @@ export function createProcessMediaEngine(storageDir: string, options: ProcessEng
 
   const provisionStream = async (input: StreamMediaInput) => {
     const scope = { tenantId: input.tenantId, cameraId: input.cameraId };
+    const resolvedStorageDir = input.storageDir ?? storageDir;
+    streamStorageDirs.set(streamKey(scope), resolvedStorageDir);
     if (seedAssets) {
-      await ensurePlaybackAssets(storageDir, scope);
+      await ensurePlaybackAssets(resolvedStorageDir, scope);
     } else {
-      await ensureCameraStorageDir(storageDir, scope);
+      await ensureCameraStorageDir(resolvedStorageDir, scope);
     }
     const key = streamKey(scope);
     const existing = workers.get(key);
@@ -342,7 +412,7 @@ export function createProcessMediaEngine(storageDir: string, options: ProcessEng
       existing.state = "stopped";
     }
 
-    const command = resolveTranscoderCommand(input, storageDir, preset);
+    const command = resolveTranscoderCommand({ ...input, storageDir: resolvedStorageDir }, resolvedStorageDir, preset);
     const entry: ProcessWorkerEntry = {
       tenantId: input.tenantId,
       cameraId: input.cameraId,
@@ -367,6 +437,7 @@ export function createProcessMediaEngine(storageDir: string, options: ProcessEng
   const deprovisionStream = async (scope: StreamMediaScope) => {
     const key = streamKey(scope);
     const worker = workers.get(key);
+    streamStorageDirs.delete(key);
     if (!worker) return;
     worker.desiredRunning = false;
     clearRestartTimer(worker);
@@ -426,8 +497,9 @@ export function createProcessMediaEngine(storageDir: string, options: ProcessEng
     name: options.engineName ?? "process-shell",
     provisionStream,
     deprovisionStream,
-    readManifest: (scope) => readManifestFile(storageDir, scope),
-    readSegment: (scope, segmentName) => readSegmentFile(storageDir, scope, segmentName),
+    readManifest: (scope) => readManifestFile(streamStorageDirs.get(streamKey(scope)) ?? storageDir, scope),
+    readSegment: (scope, segmentName) =>
+      readSegmentFile(streamStorageDirs.get(streamKey(scope)) ?? storageDir, scope, segmentName),
     close,
     diagnostics
   };

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createHmac } from "node:crypto";
@@ -75,6 +75,30 @@ afterEach(async () => {
   delete process.env.STREAM_MEDIAMTX_WRITE_TIMEOUT;
   delete process.env.STREAM_PROCESS_SEED_ASSETS;
   delete process.env.STREAM_MAX_ACTIVE_SESSIONS_PER_TENANT;
+  delete process.env.STREAM_RETENTION_ENABLED;
+  delete process.env.STREAM_RETENTION_DAYS;
+  delete process.env.STREAM_RETENTION_SWEEP_MS;
+  delete process.env.STREAM_RETENTION_MIN_FILE_AGE_SECONDS;
+  delete process.env.STREAM_RETENTION_MAX_DISK_USAGE_PCT;
+  delete process.env.STREAM_RETENTION_TARGET_DISK_USAGE_PCT;
+  delete process.env.STREAM_RETENTION_FILE_EXTENSIONS;
+  delete process.env.STREAM_RETENTION_SEGMENT_SECONDS;
+  delete process.env.STREAM_RETENTION_LIVE_LIST_SIZE;
+  delete process.env.STREAM_FFMPEG_VIDEO_MODE;
+  delete process.env.STREAM_FFMPEG_TARGET_BITRATE_KBPS;
+  delete process.env.STREAM_FFMPEG_MAXRATE_KBPS;
+  delete process.env.STREAM_FFMPEG_BUFSIZE_KBPS;
+  delete process.env.STREAM_STORAGE_DEFAULT_VAULT_ID;
+  delete process.env.STREAM_STORAGE_VAULTS_JSON;
+  delete process.env.STREAM_STORAGE_PLAN_VAULT_MAP_JSON;
+  delete process.env.STREAM_STORAGE_FAILOVER_ENABLED;
+  delete process.env.STREAM_STORAGE_HEALTHCHECK_ENABLED;
+  delete process.env.STREAM_STORAGE_HEALTHCHECK_MS;
+  delete process.env.STREAM_STORAGE_HEALTHCHECK_WRITE_PROBE;
+  delete process.env.STREAM_STORAGE_TENANT_QUOTAS_JSON;
+  delete process.env.STREAM_STORAGE_DEFAULT_TENANT_QUOTA_BYTES;
+  delete process.env.STREAM_STORAGE_TENANT_QUOTA_TARGET_PCT;
+  delete process.env.STREAM_OBSERVE_SCRATCH_DIR;
   while (createdDirs.length) {
     const dir = createdDirs.pop();
     if (dir) {
@@ -471,6 +495,413 @@ describe("stream-gateway", () => {
     expect(body.data.some((session) => session.sid === sid && session.status === "expired")).toBe(true);
 
     await app.close();
+  });
+
+  it("applies weekly retention sweep and deletes stale media files", async () => {
+    process.env.STREAM_RETENTION_ENABLED = "1";
+    process.env.STREAM_RETENTION_DAYS = "7";
+    process.env.STREAM_RETENTION_SWEEP_MS = "60000";
+    process.env.STREAM_RETENTION_MIN_FILE_AGE_SECONDS = "1";
+    const { app, dir } = await setupApp();
+
+    const tenantId = "tenant-retention";
+    const cameraId = "camera-retention";
+    const cameraDir = path.join(dir, tenantId, cameraId);
+    await mkdir(cameraDir, { recursive: true });
+    const oldSegmentPath = path.join(cameraDir, "segment-old.ts");
+    const freshSegmentPath = path.join(cameraDir, "segment-new.ts");
+    await writeFile(oldSegmentPath, Buffer.alloc(1024, 1));
+    await writeFile(freshSegmentPath, Buffer.alloc(1024, 2));
+    const oldDate = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+    await utimes(oldSegmentPath, oldDate, oldDate);
+
+    const sweep = await app.inject({
+      method: "POST",
+      url: "/retention/sweep"
+    });
+    expect(sweep.statusCode).toBe(200);
+    const sweepBody = sweep.json<{ data: { deletedFiles: number; deletedByAgeFiles: number } }>();
+    expect(sweepBody.data.deletedFiles).toBeGreaterThanOrEqual(1);
+    expect(sweepBody.data.deletedByAgeFiles).toBeGreaterThanOrEqual(1);
+
+    await expect(access(oldSegmentPath)).rejects.toBeTruthy();
+    await expect(access(freshSegmentPath)).resolves.toBeUndefined();
+
+    const health = await app.inject({ method: "GET", url: "/health" });
+    expect(health.statusCode).toBe(200);
+    expect(health.json()).toMatchObject({
+      retention: {
+        enabled: true,
+        deletedFilesTotal: expect.any(Number),
+        lastSummary: expect.any(Object)
+      }
+    });
+
+    const metrics = await app.inject({ method: "GET", url: "/metrics" });
+    expect(metrics.statusCode).toBe(200);
+    expect(metrics.body).toContain("nearhome_storage_retention_enabled 1");
+    expect(metrics.body).toContain("nearhome_storage_retention_deleted_files_total");
+
+    await app.close();
+  });
+
+  it("routes stream storage to vault mapped by planCode", async () => {
+    const vaultRoot = await mkdtemp(path.join(tmpdir(), "nearhome-vault-map-"));
+    createdDirs.push(vaultRoot);
+    const vaultA = path.join(vaultRoot, "vault-a");
+    const vaultB = path.join(vaultRoot, "vault-b");
+    process.env.STREAM_STORAGE_DEFAULT_VAULT_ID = "vault-a";
+    process.env.STREAM_STORAGE_VAULTS_JSON = JSON.stringify([
+      { id: "vault-a", basePath: vaultA },
+      { id: "vault-b", basePath: vaultB }
+    ]);
+    process.env.STREAM_STORAGE_PLAN_VAULT_MAP_JSON = JSON.stringify({
+      enterprise: "vault-b"
+    });
+    const { app } = await setupApp();
+    const tenantId = "tenant-vaults";
+    const cameraId = "camera-vaults";
+
+    const provision = await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: {
+        tenantId,
+        cameraId,
+        rtspUrl: "rtsp://demo/vaults",
+        planCode: "enterprise",
+        retentionDays: 14
+      }
+    });
+    expect(provision.statusCode).toBe(200);
+    expect(provision.json()).toMatchObject({
+      data: {
+        storage: {
+          vaultId: "vault-b",
+          retentionDays: 14
+        }
+      }
+    });
+
+    const cameraHealth = await app.inject({
+      method: "GET",
+      url: `/health/${tenantId}/${cameraId}`
+    });
+    expect(cameraHealth.statusCode).toBe(200);
+    expect(cameraHealth.json()).toMatchObject({
+      ok: true,
+      data: {
+        storage: {
+          vaultId: "vault-b",
+          planCode: "enterprise",
+          retentionDays: 14
+        }
+      }
+    });
+
+    const manifestPath = path.join(vaultB, tenantId, cameraId, "index.m3u8");
+    await expect(access(manifestPath)).resolves.toBeUndefined();
+    await expect(access(path.join(vaultA, tenantId, cameraId, "index.m3u8"))).rejects.toBeTruthy();
+
+    await app.close();
+  });
+
+  it("fails over to healthy vault when mapped vault is unavailable", async () => {
+    const vaultRoot = await mkdtemp(path.join(tmpdir(), "nearhome-vault-failover-"));
+    createdDirs.push(vaultRoot);
+    const unhealthyPath = path.join(vaultRoot, "vault-unhealthy");
+    const healthyPath = path.join(vaultRoot, "vault-healthy");
+    await writeFile(unhealthyPath, "not-a-directory", "utf8");
+    process.env.STREAM_STORAGE_DEFAULT_VAULT_ID = "vault-unhealthy";
+    process.env.STREAM_STORAGE_VAULTS_JSON = JSON.stringify([
+      { id: "vault-unhealthy", basePath: unhealthyPath },
+      { id: "vault-healthy", basePath: healthyPath }
+    ]);
+    process.env.STREAM_STORAGE_FAILOVER_ENABLED = "1";
+    process.env.STREAM_STORAGE_HEALTHCHECK_ENABLED = "1";
+
+    const { app } = await setupApp();
+    const provision = await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: {
+        tenantId: "tenant-failover",
+        cameraId: "camera-failover",
+        rtspUrl: "rtsp://demo/failover"
+      }
+    });
+
+    expect(provision.statusCode).toBe(200);
+    expect(provision.json()).toMatchObject({
+      data: {
+        storage: { vaultId: "vault-healthy" },
+        failover: { fromVaultId: "vault-unhealthy", toVaultId: "vault-healthy" }
+      }
+    });
+
+    await app.close();
+  });
+
+  it("enforces tenant storage quota on provision", async () => {
+    const vaultRoot = await mkdtemp(path.join(tmpdir(), "nearhome-vault-quota-"));
+    createdDirs.push(vaultRoot);
+    process.env.STREAM_STORAGE_DEFAULT_VAULT_ID = "vault-main";
+    process.env.STREAM_STORAGE_VAULTS_JSON = JSON.stringify([{ id: "vault-main", basePath: vaultRoot }]);
+    process.env.STREAM_STORAGE_TENANT_QUOTAS_JSON = JSON.stringify({ "tenant-quota": 1024 });
+
+    const tenantDir = path.join(vaultRoot, "tenant-quota");
+    await mkdir(tenantDir, { recursive: true });
+    await writeFile(path.join(tenantDir, "overflow.ts"), Buffer.alloc(2048, 1));
+    const { app } = await setupApp();
+
+    const provision = await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: {
+        tenantId: "tenant-quota",
+        cameraId: "camera-quota",
+        rtspUrl: "rtsp://demo/quota"
+      }
+    });
+    expect(provision.statusCode).toBe(409);
+    expect(provision.json()).toMatchObject({
+      code: "STORAGE_TENANT_QUOTA_EXCEEDED"
+    });
+
+    await app.close();
+  });
+
+  it("manages vaults through storage API", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "nearhome-vault-api-"));
+    createdDirs.push(root);
+    const newVaultPath = path.join(root, "vault-new");
+    process.env.STREAM_STORAGE_DEFAULT_VAULT_ID = "vault-main";
+    process.env.STREAM_STORAGE_VAULTS_JSON = JSON.stringify([{ id: "vault-main", basePath: root }]);
+    const { app } = await setupApp();
+
+    const createVault = await app.inject({
+      method: "POST",
+      url: "/storage/vaults",
+      payload: {
+        id: "vault-new",
+        basePath: newVaultPath,
+        planCodes: ["enterprise"],
+        isDefault: false
+      }
+    });
+    expect(createVault.statusCode).toBe(200);
+    expect(createVault.json()).toMatchObject({
+      data: {
+        id: "vault-new",
+        basePath: newVaultPath
+      }
+    });
+
+    const map = await app.inject({ method: "GET", url: "/storage/plan-vault-map" });
+    expect(map.statusCode).toBe(200);
+    expect(map.json()).toMatchObject({
+      data: {
+        map: { enterprise: "vault-new" }
+      }
+    });
+
+    const list = await app.inject({ method: "GET", url: "/storage/vaults" });
+    expect(list.statusCode).toBe(200);
+    expect(list.json()).toMatchObject({
+      total: 2
+    });
+
+    await app.close();
+  });
+
+  it("creates and serves event clip with pre/post window", async () => {
+    const { app } = await setupApp();
+    const tenantId = "tenant-event";
+    const cameraId = "camera-event";
+    await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: {
+        tenantId,
+        cameraId,
+        rtspUrl: "rtsp://demo/event",
+        recordingMode: "hybrid",
+        eventClipPreSeconds: 5,
+        eventClipPostSeconds: 7
+      }
+    });
+
+    const createClip = await app.inject({
+      method: "POST",
+      url: "/events/clip",
+      payload: {
+        tenantId,
+        cameraId,
+        eventId: "evt-1",
+        source: "manual"
+      }
+    });
+    expect(createClip.statusCode).toBe(200);
+    expect(createClip.json()).toMatchObject({
+      data: {
+        tenantId,
+        cameraId,
+        eventId: "evt-1",
+        playbackPath: `/playback/events/${tenantId}/${cameraId}/evt-1/index.m3u8`
+      }
+    });
+
+    const token = createPlaybackToken({ tenantId, cameraId, expiresAt: new Date(Date.now() + 60_000) });
+    const eventManifest = await app.inject({
+      method: "GET",
+      url: `/playback/events/${tenantId}/${cameraId}/evt-1/index.m3u8?token=${encodeURIComponent(token)}`
+    });
+    expect(eventManifest.statusCode).toBe(200);
+    expect(eventManifest.body).toContain(`/playback/events/${tenantId}/${cameraId}/evt-1/clip.ts?token=`);
+
+    const eventClip = await app.inject({
+      method: "GET",
+      url: `/playback/events/${tenantId}/${cameraId}/evt-1/clip.ts?token=${encodeURIComponent(token)}`
+    });
+    expect(eventClip.statusCode).toBe(200);
+    expect(eventClip.body.length).toBeGreaterThan(0);
+
+    await app.close();
+  });
+
+  it("supports observe_only without writing video assets to vault", async () => {
+    const vaultRoot = await mkdtemp(path.join(tmpdir(), "nearhome-observe-vault-"));
+    const observeRoot = await mkdtemp(path.join(tmpdir(), "nearhome-observe-scratch-"));
+    createdDirs.push(vaultRoot, observeRoot);
+    process.env.STREAM_STORAGE_DEFAULT_VAULT_ID = "vault-main";
+    process.env.STREAM_STORAGE_VAULTS_JSON = JSON.stringify([{ id: "vault-main", basePath: vaultRoot }]);
+    process.env.STREAM_OBSERVE_SCRATCH_DIR = observeRoot;
+    const { app } = await setupApp();
+    const tenantId = "tenant-observe";
+    const cameraId = "camera-observe";
+
+    const provision = await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: {
+        tenantId,
+        cameraId,
+        rtspUrl: "rtsp://demo/observe",
+        recordingMode: "observe_only"
+      }
+    });
+    expect(provision.statusCode).toBe(200);
+
+    const token = createPlaybackToken({ tenantId, cameraId, expiresAt: new Date(Date.now() + 60_000) });
+    const manifest = await app.inject({
+      method: "GET",
+      url: `/playback/${tenantId}/${cameraId}/index.m3u8?token=${encodeURIComponent(token)}`
+    });
+    expect(manifest.statusCode).toBe(200);
+
+    const segment = await app.inject({
+      method: "GET",
+      url: `/playback/${tenantId}/${cameraId}/segment0.ts?token=${encodeURIComponent(token)}`
+    });
+    expect(segment.statusCode).toBe(200);
+
+    await expect(access(path.join(observeRoot, tenantId, cameraId, "segment0.ts"))).resolves.toBeUndefined();
+    await expect(access(path.join(vaultRoot, tenantId, cameraId, "segment0.ts"))).rejects.toBeTruthy();
+
+    const clip = await app.inject({
+      method: "POST",
+      url: "/events/clip",
+      payload: { tenantId, cameraId, eventId: "evt-observe" }
+    });
+    expect(clip.statusCode).toBe(409);
+    expect(clip.json()).toMatchObject({ code: "EVENT_CLIP_DISABLED_IN_OBSERVE_ONLY" });
+
+    await app.close();
+  });
+
+  it("lists event clips by tenant/camera", async () => {
+    const { app } = await setupApp();
+    await app.inject({
+      method: "POST",
+      url: "/provision",
+      payload: {
+        tenantId: "tenant-event-list",
+        cameraId: "camera-event-list",
+        rtspUrl: "rtsp://demo/event-list"
+      }
+    });
+    await app.inject({
+      method: "POST",
+      url: "/events/clip",
+      payload: {
+        tenantId: "tenant-event-list",
+        cameraId: "camera-event-list",
+        eventId: "evt-list-1"
+      }
+    });
+
+    const list = await app.inject({
+      method: "GET",
+      url: "/events/clips?tenantId=tenant-event-list&cameraId=camera-event-list"
+    });
+    expect(list.statusCode).toBe(200);
+    expect(list.json()).toMatchObject({
+      total: 1,
+      data: [
+        {
+          eventId: "evt-list-1",
+          playbackPath: "/playback/events/tenant-event-list/camera-event-list/evt-list-1/index.m3u8"
+        }
+      ]
+    });
+
+    await app.close();
+  });
+
+  it("re-hydrates event clip metadata from disk after app restart", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "nearhome-event-rehydrate-"));
+    createdDirs.push(dir);
+    process.env.STREAM_STORAGE_DIR = dir;
+    process.env.STREAM_TOKEN_SECRET = STREAM_TOKEN_SECRET;
+    process.env.STREAM_SESSION_IDLE_TTL_MS = "1000";
+    process.env.STREAM_SESSION_SWEEP_MS = "60000";
+
+    const app1 = await buildApp();
+    const tenantId = "tenant-event-rehydrate";
+    const cameraId = "camera-event-rehydrate";
+    await app1.inject({
+      method: "POST",
+      url: "/provision",
+      payload: { tenantId, cameraId, rtspUrl: "rtsp://demo/event-rehydrate" }
+    });
+    await app1.inject({
+      method: "POST",
+      url: "/events/clip",
+      payload: { tenantId, cameraId, eventId: "evt-rehydrate" }
+    });
+    await app1.close();
+
+    const app2 = await buildApp();
+    const clip = await app2.inject({
+      method: "GET",
+      url: `/events/clips/${tenantId}/${cameraId}/evt-rehydrate`
+    });
+    expect(clip.statusCode).toBe(200);
+    expect(clip.json()).toMatchObject({
+      data: {
+        eventId: "evt-rehydrate"
+      }
+    });
+
+    const token = createPlaybackToken({ tenantId, cameraId, expiresAt: new Date(Date.now() + 60_000) });
+    const playback = await app2.inject({
+      method: "GET",
+      url: `/playback/events/${tenantId}/${cameraId}/evt-rehydrate/clip.ts?token=${encodeURIComponent(token)}`
+    });
+    expect(playback.statusCode).toBe(200);
+    expect(playback.body.length).toBeGreaterThan(0);
+
+    await app2.close();
   });
 
   it("closes active sessions when camera is deprovisioned and reports in metrics", async () => {

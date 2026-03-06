@@ -1,0 +1,8 @@
+name: nearhome-stack-onprem-remote-vault
+
+services:
+  stream-gateway:
+    volumes:
+      - type: bind
+        source: ${ONPREM_VAULT_REMOTE_PATH}
+        target: /data/storage-remote
