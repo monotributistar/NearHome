@@ -1,5 +1,7 @@
 # Contratos por componente e interfaz
 
+Fecha de actualización: `2026-03-06`
+
 ## 1) Contrato de dominio compartido (`@app/shared`)
 
 Archivo fuente: `packages/shared/src/index.ts`
@@ -118,6 +120,10 @@ Versionado:
   - crea sesión de stream con tracking (`requested -> issued`)
   - token firmado HMAC SHA-256 con claims: `sub`, `tid`, `cid`, `sid`, `exp`, `iat`, `v`
   - aplica límite por plan `limits.maxConcurrentStreams` (error `409 ENTITLEMENT_LIMIT_EXCEEDED`)
+  - propaga a data-plane políticas de recording derivadas de perfil de cámara:
+    - `recordingMode` (`continuous|event_only|hybrid|observe_only`)
+    - `eventClipPreSeconds`
+    - `eventClipPostSeconds`
 - `GET /stream-sessions` (tenant-scoped)
   - filtros: `cameraId`, `status`, `_start`, `_end`, `_sort`, `_order`
   - `client_user` solo ve sesiones propias
@@ -133,11 +139,28 @@ Versionado:
   - out: `{ data: Event[], total }`
   - aplica ventana de retención por plan `limits.retentionDays`
   - si `from` queda fuera de ventana: `422 ENTITLEMENT_RETENTION_EXCEEDED`
+- `GET /cameras/:id/event-clips`
+  - out: `{ data: EventClip[], total }`
+  - mergea catálogo persistido en API + catálogo de data-plane.
+- `POST /cameras/:id/event-clips`
+  - in: `{ eventId?, source?, eventTs?, preSeconds?, postSeconds? }`
+  - out: `{ data: EventClip & { playbackPath, playbackUrl } }`
+  - persiste evento `camera.event_clip` en tabla `Event`.
 
 - `GET /readiness`
   - out ok: `{ ok: true, db: "up", timestamp, requestId }`
   - out fail: `{ ok: false, db: "down", reason, timestamp, requestId }`
   - status: `200` en estado listo, `503` cuando DB no disponible
+
+### Observabilidad por servicio (estado actual)
+
+- `apps/stream-gateway`: `GET /health`, `GET /health/:tenantId/:cameraId`, `GET /metrics` (Prometheus).
+- `apps/api`: `GET /health`, `GET /readiness` (sin `/metrics` Prometheus en esta etapa).
+- `apps/event-gateway`: `GET /health` (sin `/metrics` Prometheus en esta etapa).
+- `apps/inference-bridge`: `GET /health` (sin `/metrics` Prometheus en esta etapa).
+- `apps/inference-node-yolo`: `GET /health` (sin `/metrics` Prometheus en esta etapa).
+- `apps/inference-node-mediapipe`: `GET /health` (sin `/metrics` Prometheus en esta etapa).
+- `apps/detection-worker/dispatcher`: `GET /health` (sin `/metrics` Prometheus en esta etapa).
 
 ## 3) Contrato de autorización (RBAC)
 

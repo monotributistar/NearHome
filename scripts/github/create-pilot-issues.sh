@@ -54,7 +54,7 @@ ensure_label "phase:qa" "0E8A16" "Smoke/acceptance tests"
 ensure_label "phase:runbook" "FBCA04" "Operational runbooks"
 
 ensure_milestone "Fase A - Hardening de plataforma" "CI/CD, TLS, rate limiting y OpenAPI"
-ensure_milestone "Fase B - Ingesta y deteccion operativa" "Shinobi/YOLO, video real y mascaras/zonas"
+ensure_milestone "Fase B - Ingesta y deteccion operativa" "RTSP directo + nodos de deteccion, video real y mascaras/zonas"
 ensure_milestone "Fase C - Incidencias y mensajeria" "Workflow incidentes e integraciones Telegram"
 ensure_milestone "Fase D - Servicios cliente y dashboard" "Panico, GPS, mapa y metricas"
 ensure_milestone "Fase E - Reconocimiento facial" "Registro y matching de rostros"

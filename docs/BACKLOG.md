@@ -6,7 +6,7 @@
 - Prioridad: `P0`, `P1`, `P2`.
 - Cada item tiene criterio de aceptación verificable.
 
-## Sincronización GitHub (corte `2026-03-04`)
+## Sincronización GitHub (corte `2026-03-06`)
 
 Repositorio: `monotributistar/NearHome`
 
@@ -22,7 +22,7 @@ Priorización recomendada (fuente: issues abiertos actuales):
    - `#19` Rate limiting por tenant
    - `#15` OpenAPI/Swagger
 2. Ingesta/detección operativa:
-   - `#1` Shinobi-YOLO frames
+   - `#1` ingesta RTSP/RTSPS directa + frames para detección
    - `#2` test YOLO con video real
    - `#3` API máscaras por cámara
    - `#10` editor visual de zonas
@@ -42,6 +42,8 @@ Priorización recomendada (fuente: issues abiertos actuales):
 Notas de alineación:
 - Este backlog conserva trazabilidad histórica interna (`NH-*`) y debe convivir con los issues de GitHub.
 - Para ejecución de sprint, priorizar la lista GitHub de esta sección por encima de items legacy ya completados.
+- Decisión arquitectónica vigente: Shinobi/NVR externo queda fuera de alcance; la detección se resuelve con capa propia (`inference-bridge` + nodos).
+- Decisión de identidad vigente: autenticación/autorización con usuarios propios NearHome (RBAC multi-tenant), sin external auth en esta etapa.
 
 ## P0 - Seguridad, calidad y DX (inmediato)
 

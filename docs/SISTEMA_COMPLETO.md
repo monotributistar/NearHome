@@ -1,6 +1,6 @@
 # NearHome - Diagrama Completo del Sistema
 
-Fecha de corte: `2026-03-04`
+Fecha de corte: `2026-03-06`
 
 ```mermaid
 flowchart LR
@@ -12,7 +12,6 @@ flowchart LR
 
   subgraph Edge["Edge / Cámaras / Sensores"]
     Cam["Cámaras RTSP/RTSPS"]
-    Shinobi["Shinobi / NVR (integración)"]
     GPS["Dispositivos GPS (futuro)"]
     Panic["Botón pánico (futuro)"]
   end
@@ -20,6 +19,7 @@ flowchart LR
   subgraph Control["Control Plane"]
     API["API Fastify (apps/api)"]
     DB[(Prisma DB - SQLite hoy)]
+    Auth["Auth/RBAC con usuarios propios NearHome"]
   end
 
   subgraph Data["Data Plane"]
@@ -60,6 +60,7 @@ flowchart LR
   Portal -->|WS/SSE tenant-scoped| EG
 
   API --> DB
+  API --> Auth
   API -->|provision/deprovision + health sync| SG
   API -->|publish eventos internos| EG
   API -->|dispatch workflows detección| Dispatcher
@@ -68,7 +69,7 @@ flowchart LR
   SG --> Storage
   SG --> Engine
   Engine -->|ingesta RTSP/RTSPS| Cam
-  Shinobi -->|frames/eventos (roadmap)| Bridge
+  Engine -->|frames/eventos técnicos| Bridge
 
   SG -->|playback HLS tokenizado| Admin
   SG -->|playback HLS tokenizado| Portal
@@ -104,4 +105,5 @@ flowchart LR
 - `apps/stream-gateway` mantiene contrato de playback tokenizado y desacopla el motor de media.
 - `apps/event-gateway` desacopla realtime (WS/SSE) con replay por tenant.
 - Detection plane ejecuta jobs vía Temporal + bridge de inferencia con nodos on-prem.
+- La autenticación/autorización actual usa usuarios propios NearHome (RBAC multi-tenant).
 - Integraciones de mensajería, GPS y pánico están modeladas como extensión del roadmap GitHub.

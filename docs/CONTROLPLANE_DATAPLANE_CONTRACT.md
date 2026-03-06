@@ -1,5 +1,7 @@
 # Contrato Control Plane <-> Data Plane (NH-017)
 
+Fecha de actualización: `2026-03-06`
+
 ## Objetivo
 
 Definir contrato mínimo y versionable entre:
@@ -24,8 +26,16 @@ Definir contrato mínimo y versionable entre:
   "cameraId": "string",
   "rtspUrl": "string",
   "transport": "auto|tcp|udp",
+  "encryption": "optional|required|disabled",
+  "tunnel": "none|http|https|ws|wss|auto",
   "codecHint": "h264|h265|mpeg4|unknown",
-  "targetProfiles": ["main", "sub"]
+  "targetProfiles": ["main", "sub"],
+  "storageVaultId": "optional-string",
+  "planCode": "optional-string",
+  "retentionDays": 7,
+  "recordingMode": "continuous|event_only|hybrid|observe_only",
+  "eventClipPreSeconds": 5,
+  "eventClipPostSeconds": 10
 }
 ```
 
@@ -39,8 +49,21 @@ Definir contrato mínimo y versionable entre:
     "rtspUrl": "string",
     "source": {
       "transport": "auto|tcp|udp",
+      "encryption": "optional|required|disabled",
+      "tunnel": "none|http|https|ws|wss|auto",
       "codecHint": "h264|h265|mpeg4|unknown",
       "targetProfiles": ["main"]
+    },
+    "storage": {
+      "vaultId": "vault-main",
+      "vaultBasePath": "/data/storage",
+      "cameraStorageDir": "/data/storage/tenant/camera",
+      "observeScratchDir": null,
+      "planCode": "pro",
+      "retentionDays": 7,
+      "recordingMode": "continuous",
+      "eventClipPreSeconds": 5,
+      "eventClipPostSeconds": 10
     },
     "version": 1,
     "reprovisioned": true,
@@ -197,6 +220,31 @@ Extensión NH-DP-08A:
   - ejecuta sweep inmediato de TTL/idle
   - out: `{ data: { expired: number, ended: number } }`
 
+### 6) Event clips (Control Plane proxy)
+
+- `POST /events/clip`
+  - in: `{ tenantId, cameraId, eventId?, source?, eventTs?, preSeconds?, postSeconds? }`
+  - out: `{ data: { eventId, tenantId, cameraId, clipPath, clipBytes, playbackPath, ... } }`
+  - error específico: `409 EVENT_CLIP_DISABLED_IN_OBSERVE_ONLY` cuando el stream está en `recordingMode=observe_only`.
+- `GET /events/clips?tenantId=&cameraId=`
+  - out: `{ data: EventClip[], total }`
+- `GET /events/clips/:tenantId/:cameraId/:eventId`
+  - out: `{ data: EventClip }`
+- Playback de clips:
+  - `GET /playback/events/:tenantId/:cameraId/:eventId/index.m3u8?token=...`
+  - `GET /playback/events/:tenantId/:cameraId/:eventId/clip.ts?token=...`
+
+### 7) Storage/vault operations (Data Plane)
+
+- `GET /storage/vaults`
+- `POST /storage/vaults/:vaultId/check`
+- `POST /storage/vaults`
+- `PATCH /storage/vaults/:vaultId`
+- `DELETE /storage/vaults/:vaultId`
+- `GET /storage/plan-vault-map`
+- `PUT /storage/plan-vault-map`
+- `POST /retention/sweep`
+
 ## Sincronización Data Plane -> Control Plane
 
 Control Plane expone:
@@ -217,6 +265,13 @@ Data Plane expone:
 - `GET /health` (incluye `mediaEngine`)
 - `GET /metrics` (formato Prometheus)
 
+Cobertura actual por servicio:
+
+- `stream-gateway`: `/health` + `/metrics` (Prometheus completo).
+- `api`: `/health` + `/readiness` (sin `/metrics` Prometheus en esta etapa).
+- `event-gateway`: `/health` (sin `/metrics` Prometheus en esta etapa).
+- `inference-bridge` + `inference-node-*` + `detection-dispatcher`: `/health` (sin `/metrics` Prometheus en esta etapa).
+
 Métricas actuales:
 
 - `nearhome_streams_total{status=...}`
@@ -231,6 +286,16 @@ Métricas actuales:
 - `nearhome_playback_latency_ms_count{tenant_id,camera_id,asset}`
 - `nearhome_media_workers_total{state}`
 - `nearhome_media_worker_restarts_total`
+- `nearhome_storage_retention_enabled`
+- `nearhome_storage_retention_sweeps_total`
+- `nearhome_storage_retention_deleted_files_total`
+- `nearhome_storage_retention_deleted_bytes_total`
+- `nearhome_storage_tenant_quota_exceeded_total`
+- `nearhome_storage_failover_provision_total`
+- `nearhome_storage_event_clips_created_total`
+- `nearhome_storage_event_clips_bytes_total`
+- `nearhome_storage_vault_health{vault_id}`
+- `nearhome_storage_vault_usage_pct{vault_id}`
 
 ## Variables de entorno relevantes
 
@@ -261,6 +326,26 @@ Data Plane:
 - `STREAM_TRANSCODER_RESTART_MAX`
 - `STREAM_TRANSCODER_RESTART_BACKOFF_MS`
 - `STREAM_TRANSCODER_RESTART_BACKOFF_MAX_MS`
+- `STREAM_STORAGE_DEFAULT_VAULT_ID`
+- `STREAM_STORAGE_VAULTS_JSON`
+- `STREAM_STORAGE_PLAN_VAULT_MAP_JSON`
+- `STREAM_STORAGE_FAILOVER_ENABLED`
+- `STREAM_STORAGE_HEALTHCHECK_ENABLED`
+- `STREAM_STORAGE_HEALTHCHECK_MS`
+- `STREAM_STORAGE_HEALTHCHECK_WRITE_PROBE`
+- `STREAM_STORAGE_TENANT_QUOTAS_JSON`
+- `STREAM_STORAGE_DEFAULT_TENANT_QUOTA_BYTES`
+- `STREAM_STORAGE_TENANT_QUOTA_TARGET_PCT`
+- `STREAM_EVENT_CLIP_STRATEGY`
+- `STREAM_EVENT_CLIP_FFMPEG_BIN`
+- `STREAM_OBSERVE_SCRATCH_DIR`
+- `STREAM_RETENTION_ENABLED`
+- `STREAM_RETENTION_DAYS`
+- `STREAM_RETENTION_SWEEP_MS`
+- `STREAM_RETENTION_MIN_FILE_AGE_SECONDS`
+- `STREAM_RETENTION_MAX_DISK_USAGE_PCT`
+- `STREAM_RETENTION_TARGET_DISK_USAGE_PCT`
+- `STREAM_RETENTION_FILE_EXTENSIONS`
 
 ## Versionado sugerido
 

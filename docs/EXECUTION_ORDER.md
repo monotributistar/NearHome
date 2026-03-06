@@ -1,6 +1,6 @@
 # Orden de Implementación Recomendado
 
-Fecha de actualización: `2026-03-04`
+Fecha de actualización: `2026-03-06`
 
 ## Fase A - Hardening de plataforma
 
@@ -11,7 +11,7 @@ Fecha de actualización: `2026-03-04`
 
 ## Fase B - Ingesta y detección operativa
 
-5. `#1` Shinobi-YOLO envío de frames
+5. `#1` Ingesta RTSP/RTSPS directa + extracción de frames
 6. `#2` Integración YOLO con video real
 7. `#3` API de máscaras por cámara
 8. `#10` Editor visual de zonas

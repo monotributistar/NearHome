@@ -1,6 +1,6 @@
 # NearHome - Plan General Sincronizado
 
-Fecha de actualización: `2026-03-04`
+Fecha de actualización: `2026-03-06`
 
 ## 1) Estado de referencia
 
@@ -13,7 +13,7 @@ Fecha de actualización: `2026-03-04`
 Cerrar la brecha entre el POC técnico actual y el roadmap funcional publicado en GitHub, priorizando:
 
 1. hardening productivo (seguridad, CI/CD, docs API),
-2. integración real de ingest/detección,
+2. integración real de ingest/detección sin dependencias de NVR externos (Shinobi descartado),
 3. features de producto (incidencias, mensajería, dashboard, servicios cliente).
 
 ## 3) Principios de priorización
@@ -21,6 +21,7 @@ Cerrar la brecha entre el POC técnico actual y el roadmap funcional publicado e
 - Seguridad y despliegue antes de expansión funcional.
 - Cerrar dependencias técnicas antes de features UI.
 - Mantener contratos estables (`ControlPlane/DataPlane`) al introducir nuevos motores.
+- Mantener autenticación/autorización con usuarios propios de NearHome (sin external auth en esta etapa).
 - Cada fase con criterios de salida testeables.
 
 ## 4) Plan de trabajo por fases (sincronizado con GitHub issues)
@@ -45,13 +46,13 @@ Criterio de salida:
 ### Fase B - Ingesta y detección operativa
 
 Issues:
-- `#1` plugin Shinobi-YOLO para envío de frames
+- `#1` ingesta directa RTSP/RTSPS + extracción de frames para detección
 - `#2` test integración YOLO con video real
 - `#3` endpoint gestión de máscaras por cámara
 - `#10` editor visual de zonas
 
 Entregables:
-- flujo end-to-end de frame ingest -> inferencia -> evento,
+- flujo end-to-end de ingest RTSP -> inferencia en nodos -> evento/incidente,
 - pruebas de video real automatizadas,
 - API de máscaras consistente con UI de zonas.
 
@@ -103,7 +104,7 @@ Criterio de salida:
 ## 5) Dependencias críticas
 
 - `#16` y `#18` bloquean cualquier salida productiva seria.
-- `#1/#2` son prerequisito técnico para estabilizar `#9/#10`.
+- `#1/#2` son prerequisito técnico para estabilizar `#9/#10` en arquitectura sin Shinobi.
 - `#3` desbloquea diseño final de `#10`.
 - `#5` es base para `#6/#7/#8`.
 

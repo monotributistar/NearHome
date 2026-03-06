@@ -1,6 +1,6 @@
 # Pilot Runbook (Local + On-Prem)
 
-Fecha: `2026-03-05`
+Fecha: `2026-03-06`
 
 ## 1) Objetivo
 
@@ -104,6 +104,52 @@ Preparar (login + tenant + registro nodos + creación de 2 cámaras virtuales):
 pnpm pilot:harness:prepare
 ```
 
+Bootstrap explícito de nodos (si no usás harness o querés validar manualmente):
+
+```bash
+curl -sS -X POST http://localhost:8090/v1/nodes/register \
+  -H 'content-type: application/json' \
+  -d '{
+    "nodeId":"node-yolo-local",
+    "runtime":"python",
+    "transport":"http",
+    "endpoint":"http://localhost:8091",
+    "status":"online",
+    "resources":{"cpu":2,"gpu":0,"vramMb":0},
+    "capabilities":[{"capabilityId":"cap-yolo","taskTypes":["object_detection"],"models":["yolo26n@1.0.0"]}],
+    "models":["yolo26n@1.0.0"],
+    "maxConcurrent":2,
+    "queueDepth":0,
+    "isDrained":false
+  }'
+
+curl -sS -X POST http://localhost:8090/v1/nodes/register \
+  -H 'content-type: application/json' \
+  -d '{
+    "nodeId":"node-mediapipe-local",
+    "runtime":"python",
+    "transport":"http",
+    "endpoint":"http://localhost:8092",
+    "status":"online",
+    "resources":{"cpu":2,"gpu":0,"vramMb":0},
+    "capabilities":[{"capabilityId":"cap-mediapipe","taskTypes":["pose_estimation","action_recognition"],"models":["mediapipe_pose@0.10.0"]}],
+    "models":["mediapipe_pose@0.10.0"],
+    "maxConcurrent":2,
+    "queueDepth":0,
+    "isDrained":false
+  }'
+
+curl -sS http://localhost:8090/v1/nodes | jq
+```
+
+Heartbeat manual (opcional, mismo payload que `register`):
+
+```bash
+curl -sS -X POST http://localhost:8090/v1/nodes/heartbeat \
+  -H 'content-type: application/json' \
+  -d '{"nodeId":"node-yolo-local","runtime":"python","transport":"http","endpoint":"http://localhost:8091","status":"online"}'
+```
+
 Ejecutar detección E2E sobre ambas cámaras:
 
 ```bash
@@ -143,3 +189,13 @@ Variables útiles:
 
 - Integraciones externas (Telegram, Cloudflare API) pueden depender de credenciales y conectividad.
 - En on-prem, el perfil ejemplo usa `STREAM_TRANSCODER_PRESET=ffmpeg-hls-retention` y `STREAM_TRANSCODER_DRY_RUN=0`; validar capacidad de disco y ajustar bitrate/segmentación antes de escalar cámaras.
+
+## 8) Observabilidad mínima por plano
+
+- `stream-gateway`: `GET /health`, `GET /metrics`
+- `api`: `GET /health`, `GET /readiness`
+- `event-gateway`: `GET /health`
+- `inference-bridge`: `GET /health`, `GET /v1/nodes`
+- `inference-node-yolo`: `GET /health`
+- `inference-node-mediapipe`: `GET /health`
+- `detection-dispatcher`: `GET /health`
