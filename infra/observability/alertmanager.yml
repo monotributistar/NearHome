@@ -1,0 +1,47 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: "nearhome-default"
+  group_by: ["alertname", "job"]
+  group_wait: 30s
+  group_interval: 2m
+  repeat_interval: 2h
+  routes:
+    - matchers:
+        - severity="critical"
+      receiver: "nearhome-critical"
+      repeat_interval: 15m
+    - matchers:
+        - severity="warning"
+      receiver: "nearhome-warning"
+      repeat_interval: 30m
+    - matchers:
+        - severity="info"
+      receiver: "nearhome-info"
+      repeat_interval: 4h
+
+receivers:
+  - name: "nearhome-default"
+    webhook_configs:
+      - url: "__DEFAULT_WEBHOOK_URL__"
+        send_resolved: true
+  - name: "nearhome-critical"
+    webhook_configs:
+      - url: "__CRITICAL_WEBHOOK_URL__"
+        send_resolved: true
+  - name: "nearhome-warning"
+    webhook_configs:
+      - url: "__WARNING_WEBHOOK_URL__"
+        send_resolved: true
+  - name: "nearhome-info"
+    webhook_configs:
+      - url: "__INFO_WEBHOOK_URL__"
+        send_resolved: true
+
+inhibit_rules:
+  - source_matchers:
+      - severity="critical"
+    target_matchers:
+      - severity="warning"
+    equal: ["alertname", "job", "instance"]

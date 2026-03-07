@@ -1366,6 +1366,34 @@ describe("NH-012 readiness endpoint", () => {
   });
 });
 
+describe("NH-OBS deployment status endpoint", () => {
+  it("returns consolidated services and node lifecycle status for authenticated users", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const response = await app.inject({
+      method: "GET",
+      url: "/ops/deployment/status",
+      headers: { authorization: `Bearer ${adminToken}` }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json<{
+      data: {
+        generatedAt: string;
+        overallOk: boolean;
+        services: Array<{ name: string; ok: boolean; latencyMs: number; statusCode: number | null }>;
+        nodes: { total: number; online: number; degraded: number; offline: number; drained: number; items: unknown[] };
+      };
+    }>();
+
+    expect(typeof body.data.generatedAt).toBe("string");
+    expect(Array.isArray(body.data.services)).toBe(true);
+    expect(body.data.services.length).toBeGreaterThan(0);
+    expect(body.data.services.every((service) => typeof service.name === "string")).toBe(true);
+    expect(typeof body.data.nodes.total).toBe("number");
+    expect(Array.isArray(body.data.nodes.items)).toBe(true);
+  });
+});
+
 describe("NH-DP detection jobs and incidents", () => {
   it("allows tenant_admin to create, read, list results and cancel detection jobs", async () => {
     const adminToken = await login("admin@nearhome.dev");

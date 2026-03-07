@@ -107,7 +107,26 @@ pnpm pilot:harness:prepare
 Bootstrap explícito de nodos (si no usás harness o querés validar manualmente):
 
 ```bash
+export NODE_AUTH_ADMIN_SECRET="${NODE_AUTH_ADMIN_SECRET:-dev-node-auth-admin-secret}"
+
+YOLO_ENROLL="$(curl -sS -X POST http://localhost:8090/internal/nodes/enrollment-tokens \
+  -H "x-node-auth-admin-secret: $NODE_AUTH_ADMIN_SECRET" \
+  -H 'content-type: application/json' \
+  -d '{"nodeId":"node-yolo-local","tenantScope":"*"}' | jq -r '.data.enrollmentToken')"
+YOLO_TOKEN="$(curl -sS -X POST http://localhost:8090/v1/nodes/enroll \
+  -H 'content-type: application/json' \
+  -d "{\"nodeId\":\"node-yolo-local\",\"enrollmentToken\":\"$YOLO_ENROLL\"}" | jq -r '.data.nodeAccessToken')"
+
+MEDIAPIPE_ENROLL="$(curl -sS -X POST http://localhost:8090/internal/nodes/enrollment-tokens \
+  -H "x-node-auth-admin-secret: $NODE_AUTH_ADMIN_SECRET" \
+  -H 'content-type: application/json' \
+  -d '{"nodeId":"node-mediapipe-local","tenantScope":"*"}' | jq -r '.data.enrollmentToken')"
+MEDIAPIPE_TOKEN="$(curl -sS -X POST http://localhost:8090/v1/nodes/enroll \
+  -H 'content-type: application/json' \
+  -d "{\"nodeId\":\"node-mediapipe-local\",\"enrollmentToken\":\"$MEDIAPIPE_ENROLL\"}" | jq -r '.data.nodeAccessToken')"
+
 curl -sS -X POST http://localhost:8090/v1/nodes/register \
+  -H "authorization: Bearer $YOLO_TOKEN" \
   -H 'content-type: application/json' \
   -d '{
     "nodeId":"node-yolo-local",
@@ -124,6 +143,7 @@ curl -sS -X POST http://localhost:8090/v1/nodes/register \
   }'
 
 curl -sS -X POST http://localhost:8090/v1/nodes/register \
+  -H "authorization: Bearer $MEDIAPIPE_TOKEN" \
   -H 'content-type: application/json' \
   -d '{
     "nodeId":"node-mediapipe-local",
@@ -146,8 +166,9 @@ Heartbeat manual (opcional, mismo payload que `register`):
 
 ```bash
 curl -sS -X POST http://localhost:8090/v1/nodes/heartbeat \
+  -H "authorization: Bearer $YOLO_TOKEN" \
   -H 'content-type: application/json' \
-  -d '{"nodeId":"node-yolo-local","runtime":"python","transport":"http","endpoint":"http://localhost:8091","status":"online"}'
+  -d '{"nodeId":"node-yolo-local","status":"online","queueDepth":0}'
 ```
 
 Ejecutar detección E2E sobre ambas cámaras:
@@ -183,6 +204,7 @@ Variables útiles:
 - `PILOT_ENV_FILE` (default: `infra/.env.pilot.cameras`)
 - `BRIDGE_URL`
 - `YOLO_URL`, `MEDIAPIPE_URL` (para registro de nodos)
+- `NODE_AUTH_ADMIN_SECRET` (bootstrap de enrollment token en bridge)
 - `PILOT_JOB_TIMEOUT_S`, `PILOT_JOB_POLL_S`
 
 ## 7) Riesgos conocidos

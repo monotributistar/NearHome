@@ -149,6 +149,30 @@ describe("stream health scheduler", () => {
       return body.data.currentStatus === "ready" && body.data.healthSnapshot?.connectivity === "online";
     });
 
+    const health = await app.inject({
+      method: "GET",
+      url: "/health"
+    });
+    expect(health.statusCode).toBe(200);
+    const healthBody = health.json<{
+      ok: boolean;
+      streamHealthSync: { totalCycles: number; totalSynced: number; lastSynced: number; enabled: boolean };
+    }>();
+    expect(healthBody.ok).toBe(true);
+    expect(healthBody.streamHealthSync.enabled).toBe(true);
+    expect(healthBody.streamHealthSync.totalCycles).toBeGreaterThan(0);
+    expect(healthBody.streamHealthSync.totalSynced).toBeGreaterThan(0);
+    expect(healthBody.streamHealthSync.lastSynced).toBeGreaterThan(0);
+
+    const metrics = await app.inject({
+      method: "GET",
+      url: "/metrics"
+    });
+    expect(metrics.statusCode).toBe(200);
+    expect(metrics.headers["content-type"]).toContain("text/plain");
+    expect(metrics.body).toContain("nearhome_stream_health_sync_cycles_total");
+    expect(metrics.body).toContain("nearhome_stream_health_sync_synced_total");
+
     const fetchMock = vi.mocked(global.fetch);
     expect(fetchMock).toHaveBeenCalled();
     expect(fetchMock.mock.calls.some((call) => String(call[0]).includes(`/health/${tenantId!}/${cameraId}`))).toBe(true);

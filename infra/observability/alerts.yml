@@ -1,0 +1,67 @@
+groups:
+  - name: nearhome-platform
+    rules:
+      - alert: NearHomeServiceDown
+        expr: up{job=~"api|stream-gateway|inference-bridge"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "Prometheus cannot scrape {{ $labels.job }} (target={{ $labels.instance }}) for more than 1 minute."
+
+      - alert: StreamHealthSyncStalled
+        expr: nearhome_stream_health_sync_enabled{job="api"} == 1 and (time() - nearhome_stream_health_sync_last_run_unix_seconds{job="api"}) > 120
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Stream health scheduler appears stalled"
+          description: "API stream health scheduler has not completed a cycle in the last 120s."
+
+      - alert: StreamHealthSyncFailuresIncreasing
+        expr: rate(nearhome_stream_health_sync_failed_total{job="api"}[10m]) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Stream health sync is failing cameras"
+          description: "There are camera sync failures in the last 10 minutes."
+
+      - alert: StreamHealthSyncCycleTooSlow
+        expr: nearhome_stream_health_sync_last_duration_ms{job="api"} > 10000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Stream health cycle duration is high"
+          description: "Last stream health sync cycle duration is above 10 seconds."
+
+  - name: nearhome-node-lifecycle
+    rules:
+      - alert: InferenceNodesAllUnavailable
+        expr: nearhome_node_registry_total{job="inference-bridge"} > 0 and sum(nearhome_node_registry_status{job="inference-bridge",status=~"online|degraded"}) == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "All inference nodes are unavailable"
+          description: "Inference bridge has registered nodes but none are online or degraded."
+
+      - alert: InferenceNodeHeartbeatAging
+        expr: max(nearhome_node_last_heartbeat_age_seconds{job="inference-bridge"}) > (max(nearhome_node_heartbeat_ttl_ms{job="inference-bridge"}) / 1000) * 2
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Inference node heartbeat is stale"
+          description: "At least one inference node heartbeat age exceeds 2x configured TTL."
+
+      - alert: InferenceNodesRevokedPresent
+        expr: nearhome_node_revoked_total{job="inference-bridge"} > 0
+        for: 5m
+        labels:
+          severity: info
+        annotations:
+          summary: "There are revoked inference nodes"
+          description: "One or more inference nodes are currently revoked."

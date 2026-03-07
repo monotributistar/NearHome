@@ -54,6 +54,37 @@ Servicios:
 
 - Prometheus `:9090`
 - Grafana `:3005`
+- Alertmanager `:9093`
+- Webhook sink local `:18080` (debug de notificaciones)
+
+Prometheus scrapea:
+- `api:3001/metrics`
+- `stream-gateway:3010/metrics`
+- `inference-bridge:8090/metrics`
+
+Alertas base (Prometheus rules):
+- disponibilidad de servicios (`api`, `stream-gateway`, `inference-bridge`)
+- stream health scheduler estancado/lento/con fallos
+- nodos de inferencia todos offline
+- heartbeat de nodos envejecido
+- nodos revocados presentes
+
+Alertmanager:
+- UI: `http://localhost:9093`
+- routing por severidad (`critical`, `warning`, `info`) ya provisionado
+- por defecto envía a `alert-webhook` local (echo) para validar payloads
+- para webhook real, configurar en `.env`:
+  - `ALERTMANAGER_WEBHOOK_DEFAULT_URL`
+  - `ALERTMANAGER_WEBHOOK_CRITICAL_URL`
+  - `ALERTMANAGER_WEBHOOK_WARNING_URL`
+  - `ALERTMANAGER_WEBHOOK_INFO_URL`
+
+Grafana:
+- URL: `http://localhost:3005`
+- Usuario: `admin`
+- Password: `admin`
+- Dashboard provisionado: `NearHome / NearHome Stream Health Sync`
+- Dashboard provisionado: `NearHome / NearHome Node Lifecycle`
 
 ## Smoke rápido por plano
 

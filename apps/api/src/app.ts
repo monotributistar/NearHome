@@ -104,6 +104,30 @@ type DetectionJobStatus = "queued" | "running" | "succeeded" | "failed" | "cance
 type DetectionMode = "realtime" | "batch";
 type DetectionSource = "snapshot" | "clip" | "range";
 type DetectionProvider = "onprem_bento" | "huggingface_space" | "external_http";
+type StreamHealthSyncStats = {
+  enabled: boolean;
+  inFlight: boolean;
+  tenantCursors: number;
+  lastRunAt: string | null;
+  lastDurationMs: number;
+  lastScanned: number;
+  lastSynced: number;
+  lastFailed: number;
+  totalCycles: number;
+  totalScanned: number;
+  totalSynced: number;
+  totalFailed: number;
+  lastError: string | null;
+};
+type DeploymentProbeResult = {
+  name: string;
+  url: string;
+  ok: boolean;
+  statusCode: number | null;
+  latencyMs: number;
+  error: string | null;
+  payload: Record<string, unknown> | null;
+};
 
 const CameraLifecycleStatusSchema = z.enum(["draft", "provisioning", "ready", "degraded", "offline", "error", "retired"]);
 const CameraConnectivitySchema = z.enum(["online", "degraded", "offline"]);
@@ -926,12 +950,30 @@ export async function buildApp() {
   const streamHealthSyncEnabled = process.env.STREAM_HEALTH_SYNC_ENABLED === "1";
   const streamHealthSyncIntervalMs = Number(process.env.STREAM_HEALTH_SYNC_INTERVAL_MS ?? 30_000);
   const streamHealthSyncBatchSize = Number(process.env.STREAM_HEALTH_SYNC_BATCH_SIZE ?? 100);
+  const inferenceBridgeUrl =
+    process.env.INFERENCE_BRIDGE_URL?.replace(/\/$/, "") ?? detectionBridgeUrl ?? "http://inference-bridge:8090";
   const loginRateLimitMax = Number(process.env.LOGIN_RATE_LIMIT_MAX ?? 20);
   const loginRateLimitWindowMs = Number(process.env.LOGIN_RATE_LIMIT_WINDOW_MS ?? 60_000);
   const readinessForceFail = process.env.READINESS_FORCE_FAIL === "1";
   const loginBuckets = new Map<string, LoginBucket>();
   let streamSyncTimer: NodeJS.Timeout | null = null;
   let streamSyncInFlight = false;
+  const streamSyncCursorByTenant = new Map<string, string | null>();
+  const streamSyncStats: StreamHealthSyncStats = {
+    enabled: streamHealthSyncEnabled && !!streamGatewayUrl,
+    inFlight: false,
+    tenantCursors: 0,
+    lastRunAt: null,
+    lastDurationMs: 0,
+    lastScanned: 0,
+    lastSynced: 0,
+    lastFailed: 0,
+    totalCycles: 0,
+    totalScanned: 0,
+    totalSynced: 0,
+    totalFailed: 0,
+    lastError: null
+  };
 
   const failDetectionJob = async (jobId: string, errorCode: string, errorMessage: string) => {
     const existing = await prisma.detectionJob.findUnique({ where: { id: jobId } });
@@ -1374,33 +1416,95 @@ export async function buildApp() {
       const runStreamHealthSync = async () => {
         if (streamSyncInFlight) return;
         streamSyncInFlight = true;
+        streamSyncStats.inFlight = true;
+        streamSyncStats.lastError = null;
+        const cycleStartedAt = Date.now();
+        let scannedInCycle = 0;
+        let syncedInCycle = 0;
+        let failedInCycle = 0;
         try {
-          const cameras = await prisma.camera.findMany({
+          const activeTenants = await prisma.camera.findMany({
             where: { deletedAt: null, isActive: true },
-            select: { id: true, tenantId: true },
-            take: streamHealthSyncBatchSize
+            select: { tenantId: true },
+            distinct: ["tenantId"],
+            orderBy: { tenantId: "asc" }
           });
-          for (const camera of cameras) {
-            try {
-              await syncCameraHealthFromGateway({
-                tenantId: camera.tenantId,
-                cameraId: camera.id,
-                streamGatewayUrl
+
+          for (const tenant of activeTenants) {
+            const tenantId = tenant.tenantId;
+            const tenantCursor = streamSyncCursorByTenant.get(tenantId) ?? null;
+
+            // Rotate through active cameras per tenant to avoid starvation.
+            let cameras = await prisma.camera.findMany({
+              where: {
+                deletedAt: null,
+                isActive: true,
+                tenantId,
+                ...(tenantCursor ? { id: { gt: tenantCursor } } : {})
+              },
+              select: { id: true, tenantId: true },
+              orderBy: { id: "asc" },
+              take: streamHealthSyncBatchSize
+            });
+
+            if (cameras.length === 0) {
+              streamSyncCursorByTenant.set(tenantId, null);
+              cameras = await prisma.camera.findMany({
+                where: { deletedAt: null, isActive: true, tenantId },
+                select: { id: true, tenantId: true },
+                orderBy: { id: "asc" },
+                take: streamHealthSyncBatchSize
               });
-            } catch (error) {
-              app.log.warn(
-                { error, tenantId: camera.tenantId, cameraId: camera.id },
-                "stream_health_sync.camera_failed"
-              );
+            }
+
+            if (cameras.length > 0) {
+              streamSyncCursorByTenant.set(tenantId, cameras[cameras.length - 1].id);
+            }
+
+            for (const camera of cameras) {
+              scannedInCycle += 1;
+              try {
+                await syncCameraHealthFromGateway({
+                  tenantId: camera.tenantId,
+                  cameraId: camera.id,
+                  streamGatewayUrl
+                });
+                syncedInCycle += 1;
+              } catch (error) {
+                failedInCycle += 1;
+                app.log.warn(
+                  { error, tenantId: camera.tenantId, cameraId: camera.id },
+                  "stream_health_sync.camera_failed"
+                );
+              }
+            }
+          }
+
+          const activeTenantSet = new Set(activeTenants.map((tenant) => tenant.tenantId));
+          for (const tenantId of streamSyncCursorByTenant.keys()) {
+            if (!activeTenantSet.has(tenantId)) {
+              streamSyncCursorByTenant.delete(tenantId);
             }
           }
         } finally {
+          streamSyncStats.lastRunAt = new Date().toISOString();
+          streamSyncStats.lastDurationMs = Date.now() - cycleStartedAt;
+          streamSyncStats.lastScanned = scannedInCycle;
+          streamSyncStats.lastSynced = syncedInCycle;
+          streamSyncStats.lastFailed = failedInCycle;
+          streamSyncStats.totalCycles += 1;
+          streamSyncStats.totalScanned += scannedInCycle;
+          streamSyncStats.totalSynced += syncedInCycle;
+          streamSyncStats.totalFailed += failedInCycle;
+          streamSyncStats.tenantCursors = streamSyncCursorByTenant.size;
+          streamSyncStats.inFlight = false;
           streamSyncInFlight = false;
         }
       };
 
       streamSyncTimer = setInterval(() => {
         runStreamHealthSync().catch((error) => {
+          streamSyncStats.lastError = error instanceof Error ? error.message : String(error);
           app.log.error({ error }, "stream_health_sync.loop_failed");
         });
       }, streamHealthSyncIntervalMs);
@@ -1558,6 +1662,44 @@ export async function buildApp() {
     }
 
     bucket.count += 1;
+  };
+
+  const probeService = async (name: string, targetUrl: string): Promise<DeploymentProbeResult> => {
+    const startedAt = Date.now();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2000);
+    try {
+      const response = await fetch(targetUrl, { signal: controller.signal });
+      const latencyMs = Date.now() - startedAt;
+      let payload: Record<string, unknown> | null = null;
+      try {
+        const parsed = await response.json();
+        payload = typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : null;
+      } catch {
+        payload = null;
+      }
+      return {
+        name,
+        url: targetUrl,
+        ok: response.ok,
+        statusCode: response.status,
+        latencyMs,
+        error: response.ok ? null : `http_${response.status}`,
+        payload
+      };
+    } catch (error) {
+      return {
+        name,
+        url: targetUrl,
+        ok: false,
+        statusCode: null,
+        latencyMs: Date.now() - startedAt,
+        error: error instanceof Error ? error.message : String(error),
+        payload: null
+      };
+    } finally {
+      clearTimeout(timeout);
+    }
   };
 
   app.post("/auth/login", async (request: FastifyRequest, reply: FastifyReply) => {
@@ -3359,7 +3501,94 @@ export async function buildApp() {
     return { data, total: data.length };
   });
 
-  app.get("/health", async () => ({ ok: true }));
+  app.get("/health", async () => ({
+    ok: true,
+    streamHealthSync: streamSyncStats
+  }));
+
+  app.get("/metrics", async (_request, reply) => {
+    const lastRunUnix = streamSyncStats.lastRunAt ? Date.parse(streamSyncStats.lastRunAt) / 1000 : 0;
+    const lines = [
+      "# HELP nearhome_stream_health_sync_enabled 1 if stream health scheduler is enabled, 0 otherwise.",
+      "# TYPE nearhome_stream_health_sync_enabled gauge",
+      `nearhome_stream_health_sync_enabled ${streamSyncStats.enabled ? 1 : 0}`,
+      "# HELP nearhome_stream_health_sync_in_flight 1 if scheduler cycle is currently running.",
+      "# TYPE nearhome_stream_health_sync_in_flight gauge",
+      `nearhome_stream_health_sync_in_flight ${streamSyncStats.inFlight ? 1 : 0}`,
+      "# HELP nearhome_stream_health_sync_tenant_cursors Number of tenant cursors currently tracked.",
+      "# TYPE nearhome_stream_health_sync_tenant_cursors gauge",
+      `nearhome_stream_health_sync_tenant_cursors ${streamSyncStats.tenantCursors}`,
+      "# HELP nearhome_stream_health_sync_last_run_unix_seconds Last completed sync cycle timestamp as unix seconds.",
+      "# TYPE nearhome_stream_health_sync_last_run_unix_seconds gauge",
+      `nearhome_stream_health_sync_last_run_unix_seconds ${lastRunUnix}`,
+      "# HELP nearhome_stream_health_sync_last_duration_ms Last sync cycle duration in milliseconds.",
+      "# TYPE nearhome_stream_health_sync_last_duration_ms gauge",
+      `nearhome_stream_health_sync_last_duration_ms ${streamSyncStats.lastDurationMs}`,
+      "# HELP nearhome_stream_health_sync_last_scanned Number of cameras scanned in last cycle.",
+      "# TYPE nearhome_stream_health_sync_last_scanned gauge",
+      `nearhome_stream_health_sync_last_scanned ${streamSyncStats.lastScanned}`,
+      "# HELP nearhome_stream_health_sync_last_synced Number of cameras synced in last cycle.",
+      "# TYPE nearhome_stream_health_sync_last_synced gauge",
+      `nearhome_stream_health_sync_last_synced ${streamSyncStats.lastSynced}`,
+      "# HELP nearhome_stream_health_sync_last_failed Number of cameras failed in last cycle.",
+      "# TYPE nearhome_stream_health_sync_last_failed gauge",
+      `nearhome_stream_health_sync_last_failed ${streamSyncStats.lastFailed}`,
+      "# HELP nearhome_stream_health_sync_cycles_total Total scheduler cycles completed.",
+      "# TYPE nearhome_stream_health_sync_cycles_total counter",
+      `nearhome_stream_health_sync_cycles_total ${streamSyncStats.totalCycles}`,
+      "# HELP nearhome_stream_health_sync_scanned_total Total cameras scanned across cycles.",
+      "# TYPE nearhome_stream_health_sync_scanned_total counter",
+      `nearhome_stream_health_sync_scanned_total ${streamSyncStats.totalScanned}`,
+      "# HELP nearhome_stream_health_sync_synced_total Total cameras synced across cycles.",
+      "# TYPE nearhome_stream_health_sync_synced_total counter",
+      `nearhome_stream_health_sync_synced_total ${streamSyncStats.totalSynced}`,
+      "# HELP nearhome_stream_health_sync_failed_total Total cameras failed across cycles.",
+      "# TYPE nearhome_stream_health_sync_failed_total counter",
+      `nearhome_stream_health_sync_failed_total ${streamSyncStats.totalFailed}`
+    ];
+    reply.header("content-type", "text/plain; version=0.0.4; charset=utf-8");
+    return `${lines.join("\n")}\n`;
+  });
+
+  app.get("/ops/deployment/status", { preHandler: authPreHandler }, async (_request: FastifyRequest) => {
+    const checks: Array<Promise<DeploymentProbeResult>> = [];
+    if (streamGatewayUrl) checks.push(probeService("stream-gateway", `${streamGatewayUrl}/health`));
+    if (eventGatewayUrl) checks.push(probeService("event-gateway", `${eventGatewayUrl}/health`));
+    checks.push(probeService("inference-bridge", `${inferenceBridgeUrl}/health`));
+    if (temporalDispatchUrl) checks.push(probeService("detection-dispatcher", `${temporalDispatchUrl}/health`));
+
+    const services = await Promise.all(checks);
+
+    const nodesProbe = await probeService("inference-bridge-nodes", `${inferenceBridgeUrl}/v1/nodes`);
+    const nodesRaw = Array.isArray(nodesProbe.payload?.data) ? (nodesProbe.payload?.data as Array<Record<string, unknown>>) : [];
+    const totalNodes = nodesRaw.length;
+    const online = nodesRaw.filter((node) => node.status === "online").length;
+    const degraded = nodesRaw.filter((node) => node.status === "degraded").length;
+    const offline = nodesRaw.filter((node) => node.status === "offline").length;
+    const drained = nodesRaw.filter((node) => node.isDrained === true).length;
+
+    const inferredRevoked = nodesRaw.filter((node) => node.isDrained === true && node.status === "offline").length;
+
+    const overallOk = services.every((service) => service.ok) && nodesProbe.ok;
+    return {
+      data: {
+        generatedAt: new Date().toISOString(),
+        overallOk,
+        services,
+        nodes: {
+          sourceOk: nodesProbe.ok,
+          sourceError: nodesProbe.error,
+          total: totalNodes,
+          online,
+          degraded,
+          offline,
+          drained,
+          revokedEstimate: inferredRevoked,
+          items: nodesRaw
+        }
+      }
+    };
+  });
 
   app.get("/readiness", async (request, reply) => {
     if (readinessForceFail) {

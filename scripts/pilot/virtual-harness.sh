@@ -16,6 +16,7 @@ EVENT_URL="${EVENT_URL:-http://localhost:3011}"
 BRIDGE_URL="${BRIDGE_URL:-http://localhost:8090}"
 YOLO_URL="${YOLO_URL:-http://inference-node-yolo:8091}"
 MEDIAPIPE_URL="${MEDIAPIPE_URL:-http://inference-node-mediapipe:8092}"
+NODE_AUTH_ADMIN_SECRET="${NODE_AUTH_ADMIN_SECRET:-dev-node-auth-admin-secret}"
 
 PILOT_EMAIL="${PILOT_EMAIL:-admin@nearhome.dev}"
 PILOT_PASSWORD="${PILOT_PASSWORD:-demo1234}"
@@ -91,14 +92,36 @@ resolve_tenant() {
 }
 
 register_nodes() {
-  local yolo_payload mediapipe_payload
+  local yolo_payload mediapipe_payload yolo_enrollment mediapipe_enrollment yolo_token mediapipe_token
   yolo_payload="$(jq -nc --arg endpoint "$YOLO_URL" \
     '{nodeId:"pilot-yolo-node",runtime:"python",transport:"http",endpoint:$endpoint,status:"online",maxConcurrent:4,queueDepth:0,isDrained:false,models:["yolo-v8"],capabilities:[{capabilityId:"det-objects",taskTypes:["object_detection"],models:["yolo-v8"]}]}' )"
   mediapipe_payload="$(jq -nc --arg endpoint "$MEDIAPIPE_URL" \
     '{nodeId:"pilot-mediapipe-node",runtime:"python",transport:"http",endpoint:$endpoint,status:"online",maxConcurrent:4,queueDepth:0,isDrained:false,models:["mediapipe-actions"],capabilities:[{capabilityId:"det-actions",taskTypes:["action_detection"],models:["mediapipe-actions"]}]}' )"
 
-  curl -fsS -X POST "$BRIDGE_URL/v1/nodes/register" -H 'content-type: application/json' -d "$yolo_payload" >/tmp/pilot_node_yolo.json
-  curl -fsS -X POST "$BRIDGE_URL/v1/nodes/register" -H 'content-type: application/json' -d "$mediapipe_payload" >/tmp/pilot_node_mediapipe.json
+  yolo_enrollment="$(curl -fsS -X POST "$BRIDGE_URL/internal/nodes/enrollment-tokens" \
+    -H "x-node-auth-admin-secret: $NODE_AUTH_ADMIN_SECRET" \
+    -H 'content-type: application/json' \
+    -d '{"nodeId":"pilot-yolo-node","tenantScope":"*"}' | jq -r '.data.enrollmentToken')"
+  yolo_token="$(curl -fsS -X POST "$BRIDGE_URL/v1/nodes/enroll" \
+    -H 'content-type: application/json' \
+    -d "$(jq -nc --arg t "$yolo_enrollment" '{"nodeId":"pilot-yolo-node","enrollmentToken":$t}')" | jq -r '.data.nodeAccessToken')"
+
+  mediapipe_enrollment="$(curl -fsS -X POST "$BRIDGE_URL/internal/nodes/enrollment-tokens" \
+    -H "x-node-auth-admin-secret: $NODE_AUTH_ADMIN_SECRET" \
+    -H 'content-type: application/json' \
+    -d '{"nodeId":"pilot-mediapipe-node","tenantScope":"*"}' | jq -r '.data.enrollmentToken')"
+  mediapipe_token="$(curl -fsS -X POST "$BRIDGE_URL/v1/nodes/enroll" \
+    -H 'content-type: application/json' \
+    -d "$(jq -nc --arg t "$mediapipe_enrollment" '{"nodeId":"pilot-mediapipe-node","enrollmentToken":$t}')" | jq -r '.data.nodeAccessToken')"
+
+  curl -fsS -X POST "$BRIDGE_URL/v1/nodes/register" \
+    -H "authorization: Bearer $yolo_token" \
+    -H 'content-type: application/json' \
+    -d "$yolo_payload" >/tmp/pilot_node_yolo.json
+  curl -fsS -X POST "$BRIDGE_URL/v1/nodes/register" \
+    -H "authorization: Bearer $mediapipe_token" \
+    -H 'content-type: application/json' \
+    -d "$mediapipe_payload" >/tmp/pilot_node_mediapipe.json
 }
 
 ensure_camera() {

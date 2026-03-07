@@ -69,6 +69,9 @@ services:
       dockerfile: Dockerfile
     environment:
       INFERENCE_TIMEOUT_MS: 15000
+      NODE_AUTH_JWT_SECRET: ${NODE_AUTH_JWT_SECRET:-dev-node-auth-secret}
+      NODE_AUTH_ADMIN_SECRET: ${NODE_AUTH_ADMIN_SECRET:-dev-node-auth-admin-secret}
+      NODE_HEARTBEAT_TTL_MS: ${NODE_HEARTBEAT_TTL_MS:-60000}
     ports:
       - "8090:8090"
     networks:
@@ -174,16 +177,63 @@ services:
     command: ["--config.file=/etc/prometheus/prometheus.yml"]
     volumes:
       - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/alerts.yml:/etc/prometheus/alerts.yml:ro
     ports:
       - "9090:9090"
+    depends_on:
+      - alertmanager
+    networks:
+      - nearhome_net
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    profiles: ["observability"]
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        awk '{
+          gsub("__DEFAULT_WEBHOOK_URL__", ENVIRON["ALERTMANAGER_WEBHOOK_DEFAULT_URL"]);
+          gsub("__CRITICAL_WEBHOOK_URL__", ENVIRON["ALERTMANAGER_WEBHOOK_CRITICAL_URL"]);
+          gsub("__WARNING_WEBHOOK_URL__", ENVIRON["ALERTMANAGER_WEBHOOK_WARNING_URL"]);
+          gsub("__INFO_WEBHOOK_URL__", ENVIRON["ALERTMANAGER_WEBHOOK_INFO_URL"]);
+          print
+        }' /etc/alertmanager/alertmanager.yml > /tmp/alertmanager-runtime.yml
+        exec /bin/alertmanager --config.file=/tmp/alertmanager-runtime.yml
+    environment:
+      ALERTMANAGER_WEBHOOK_DEFAULT_URL: ${ALERTMANAGER_WEBHOOK_DEFAULT_URL:-http://alert-webhook:80/default}
+      ALERTMANAGER_WEBHOOK_CRITICAL_URL: ${ALERTMANAGER_WEBHOOK_CRITICAL_URL:-http://alert-webhook:80/critical}
+      ALERTMANAGER_WEBHOOK_WARNING_URL: ${ALERTMANAGER_WEBHOOK_WARNING_URL:-http://alert-webhook:80/warning}
+      ALERTMANAGER_WEBHOOK_INFO_URL: ${ALERTMANAGER_WEBHOOK_INFO_URL:-http://alert-webhook:80/info}
+    volumes:
+      - ./observability/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    ports:
+      - "9093:9093"
+    depends_on:
+      - alert-webhook
+    networks:
+      - nearhome_net
+
+  alert-webhook:
+    image: ealen/echo-server:latest
+    profiles: ["observability"]
+    ports:
+      - "18080:80"
     networks:
       - nearhome_net
 
   grafana:
     image: grafana/grafana:11.1.5
     profiles: ["observability"]
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports:
       - "3005:3000"
+    depends_on:
+      - prometheus
     networks:
       - nearhome_net
 

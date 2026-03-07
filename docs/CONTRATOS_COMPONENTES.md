@@ -151,18 +151,23 @@ Versionado:
   - out ok: `{ ok: true, db: "up", timestamp, requestId }`
   - out fail: `{ ok: false, db: "down", reason, timestamp, requestId }`
   - status: `200` en estado listo, `503` cuando DB no disponible
+- `GET /ops/deployment/status` (auth requerido)
+  - consolida estado operativo de servicios desplegados y lifecycle de nodos de inferencia
+  - out: `{ data: { generatedAt, overallOk, services[], nodes{ total, online, degraded, offline, drained, revokedEstimate, items[] } } }`
 
 ### Observabilidad por servicio (estado actual)
 
 - `apps/stream-gateway`: `GET /health`, `GET /health/:tenantId/:cameraId`, `GET /metrics` (Prometheus).
-- `apps/api`: `GET /health`, `GET /readiness` (sin `/metrics` Prometheus en esta etapa).
+- `apps/api`: `GET /health`, `GET /readiness`, `GET /metrics` (Prometheus), `GET /ops/deployment/status`.
 - `apps/event-gateway`: `GET /health` (sin `/metrics` Prometheus en esta etapa).
-- `apps/inference-bridge`: `GET /health` (sin `/metrics` Prometheus en esta etapa).
+- `apps/inference-bridge`: `GET /health`, `GET /metrics` (Prometheus, node lifecycle).
 - `apps/inference-node-yolo`: `GET /health` (sin `/metrics` Prometheus en esta etapa).
 - `apps/inference-node-mediapipe`: `GET /health` (sin `/metrics` Prometheus en esta etapa).
 - `apps/detection-worker/dispatcher`: `GET /health` (sin `/metrics` Prometheus en esta etapa).
 
 ## 3) Contrato de autorización (RBAC)
+
+Para seguridad de nodos de detección (enrolamiento, credenciales, heartbeat, revocación): ver `docs/NODE_AUTH_CONTRACT.md`.
 
 Roles:
 
