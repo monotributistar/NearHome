@@ -18,6 +18,9 @@ NODE_RUNTIME = os.environ.get("NODE_RUNTIME", "mediapipe")
 NODE_TRANSPORT = os.environ.get("NODE_TRANSPORT", "http")
 NODE_ENDPOINT = os.environ.get("NODE_ENDPOINT", "http://inference-node-mediapipe:8092")
 NODE_TENANT_ID = os.environ.get("NODE_TENANT_ID", "").strip() or None
+NODE_TENANT_IDS = sorted(
+    set([x.strip() for x in os.environ.get("NODE_TENANT_IDS", "").split(",") if x.strip()])
+)
 NODE_CONTRACT_VERSION = os.environ.get("NODE_CONTRACT_VERSION", "1.0")
 NODE_MAX_CONCURRENT = max(1, int(os.environ.get("NODE_MAX_CONCURRENT", "2")))
 NODE_RESOURCES = {
@@ -83,6 +86,7 @@ def _node_payload() -> Dict[str, Any]:
     return {
         "nodeId": NODE_ID,
         "tenantId": NODE_TENANT_ID,
+        "tenantIds": NODE_TENANT_IDS,
         "runtime": NODE_RUNTIME,
         "transport": NODE_TRANSPORT,
         "endpoint": NODE_ENDPOINT,
@@ -102,7 +106,8 @@ async def _request_enrollment_token(client: httpx.AsyncClient) -> str:
         return NODE_ENROLLMENT_TOKEN
     if not NODE_AUTH_ADMIN_SECRET:
         raise RuntimeError("NODE_ENROLLMENT_TOKEN or NODE_AUTH_ADMIN_SECRET is required for node bootstrap")
-    payload: Dict[str, Any] = {"nodeId": NODE_ID, "tenantScope": NODE_TENANT_ID or "*", "ttlSeconds": NODE_ENROLLMENT_TTL_SECONDS}
+    enrollment_scope = NODE_TENANT_ID or (NODE_TENANT_IDS[0] if len(NODE_TENANT_IDS) == 1 else "*")
+    payload: Dict[str, Any] = {"nodeId": NODE_ID, "tenantScope": enrollment_scope, "ttlSeconds": NODE_ENROLLMENT_TTL_SECONDS}
     response = await client.post(
         f"{INFERENCE_BRIDGE_URL}/internal/nodes/enrollment-tokens",
         json=payload,

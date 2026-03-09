@@ -26,6 +26,7 @@ model Tenant {
   incidentEvidence      IncidentEvidence[]
   inferenceProviderConfigs InferenceProviderConfig[]
   inferenceNodeSnapshots   InferenceNodeSnapshot[]
+  inferenceNodeAssignments InferenceNodeTenantAssignment[]
 }
 
 model User {
@@ -389,6 +390,20 @@ model InferenceNodeSnapshot {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
   tenant           Tenant?  @relation(fields: [tenantId], references: [id])
+  assignments      InferenceNodeTenantAssignment[]
 
   @@unique([nodeId])
+}
+
+model InferenceNodeTenantAssignment {
+  id        String   @id @default(cuid())
+  nodeId    String
+  tenantId  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  node      InferenceNodeSnapshot @relation(fields: [nodeId], references: [nodeId], onDelete: Cascade)
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([nodeId, tenantId])
+  @@index([tenantId])
 }

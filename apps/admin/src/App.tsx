@@ -29,6 +29,7 @@ type DeploymentNodeItem = {
   nodeId?: string;
   status?: "online" | "degraded" | "offline" | string;
   tenantId?: string | null;
+  tenantIds?: string[];
   runtime?: string;
   endpoint?: string;
   maxConcurrent?: number;
@@ -43,6 +44,7 @@ type DeploymentNodeItem = {
 type OpsNodeSnapshot = {
   nodeId: string;
   tenantId: string | null;
+  assignedTenantIds?: string[];
   runtime: string;
   transport: string;
   endpoint: string;
@@ -1156,12 +1158,14 @@ function CamerasPage() {
 
 function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
   const [nodes, setNodes] = useState<OpsNodeSnapshot[]>([]);
+  const [tenantOptions, setTenantOptions] = useState<Array<{ id: string; name: string }>>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
   const [enrollmentToken, setEnrollmentToken] = useState<string | null>(null);
+  const [assignmentDraft, setAssignmentDraft] = useState<string[]>([]);
   const [form, setForm] = useState({
     nodeId: "",
     tenantScope: "*",
@@ -1177,6 +1181,23 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
   });
 
   const selectedNode = useMemo(() => nodes.find((node) => node.nodeId === selectedNodeId) ?? null, [nodes, selectedNodeId]);
+
+  useEffect(() => {
+    setAssignmentDraft(selectedNode?.assignedTenantIds ?? []);
+  }, [selectedNodeId, selectedNode?.assignedTenantIds]);
+
+  async function loadTenants() {
+    const token = getToken();
+    if (!token) return;
+    try {
+      const response = await fetch(`${apiUrl}/tenants`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!response.ok) throw new Error(`tenants ${response.status}`);
+      const body = (await response.json()) as { data?: Array<{ id: string; name: string }> };
+      setTenantOptions(body.data ?? []);
+    } catch (loadError) {
+      setError(summarizeApiError(loadError, "No se pudo cargar tenants para asignación de nodos"));
+    }
+  }
 
   async function loadNodes(sync = true) {
     const token = getToken();
@@ -1207,6 +1228,7 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
   }
 
   useEffect(() => {
+    void loadTenants();
     void loadNodes(true);
     const id = window.setInterval(() => {
       void loadNodes(true);
@@ -1306,6 +1328,36 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
     }
   }
 
+  async function saveTenantAssignments() {
+    if (!selectedNode) return;
+    const token = getToken();
+    if (!token) {
+      setError("Missing auth token");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    setOk(null);
+    try {
+      const res = await fetch(`${apiUrl}/ops/nodes/${encodeURIComponent(selectedNode.nodeId)}/tenants`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({ tenantIds: assignmentDraft })
+      });
+      const body = await res.text();
+      if (!res.ok) throw new Error(`node tenants ${res.status}: ${body}`);
+      setOk(`Asignación de tenants actualizada para ${selectedNode.nodeId}`);
+      await loadNodes(true);
+    } catch (saveError) {
+      setError(summarizeApiError(saveError, "No se pudo guardar asignación de tenants"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
       <PageCard title="Detection Nodes">
@@ -1333,7 +1385,7 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
                 <th>Status</th>
                 <th>Runtime</th>
                 <th>Endpoint</th>
-                <th>Tenant</th>
+                <th>Tenant(s)</th>
                 <th>Queue</th>
                 <th>Drained</th>
                 <th>Models</th>
@@ -1363,7 +1415,7 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
                   </td>
                   <td>{node.runtime}</td>
                   <td className="text-xs">{node.endpoint}</td>
-                  <td>{node.tenantId ?? "*"}</td>
+                  <td className="text-xs">{(node.assignedTenantIds ?? []).join(", ") || node.tenantId || "*"}</td>
                   <td>
                     {node.queueDepth}/{node.maxConcurrent}
                   </td>
@@ -1471,10 +1523,35 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
             </div>
             <div>endpoint: {selectedNode.endpoint}</div>
             <div>runtime: {selectedNode.runtime}</div>
-            <div>tenant: {selectedNode.tenantId ?? "*"}</div>
+            <div>tenant(s): {(selectedNode.assignedTenantIds ?? []).join(", ") || selectedNode.tenantId || "*"}</div>
             <div>queue/max: {selectedNode.queueDepth}/{selectedNode.maxConcurrent}</div>
             <div>drained: {selectedNode.isDrained ? "yes" : "no"}</div>
             <div>last heartbeat: {new Date(selectedNode.lastHeartbeatAt).toLocaleString()}</div>
+            <div className="rounded-box border border-base-300 p-3">
+              <div className="mb-2 font-medium">Tenant assignment</div>
+              <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                {tenantOptions.map((tenant) => (
+                  <label key={tenant.id} className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={assignmentDraft.includes(tenant.id)}
+                      onChange={(e) =>
+                        setAssignmentDraft((prev) =>
+                          e.target.checked ? Array.from(new Set([...prev, tenant.id])) : prev.filter((value) => value !== tenant.id)
+                        )
+                      }
+                    />
+                    <span>{tenant.name}</span>
+                    <span className="opacity-60">({tenant.id})</span>
+                  </label>
+                ))}
+              </div>
+              <div className="mt-3">
+                <PrimaryButton className="btn-sm" type="button" onClick={() => void saveTenantAssignments()} disabled={saving}>
+                  Guardar asignación
+                </PrimaryButton>
+              </div>
+            </div>
             <div>
               resources:
               <pre className="mt-1 overflow-x-auto rounded-box bg-base-200 p-2 text-xs">

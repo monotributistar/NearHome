@@ -118,6 +118,7 @@ services:
       NODE_ID: ${YOLO_NODE_ID:-node-yolo-1}
       NODE_RUNTIME: yolo
       NODE_TENANT_ID: ${YOLO_NODE_TENANT_ID:-}
+      NODE_TENANT_IDS: ${YOLO_NODE_TENANT_IDS:-}
       NODE_ENDPOINT: ${YOLO_NODE_ENDPOINT:-http://inference-node-yolo:8091}
       NODE_TASK_TYPES: ${YOLO_NODE_TASK_TYPES:-object_detection}
       NODE_MODELS: ${YOLO_NODE_MODELS:-yolo26n@1.0.0,yolo26s@1.0.0}
@@ -143,6 +144,7 @@ services:
       NODE_ID: ${MEDIAPIPE_NODE_ID:-node-mediapipe-1}
       NODE_RUNTIME: mediapipe
       NODE_TENANT_ID: ${MEDIAPIPE_NODE_TENANT_ID:-}
+      NODE_TENANT_IDS: ${MEDIAPIPE_NODE_TENANT_IDS:-}
       NODE_ENDPOINT: ${MEDIAPIPE_NODE_ENDPOINT:-http://inference-node-mediapipe:8092}
       NODE_TASK_TYPES: ${MEDIAPIPE_NODE_TASK_TYPES:-pose_estimation,action_recognition}
       NODE_MODELS: ${MEDIAPIPE_NODE_MODELS:-mediapipe_pose@0.10.0}

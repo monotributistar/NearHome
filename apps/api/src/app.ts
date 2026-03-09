@@ -139,6 +139,7 @@ type BridgeNodeCapability = {
 type BridgeNodeSnapshot = {
   nodeId: string;
   tenantId: string | null;
+  tenantIds: string[];
   runtime: string;
   transport: string;
   endpoint: string;
@@ -1753,6 +1754,9 @@ export async function buildApp() {
     const nodeId = typeof nodeRaw.nodeId === "string" ? nodeRaw.nodeId : null;
     if (!nodeId) return null;
     const tenantId = typeof nodeRaw.tenantId === "string" && nodeRaw.tenantId.length > 0 ? nodeRaw.tenantId : null;
+    const tenantIds = Array.isArray(nodeRaw.tenantIds)
+      ? nodeRaw.tenantIds.filter((value): value is string => typeof value === "string" && value.length > 0)
+      : [];
     const runtime = typeof nodeRaw.runtime === "string" ? nodeRaw.runtime : "unknown";
     const transport = typeof nodeRaw.transport === "string" ? nodeRaw.transport : "http";
     const endpoint = typeof nodeRaw.endpoint === "string" ? nodeRaw.endpoint : "";
@@ -1787,6 +1791,7 @@ export async function buildApp() {
     return {
       nodeId,
       tenantId,
+      tenantIds,
       runtime,
       transport,
       endpoint,
@@ -1819,6 +1824,7 @@ export async function buildApp() {
     contractVersion: string;
     createdAt: Date;
     updatedAt: Date;
+    assignments?: Array<{ tenantId: string }>;
   }) => ({
     nodeId: row.nodeId,
     tenantId: row.tenantId,
@@ -1832,6 +1838,7 @@ export async function buildApp() {
     maxConcurrent: row.maxConcurrent,
     queueDepth: row.queueDepth,
     isDrained: row.isDrained,
+    assignedTenantIds: Array.from(new Set((row.assignments ?? []).map((assignment) => assignment.tenantId))),
     lastHeartbeatAt: row.lastHeartbeatAt.toISOString(),
     contractVersion: row.contractVersion,
     createdAt: row.createdAt.toISOString(),
@@ -1841,9 +1848,7 @@ export async function buildApp() {
   const syncInferenceNodeSnapshots = async (nodesRaw: Array<Record<string, unknown>>) => {
     const normalized = nodesRaw.map(normalizeBridgeNode).filter((item): item is BridgeNodeSnapshot => Boolean(item));
     if (!normalized.length) return;
-    const tenantIds = Array.from(
-      new Set(normalized.map((node) => node.tenantId).filter((tenantId): tenantId is string => Boolean(tenantId)))
-    );
+    const tenantIds = Array.from(new Set(normalized.flatMap((node) => [node.tenantId, ...node.tenantIds]).filter((tenantId): tenantId is string => Boolean(tenantId))));
     const existingTenants = tenantIds.length
       ? await prisma.tenant.findMany({
           where: { id: { in: tenantIds }, deletedAt: null },
@@ -1853,7 +1858,18 @@ export async function buildApp() {
     const validTenantIds = new Set(existingTenants.map((tenant) => tenant.id));
 
     for (const node of normalized) {
-      const tenantId = node.tenantId && validTenantIds.has(node.tenantId) ? node.tenantId : null;
+      const bridgeTenantIds = Array.from(
+        new Set(
+          [node.tenantId, ...node.tenantIds].filter((tenantId): tenantId is string => Boolean(tenantId && validTenantIds.has(tenantId)))
+        )
+      );
+      const existing = await prisma.inferenceNodeSnapshot.findUnique({
+        where: { nodeId: node.nodeId },
+        include: { assignments: { select: { tenantId: true } } }
+      });
+      const existingTenantIds = existing ? existing.assignments.map((assignment) => assignment.tenantId) : [];
+      const effectiveTenantIds = bridgeTenantIds.length > 0 ? bridgeTenantIds : existingTenantIds;
+      const tenantId = effectiveTenantIds.length === 1 ? effectiveTenantIds[0] : null;
       await prisma.inferenceNodeSnapshot.upsert({
         where: { nodeId: node.nodeId },
         update: {
@@ -1888,6 +1904,12 @@ export async function buildApp() {
           contractVersion: node.contractVersion
         }
       });
+      if (bridgeTenantIds.length > 0) {
+        await prisma.inferenceNodeTenantAssignment.deleteMany({ where: { nodeId: node.nodeId } });
+        await prisma.inferenceNodeTenantAssignment.createMany({
+          data: bridgeTenantIds.map((resolvedTenantId) => ({ nodeId: node.nodeId, tenantId: resolvedTenantId }))
+        });
+      }
     }
   };
 
@@ -3833,6 +3855,30 @@ export async function buildApp() {
     };
   });
 
+  const syncNodeTenantsInBridge = async (nodeId: string, tenantIds: string[]) => {
+    const response = await fetch(`${inferenceBridgeUrl}/v1/nodes/${encodeURIComponent(nodeId)}/tenants`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-node-auth-admin-secret": nodeAuthAdminSecret
+      },
+      body: JSON.stringify({ tenantIds })
+    });
+    const raw = await response.text();
+    if (response.status === 404) {
+      app.log.warn({ nodeId, tenantIds }, "ops.nodes.bridge_node_not_registered_for_tenant_assignment");
+      return;
+    }
+    if (!response.ok) {
+      throw new ApiDomainError({
+        statusCode: 502,
+        apiCode: "NODE_TENANT_ASSIGNMENT_BRIDGE_FAILED",
+        message: "Failed syncing node tenant assignment in inference bridge",
+        details: { statusCode: response.status, body: raw, nodeId, tenantIds }
+      });
+    }
+  };
+
   app.get("/ops/nodes", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
     const q = request.query as { sync?: string };
     if (q.sync !== "0") {
@@ -3846,15 +3892,82 @@ export async function buildApp() {
         }
       }
     }
-    const rows = await prisma.inferenceNodeSnapshot.findMany({ orderBy: { updatedAt: "desc" } });
+    const rows = await prisma.inferenceNodeSnapshot.findMany({
+      include: { assignments: { select: { tenantId: true }, orderBy: { tenantId: "asc" } } },
+      orderBy: { updatedAt: "desc" }
+    });
     return { data: rows.map(snapshotResponse), total: rows.length };
   });
 
   app.get("/ops/nodes/:nodeId", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
     const { nodeId } = request.params as { nodeId: string };
-    const row = await prisma.inferenceNodeSnapshot.findUnique({ where: { nodeId } });
+    const row = await prisma.inferenceNodeSnapshot.findUnique({
+      where: { nodeId },
+      include: { assignments: { select: { tenantId: true }, orderBy: { tenantId: "asc" } } }
+    });
     if (!row) throw app.httpErrors.notFound("Node not found");
     return { data: snapshotResponse(row) };
+  });
+
+  app.get("/ops/nodes/:nodeId/tenants", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
+    const { nodeId } = request.params as { nodeId: string };
+    const row = await prisma.inferenceNodeSnapshot.findUnique({
+      where: { nodeId },
+      include: { assignments: { select: { tenantId: true }, orderBy: { tenantId: "asc" } } }
+    });
+    if (!row) throw app.httpErrors.notFound("Node not found");
+    return {
+      data: {
+        nodeId: row.nodeId,
+        tenantIds: row.assignments.map((assignment) => assignment.tenantId)
+      }
+    };
+  });
+
+  app.put("/ops/nodes/:nodeId/tenants", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
+    if (!request.ctx?.isSuperuser) throw app.httpErrors.forbidden("Only superuser can assign node tenants");
+    const { nodeId } = request.params as { nodeId: string };
+    const body = z.object({ tenantIds: z.array(z.string().min(1)).default([]) }).parse(request.body ?? {});
+    const normalizedTenantIds = Array.from(new Set(body.tenantIds.map((tenantId) => tenantId.trim()).filter(Boolean)));
+
+    const node = await prisma.inferenceNodeSnapshot.findUnique({ where: { nodeId }, select: { nodeId: true } });
+    if (!node) throw app.httpErrors.notFound("Node not found");
+
+    if (normalizedTenantIds.length > 0) {
+      const existingTenants = await prisma.tenant.findMany({
+        where: { id: { in: normalizedTenantIds }, deletedAt: null },
+        select: { id: true }
+      });
+      const existingIds = new Set(existingTenants.map((tenant) => tenant.id));
+      const invalid = normalizedTenantIds.filter((tenantId) => !existingIds.has(tenantId));
+      if (invalid.length > 0) {
+        throw app.httpErrors.badRequest(`Invalid tenant ids: ${invalid.join(", ")}`);
+      }
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.inferenceNodeTenantAssignment.deleteMany({ where: { nodeId } });
+      if (normalizedTenantIds.length > 0) {
+        await tx.inferenceNodeTenantAssignment.createMany({
+          data: normalizedTenantIds.map((tenantId) => ({ nodeId, tenantId }))
+        });
+      }
+      await tx.inferenceNodeSnapshot.update({
+        where: { nodeId },
+        data: {
+          tenantId: normalizedTenantIds.length === 1 ? normalizedTenantIds[0] : null
+        }
+      });
+    });
+
+    await syncNodeTenantsInBridge(nodeId, normalizedTenantIds);
+
+    const updated = await prisma.inferenceNodeSnapshot.findUnique({
+      where: { nodeId },
+      include: { assignments: { select: { tenantId: true }, orderBy: { tenantId: "asc" } } }
+    });
+    if (!updated) throw app.httpErrors.notFound("Node not found");
+    return { data: snapshotResponse(updated) };
   });
 
   app.post("/ops/nodes/provision", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
@@ -3888,7 +4001,7 @@ export async function buildApp() {
       if (!tenant) throw app.httpErrors.badRequest("Invalid tenantScope");
     }
 
-    const snapshot = await prisma.inferenceNodeSnapshot.upsert({
+    await prisma.inferenceNodeSnapshot.upsert({
       where: { nodeId: body.nodeId },
       update: {
         tenantId,
@@ -3922,6 +4035,19 @@ export async function buildApp() {
         contractVersion: body.contractVersion
       }
     });
+    await prisma.inferenceNodeTenantAssignment.deleteMany({ where: { nodeId: body.nodeId } });
+    if (tenantId) {
+      await prisma.inferenceNodeTenantAssignment.create({
+        data: {
+          nodeId: body.nodeId,
+          tenantId
+        }
+      });
+    }
+    const snapshot = await prisma.inferenceNodeSnapshot.findUnique({
+      where: { nodeId: body.nodeId },
+      include: { assignments: { select: { tenantId: true }, orderBy: { tenantId: "asc" } } }
+    });
 
     const response = await fetch(`${inferenceBridgeUrl}/internal/nodes/enrollment-tokens`, {
       method: "POST",
@@ -3950,7 +4076,7 @@ export async function buildApp() {
         details: { statusCode: response.status, body: payload ?? raw }
       });
     }
-    return { data: { snapshot: snapshotResponse(snapshot), enrollment: payload?.data ?? payload } };
+    return { data: { snapshot: snapshot ? snapshotResponse(snapshot) : null, enrollment: payload?.data ?? payload } };
   });
 
   app.post("/ops/nodes/:nodeId/drain", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
@@ -3969,7 +4095,10 @@ export async function buildApp() {
       });
     }
     await prisma.inferenceNodeSnapshot.updateMany({ where: { nodeId }, data: { isDrained: true } });
-    const row = await prisma.inferenceNodeSnapshot.findUnique({ where: { nodeId } });
+    const row = await prisma.inferenceNodeSnapshot.findUnique({
+      where: { nodeId },
+      include: { assignments: { select: { tenantId: true }, orderBy: { tenantId: "asc" } } }
+    });
     return { data: row ? snapshotResponse(row) : { nodeId, isDrained: true } };
   });
 
@@ -3989,7 +4118,10 @@ export async function buildApp() {
       });
     }
     await prisma.inferenceNodeSnapshot.updateMany({ where: { nodeId }, data: { isDrained: false } });
-    const row = await prisma.inferenceNodeSnapshot.findUnique({ where: { nodeId } });
+    const row = await prisma.inferenceNodeSnapshot.findUnique({
+      where: { nodeId },
+      include: { assignments: { select: { tenantId: true }, orderBy: { tenantId: "asc" } } }
+    });
     return { data: row ? snapshotResponse(row) : { nodeId, isDrained: false } };
   });
 
@@ -4017,7 +4149,10 @@ export async function buildApp() {
       where: { nodeId },
       data: { status: "offline", isDrained: true, lastHeartbeatAt: new Date() }
     });
-    const row = await prisma.inferenceNodeSnapshot.findUnique({ where: { nodeId } });
+    const row = await prisma.inferenceNodeSnapshot.findUnique({
+      where: { nodeId },
+      include: { assignments: { select: { tenantId: true }, orderBy: { tenantId: "asc" } } }
+    });
     return { data: row ? snapshotResponse(row) : { nodeId, status: "offline", isDrained: true } };
   });
 

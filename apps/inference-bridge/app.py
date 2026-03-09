@@ -34,6 +34,7 @@ class NodeCapability(BaseModel):
 class InferenceNode(BaseModel):
     nodeId: str
     tenantId: Optional[str] = None
+    tenantIds: List[str] = Field(default_factory=list)
     runtime: str
     transport: Literal["http", "grpc"] = "http"
     endpoint: str
@@ -98,6 +99,10 @@ class NodeRevokeRequest(BaseModel):
     reason: str = "manual_revoke"
 
 
+class NodeTenantAssignmentRequest(BaseModel):
+    tenantIds: List[str] = Field(default_factory=list)
+
+
 class EnrollmentTokenEntry(BaseModel):
     nodeId: str
     tenantScope: str
@@ -137,6 +142,7 @@ for _model in (
     NodeEnrollRequest,
     NodeRefreshRequest,
     NodeRevokeRequest,
+    NodeTenantAssignmentRequest,
     EnrollmentTokenEntry,
     RefreshTokenEntry,
     NodeAuthClaims,
@@ -241,9 +247,11 @@ def _apply_heartbeat_ttl() -> None:
             node.status = "offline"
 
 
-def _scope_allows_node(claims: NodeAuthClaims, node_tenant_id: Optional[str]) -> bool:
+def _scope_allows_node(claims: NodeAuthClaims, node_tenant_id: Optional[str], node_tenant_ids: List[str]) -> bool:
     if claims.tenantScope == "*":
         return True
+    if node_tenant_ids:
+        return claims.tenantScope in node_tenant_ids
     if not node_tenant_id:
         return False
     return claims.tenantScope == node_tenant_id
@@ -261,7 +269,9 @@ def _select_node(task_type: str, model_ref: str, tenant_id: str) -> Optional[Inf
             continue
         if node.status == "offline" or node.isDrained:
             continue
-        if node.tenantId and node.tenantId != tenant_id:
+        if node.tenantIds and tenant_id not in node.tenantIds:
+            continue
+        if not node.tenantIds and node.tenantId and node.tenantId != tenant_id:
             continue
         supports_task = any(task_type in cap.taskTypes for cap in node.capabilities) or not node.capabilities
         supports_model = model_ref in node.models or not node.models
@@ -448,7 +458,7 @@ def refresh_node_token(body: NodeRefreshRequest):
 def register_node(node: InferenceNode, auth: NodeAuthClaims = Depends(_require_node_auth)):
     if auth.sub != node.nodeId:
         raise _error(409, "NODE_ID_MISMATCH", "token nodeId mismatch", {"tokenNodeId": auth.sub, "payloadNodeId": node.nodeId})
-    if not _scope_allows_node(auth, node.tenantId):
+    if not _scope_allows_node(auth, node.tenantId, node.tenantIds):
         raise _error(403, "NODE_SCOPE_FORBIDDEN", "node token tenant scope does not allow this registration")
     node.lastHeartbeatAt = _now()
     NODE_REGISTRY[node.nodeId] = node
@@ -462,7 +472,7 @@ def heartbeat(payload: HeartbeatRequest, auth: NodeAuthClaims = Depends(_require
     current = NODE_REGISTRY.get(payload.nodeId)
     if not current:
         raise _error(404, "NODE_NOT_FOUND", "node is not registered", {"nodeId": payload.nodeId})
-    if not _scope_allows_node(auth, current.tenantId):
+    if not _scope_allows_node(auth, current.tenantId, current.tenantIds):
         raise _error(403, "NODE_SCOPE_FORBIDDEN", "node token tenant scope does not allow this heartbeat")
 
     current.status = payload.status
@@ -512,6 +522,18 @@ def revoke_node(node_id: str, body: NodeRevokeRequest, _admin: None = Depends(_r
         if refresh.nodeId == node_id:
             refresh.revoked = True
     return {"data": {"nodeId": node_id, "revoked": True, "reason": body.reason}}
+
+
+@app.post("/v1/nodes/{node_id}/tenants")
+def set_node_tenants(node_id: str, body: NodeTenantAssignmentRequest, _admin: None = Depends(_require_admin_auth)):
+    node = NODE_REGISTRY.get(node_id)
+    if not node:
+        raise _error(404, "NODE_NOT_FOUND", "node not found")
+    tenant_ids = sorted(set([tenant_id.strip() for tenant_id in body.tenantIds if tenant_id.strip()]))
+    node.tenantIds = tenant_ids
+    node.tenantId = tenant_ids[0] if len(tenant_ids) == 1 else None
+    NODE_REGISTRY[node_id] = node
+    return {"data": {"nodeId": node_id, "tenantIds": tenant_ids}}
 
 
 @app.post("/v1/infer")
