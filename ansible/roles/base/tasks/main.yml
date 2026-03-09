@@ -1,0 +1,14 @@
+---
+- name: Install base packages
+  ansible.builtin.apt:
+    update_cache: true
+    name:
+      - git
+      - curl
+      - jq
+      - ripgrep
+      - ffmpeg
+      - python3
+      - python3-pip
+      - ca-certificates
+    state: present

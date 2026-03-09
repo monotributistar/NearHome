@@ -1,0 +1,50 @@
+---
+- name: Ensure local vault mount directory exists
+  ansible.builtin.file:
+    path: "{{ vault_mount_point }}"
+    state: directory
+    mode: "0755"
+
+- name: Check local vault device presence
+  ansible.builtin.stat:
+    path: "{{ vault_device }}"
+  register: vault_device_stat
+
+- name: Ensure local vault filesystem exists (explicitly opt-in)
+  community.general.filesystem:
+    fstype: "{{ vault_fs_type }}"
+    dev: "{{ vault_device }}"
+  when:
+    - vault_manage_device | bool
+    - vault_device_stat.stat.exists
+
+- name: Detect local vault filesystem type
+  ansible.builtin.command:
+    cmd: "lsblk -no FSTYPE {{ vault_device }}"
+  register: vault_detected_fstype
+  changed_when: false
+  when: vault_device_stat.stat.exists
+
+- name: Choose effective filesystem type
+  ansible.builtin.set_fact:
+    vault_effective_fstype: >-
+      {{
+        vault_fs_type
+        if (vault_manage_device | bool)
+        else (vault_detected_fstype.stdout | trim | default(vault_fs_type, true))
+      }}
+  when: vault_device_stat.stat.exists
+
+- name: Mount local vault
+  ansible.posix.mount:
+    path: "{{ vault_mount_point }}"
+    src: "{{ vault_device }}"
+    fstype: "{{ vault_effective_fstype }}"
+    opts: "{{ vault_mount_opts }}"
+    state: mounted
+  when: vault_device_stat.stat.exists
+
+- name: Warn when local vault device is missing
+  ansible.builtin.debug:
+    msg: "vault_device {{ vault_device }} no existe en el host; se omite mount en este run."
+  when: not vault_device_stat.stat.exists

@@ -7,7 +7,7 @@ Servicio MVP para provisionar playback por cámara.
 - `POST /provision` `{ tenantId, cameraId, rtspUrl, transport?, encryption?, tunnel?, codecHint?, targetProfiles? }`
 - `POST /deprovision` `{ tenantId, cameraId }`
 - `GET /health`
-- `GET /health/:tenantId/:cameraId`
+- `GET /health/:tenantId/:cameraId` (incluye runtime: live-edge lag + estado de worker)
 - `GET /metrics` (formato Prometheus)
 - `GET /playback/:tenantId/:cameraId/index.m3u8?token=`
 - `GET /playback/:tenantId/:cameraId/segment0.ts?token=`
@@ -43,6 +43,7 @@ Servicio MVP para provisionar playback por cámara.
 - `STREAM_PLAYBACK_READ_RETRY_MAX_MS`
 - `STREAM_PLAYBACK_READ_TIMEOUT_MS`
 - `STREAM_PLAYBACK_SLOW_MS`
+- `STREAM_PLAYBACK_LIVE_EDGE_STALE_MS` (default `3000`, umbral para marcar lag de live-edge como degradado)
 - `STREAM_MAX_ACTIVE_SESSIONS_PER_TENANT` (`0` deshabilita límite)
 - `STREAM_MEDIA_ENGINE` (`mock|process|process-mediamtx`, `mock` por defecto)
 - `STREAM_STORAGE_DEFAULT_VAULT_ID` (vault por defecto)
@@ -81,12 +82,14 @@ Servicio MVP para provisionar playback por cámara.
 - `STREAM_RETENTION_MAX_DISK_USAGE_PCT` (default `85`)
 - `STREAM_RETENTION_TARGET_DISK_USAGE_PCT` (default `75`)
 - `STREAM_RETENTION_FILE_EXTENSIONS` (default `.ts,.m4s,.mp4,.mkv,.fmp4`)
-- `STREAM_RETENTION_SEGMENT_SECONDS` (default `4`, usado por `ffmpeg-hls-retention`)
-- `STREAM_RETENTION_LIVE_LIST_SIZE` (default `15`, usado por `ffmpeg-hls-retention`)
+- `STREAM_RETENTION_SEGMENT_SECONDS` (default `1`, usado por `ffmpeg-hls-retention`)
+- `STREAM_RETENTION_LIVE_LIST_SIZE` (default `3`, usado por `ffmpeg-hls-retention`)
 - `STREAM_FFMPEG_VIDEO_MODE` (`copy|cbr`, default `copy`)
 - `STREAM_FFMPEG_TARGET_BITRATE_KBPS` (default `2500`, usado en modo `cbr`)
 - `STREAM_FFMPEG_MAXRATE_KBPS` (default `3000`, usado en modo `cbr`)
 - `STREAM_FFMPEG_BUFSIZE_KBPS` (default `5000`, usado en modo `cbr`)
+- `STREAM_FFMPEG_OUTPUT_FPS` (default `15`, usado en modo `cbr`)
+- `STREAM_FFMPEG_KEYFRAME_SECONDS` (default `1`, usado en modo `cbr` para forzar GOP corto)
 
 ## Notas
 
@@ -124,6 +127,9 @@ Servicio MVP para provisionar playback por cámara.
 - `nearhome_playback_slow_requests_total{tenant_id,camera_id,asset}`
 - `nearhome_playback_latency_ms_sum{tenant_id,camera_id,asset}`
 - `nearhome_playback_latency_ms_count{tenant_id,camera_id,asset}`
+- `nearhome_playback_live_edge_lag_ms{tenant_id,camera_id}`
+- `nearhome_playback_live_edge_observed_unixtime_seconds{tenant_id,camera_id}`
+- `nearhome_playback_live_edge_stale_total{tenant_id,camera_id}`
 - `nearhome_media_workers_total{state}`
 - `nearhome_media_worker_restarts_total`
 - `nearhome_storage_retention_enabled`
@@ -174,6 +180,8 @@ Servicio MVP para provisionar playback por cámara.
 
 - `POST /retention/sweep` ejecuta limpieza manual por antigüedad y presión de disco.
 - El modo `ffmpeg-hls-retention` mantiene playback en vivo (`index.m3u8`) y persistencia de segmentos en disco.
+- El preset aplica flags de baja latencia en ffmpeg (`nobuffer`, `low_delay`, `delete_segments`, `split_by_time`) para priorizar el cuadro más reciente.
+- Para acercarse al "latest frame", usar `STREAM_FFMPEG_VIDEO_MODE=cbr` con `STREAM_FFMPEG_KEYFRAME_SECONDS=1`; en modo `copy` la latencia mínima queda atada al GOP/keyframe del encoder de cámara.
 - La retención elimina:
   - primero archivos fuera de ventana (`STREAM_RETENTION_DAYS`),
   - luego archivos más antiguos por watermark si disco supera `STREAM_RETENTION_MAX_DISK_USAGE_PCT`.

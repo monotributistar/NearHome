@@ -1,0 +1,46 @@
+---
+# Core deploy settings
+environment: lab
+vault_mode: local
+
+nearhome_project_dir: /home/monotributistar/SOURCES/NearHome
+nearhome_repo_url: git@github.com:monotributistar/NearHome.git
+nearhome_repo_version: main
+
+# Secrets (replace in real environments via ansible-vault or CI vars)
+jwt_secret: dev-super-secret
+stream_token_secret: dev-stream-token-secret
+event_publish_secret: dev-event-publish-secret
+node_auth_jwt_secret: dev-node-auth-secret
+node_auth_admin_secret: dev-node-auth-admin-secret
+detection_callback_secret: dev-detection-callback-secret
+
+# Local vault
+vault_manage_device: false
+vault_device: /dev/disk/by-uuid/cfd52022-061d-4176-9d1a-58f97119dc74
+vault_fs_type: xfs
+vault_mount_point: /vault00
+vault_mount_opts: "defaults,noatime,nodiratime"
+
+# Remote vault (NFS)
+nfs_server: 192.168.0.10
+nfs_export_path: /exports/nearhome-vault00
+onprem_vault_remote_path: /data/storage-remote
+
+# On-prem origins
+onprem_admin_origin: http://192.168.0.156:5180
+onprem_portal_origin: http://192.168.0.156:5174
+cloudflare_tunnel_token: replace-with-cloudflare-tunnel-token
+
+# Stack behavior
+stream_media_engine: process
+stream_transcoder_preset: ffmpeg-hls-retention
+stream_transcoder_dry_run: 0
+stream_retention_days: 7
+stream_retention_max_disk_pct: 85
+stream_retention_target_disk_pct: 75
+
+# Optional operations
+nearhome_bootstrap_repo: false
+nearhome_run_dependency_install: true
+nearhome_run_smoke_after_deploy: true

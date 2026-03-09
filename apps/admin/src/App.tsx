@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useCan, useDelete, useList, useUpdate, useCreate } from "@refinedev/core";
 import { AppShell, PageCard, PrimaryButton, TextInput, SelectInput, DangerButton, Badge } from "@app/ui";
+import Hls from "hls.js";
 
 type AppProps = { apiUrl: string };
 const EVENT_GATEWAY_URL = import.meta.env.VITE_EVENT_GATEWAY_URL ?? "http://localhost:3011";
@@ -14,6 +15,98 @@ type RealtimeEvent = {
   sequence: number;
   payload: Record<string, unknown>;
 };
+
+type DeploymentServiceProbe = {
+  name: string;
+  target: string;
+  ok: boolean;
+  statusCode?: number | null;
+  latencyMs?: number | null;
+  error?: string | null;
+};
+
+type DeploymentNodeItem = {
+  nodeId?: string;
+  status?: "online" | "degraded" | "offline" | string;
+  tenantId?: string | null;
+  isDrained?: boolean;
+  queueDepth?: number;
+  capabilities?: Array<{ taskTypes?: string[] }>;
+  models?: string[];
+};
+
+type DeploymentStatusData = {
+  generatedAt: string;
+  overallOk: boolean;
+  services: DeploymentServiceProbe[];
+  nodes: {
+    sourceOk: boolean;
+    sourceError?: string | null;
+    total: number;
+    online: number;
+    degraded: number;
+    offline: number;
+    drained: number;
+    revokedEstimate: number;
+    items: DeploymentNodeItem[];
+  };
+};
+
+type CameraMonitorItem = {
+  id: string;
+  name: string;
+  location?: string | null;
+  isActive: boolean;
+  lifecycleStatus?: string;
+};
+
+type CameraFeedEntry = {
+  playbackUrl?: string;
+  expiresAt?: string;
+  status: "idle" | "loading" | "ready" | "error";
+  error?: string;
+};
+
+type CameraStreamHealth = {
+  status: "healthy" | "degraded" | "offline" | "unknown";
+  message: string;
+  liveEdgeLagMs?: number | null;
+  checkedAt?: string | null;
+};
+
+function toPlaybackPublicUrl(rawPlaybackUrl: string) {
+  const configuredPublicBase = import.meta.env.VITE_STREAM_GATEWAY_PUBLIC_URL?.trim();
+  const fallbackPublicBase = `${window.location.protocol}//${window.location.hostname}:3010`;
+  try {
+    const url = new URL(rawPlaybackUrl);
+    if (configuredPublicBase) {
+      const publicBase = new URL(configuredPublicBase);
+      url.protocol = publicBase.protocol;
+      url.host = publicBase.host;
+      return url.toString();
+    }
+    if (url.hostname === "stream-gateway") {
+      const publicBase = new URL(fallbackPublicBase);
+      url.protocol = publicBase.protocol;
+      url.host = publicBase.host;
+    }
+    return url.toString();
+  } catch {
+    return rawPlaybackUrl;
+  }
+}
+
+function getStreamGatewayPublicBaseUrl() {
+  const configuredPublicBase = import.meta.env.VITE_STREAM_GATEWAY_PUBLIC_URL?.trim();
+  return configuredPublicBase || `${window.location.protocol}//${window.location.hostname}:3010`;
+}
+
+function buildPlaybackUrl(args: { tenantId: string; cameraId: string; token: string }) {
+  const base = new URL(getStreamGatewayPublicBaseUrl());
+  base.pathname = `/playback/${encodeURIComponent(args.tenantId)}/${encodeURIComponent(args.cameraId)}/index.m3u8`;
+  base.search = `token=${encodeURIComponent(args.token)}`;
+  return base.toString();
+}
 
 function toWsUrl(httpUrl: string) {
   const url = new URL(httpUrl);
@@ -179,10 +272,12 @@ function Layout({ apiUrl }: { apiUrl: string }) {
         <aside className="col-span-12 rounded-box bg-base-100 p-3 shadow md:col-span-3 lg:col-span-2">
           <ul className="menu gap-1">
             {[
+              ["/control", "Control"],
               ["/tenants", "Tenants"],
               ["/users", "Users"],
               ["/memberships", "Memberships"],
               ["/cameras", "Cameras"],
+              ["/monitor", "Monitor"],
               ["/realtime", "Realtime"],
               ["/plans", "Plans"],
               ["/subscriptions", "Subscriptions"]
@@ -198,12 +293,14 @@ function Layout({ apiUrl }: { apiUrl: string }) {
 
         <main className="col-span-12 space-y-4 md:col-span-9 lg:col-span-10">
           <Routes>
-            <Route path="/" element={<Navigate to="/cameras" replace />} />
+            <Route path="/" element={<Navigate to="/control" replace />} />
+            <Route path="/control" element={<ControlPanelPage apiUrl={apiUrl} />} />
             <Route path="/tenants" element={<TenantsPage />} />
             <Route path="/users" element={<UsersPage />} />
             <Route path="/memberships" element={<MembershipsPage />} />
             <Route path="/cameras" element={<CamerasPage />} />
             <Route path="/cameras/:id" element={<CameraShow />} />
+            <Route path="/monitor" element={<MonitorPage apiUrl={apiUrl} />} />
             <Route path="/realtime" element={<RealtimePage apiUrl={apiUrl} />} />
             <Route path="/plans" element={<PlansPage />} />
             <Route path="/subscriptions" element={<SubscriptionPage apiUrl={apiUrl} onChanged={refresh} />} />
@@ -211,6 +308,198 @@ function Layout({ apiUrl }: { apiUrl: string }) {
         </main>
       </div>
     </AppShell>
+  );
+}
+
+function ControlPanelPage({ apiUrl }: { apiUrl: string }) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [data, setData] = useState<DeploymentStatusData | null>(null);
+
+  async function refreshStatus() {
+    const token = getToken();
+    if (!token) {
+      setError("Missing auth token");
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`${apiUrl}/ops/deployment/status`, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      if (!res.ok) throw new Error(`deployment status ${res.status}`);
+      const body = await res.json();
+      setData(body.data as DeploymentStatusData);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "unknown error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void refreshStatus();
+    const id = window.setInterval(() => {
+      void refreshStatus();
+    }, 15000);
+    return () => window.clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiUrl]);
+
+  if (loading && !data) return <PageCard title="Control Panel">Loading deployment status...</PageCard>;
+
+  return (
+    <div className="space-y-4">
+      <PageCard title="Control Panel">
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <Badge className={data?.overallOk ? "badge-success" : "badge-error"}>
+            overall: {data?.overallOk ? "ok" : "degraded"}
+          </Badge>
+          <span className="text-sm opacity-70">
+            updated: {data?.generatedAt ? new Date(data.generatedAt).toLocaleString() : "-"}
+          </span>
+          <PrimaryButton className="btn-sm" type="button" onClick={() => void refreshStatus()}>
+            Refresh
+          </PrimaryButton>
+        </div>
+        {error && <div className="alert alert-error py-2 text-sm">{error}</div>}
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
+          <div className="rounded-box border border-base-300 p-3 text-sm">
+            <div className="font-semibold">Services</div>
+            <div>{data?.services.length ?? 0}</div>
+          </div>
+          <div className="rounded-box border border-base-300 p-3 text-sm">
+            <div className="font-semibold">Nodes online</div>
+            <div>{data?.nodes.online ?? 0}</div>
+          </div>
+          <div className="rounded-box border border-base-300 p-3 text-sm">
+            <div className="font-semibold">Nodes degraded</div>
+            <div>{data?.nodes.degraded ?? 0}</div>
+          </div>
+          <div className="rounded-box border border-base-300 p-3 text-sm">
+            <div className="font-semibold">Nodes offline</div>
+            <div>{data?.nodes.offline ?? 0}</div>
+          </div>
+          <div className="rounded-box border border-base-300 p-3 text-sm">
+            <div className="font-semibold">Drained</div>
+            <div>{data?.nodes.drained ?? 0}</div>
+          </div>
+        </div>
+      </PageCard>
+
+      <PageCard title="Service Status">
+        <div className="overflow-x-auto">
+          <table className="table table-zebra">
+            <thead>
+              <tr>
+                <th>Service</th>
+                <th>Target</th>
+                <th>Status</th>
+                <th>HTTP</th>
+                <th>Latency</th>
+                <th>Error</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(data?.services ?? []).map((service) => (
+                <tr key={service.name}>
+                  <td>{service.name}</td>
+                  <td className="text-xs">{service.target}</td>
+                  <td>
+                    <Badge className={service.ok ? "badge-success" : "badge-error"}>{service.ok ? "ok" : "down"}</Badge>
+                  </td>
+                  <td>{service.statusCode ?? "-"}</td>
+                  <td>{service.latencyMs ?? "-"}</td>
+                  <td className="text-xs">{service.error ?? "-"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </PageCard>
+
+      <PageCard title="Node Registry">
+        {!data?.nodes.sourceOk && data?.nodes.sourceError && (
+          <div className="alert alert-warning mb-3 py-2 text-sm">node source error: {data.nodes.sourceError}</div>
+        )}
+        <div className="mb-3 text-sm opacity-80">
+          total: {data?.nodes.total ?? 0} | revoked estimate: {data?.nodes.revokedEstimate ?? 0}
+        </div>
+        <div className="overflow-x-auto">
+          <table className="table table-zebra">
+            <thead>
+              <tr>
+                <th>Node</th>
+                <th>Status</th>
+                <th>Tenant</th>
+                <th>Queue</th>
+                <th>Drained</th>
+                <th>Capabilities</th>
+                <th>Models</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(data?.nodes.items ?? []).map((node, idx) => (
+                <tr key={node.nodeId ?? `node-${idx}`}>
+                  <td>{node.nodeId ?? "-"}</td>
+                  <td>
+                    <Badge
+                      className={
+                        node.status === "online"
+                          ? "badge-success"
+                          : node.status === "degraded"
+                            ? "badge-warning"
+                            : "badge-error"
+                      }
+                    >
+                      {node.status ?? "-"}
+                    </Badge>
+                  </td>
+                  <td>{node.tenantId ?? "-"}</td>
+                  <td>{node.queueDepth ?? 0}</td>
+                  <td>{node.isDrained ? "yes" : "no"}</td>
+                  <td className="text-xs">
+                    {(node.capabilities ?? [])
+                      .flatMap((cap) => cap.taskTypes ?? [])
+                      .join(", ") || "-"}
+                  </td>
+                  <td className="text-xs">{(node.models ?? []).join(", ") || "-"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </PageCard>
+
+      <PageCard title="Architecture Hierarchy">
+        <div className="grid grid-cols-1 gap-3 text-sm md:grid-cols-2">
+          <div className="rounded-box border border-base-300 p-3">
+            <div className="mb-1 font-semibold">Control Plane</div>
+            <div>API</div>
+            <div>Admin UI / Portal UI</div>
+          </div>
+          <div className="rounded-box border border-base-300 p-3">
+            <div className="mb-1 font-semibold">Data Plane</div>
+            <div>Stream Gateway</div>
+            <div>Vault local/remote</div>
+          </div>
+          <div className="rounded-box border border-base-300 p-3">
+            <div className="mb-1 font-semibold">Event Plane</div>
+            <div>Event Gateway</div>
+            <div>Realtime SSE/WS</div>
+          </div>
+          <div className="rounded-box border border-base-300 p-3">
+            <div className="mb-1 font-semibold">Detection Plane</div>
+            <div>Inference Bridge</div>
+            <div>Dispatcher + Temporal + Worker + Nodes</div>
+          </div>
+        </div>
+      </PageCard>
+    </div>
   );
 }
 
@@ -581,12 +870,15 @@ function CamerasPage() {
   } as any);
   const result = camerasList.result;
 
-  const { mutate: create } = useCreate();
-  const { mutate: update } = useUpdate();
+  const { mutateAsync: create } = useCreate();
+  const { mutateAsync: update } = useUpdate();
   const { mutate: remove } = useDelete();
 
   const [editing, setEditing] = useState<any>(null);
   const [form, setForm] = useState({ name: "", description: "", rtspUrl: "", location: "", tags: "", isActive: true });
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveOk, setSaveOk] = useState<string | null>(null);
 
   const totalPages = Math.max(Math.ceil((result?.total ?? 0) / 5), 1);
 
@@ -599,55 +891,77 @@ function CamerasPage() {
         <PrimaryButton onClick={() => (camerasList as any).query.refetch()}>Search</PrimaryButton>
       </div>
 
-      {canCreate && (
+      {(canCreate || canEdit) && (
         <form
-          className="mb-4 grid grid-cols-1 gap-2 md:grid-cols-7"
-          onSubmit={(e) => {
+          className="mb-4 grid grid-cols-1 gap-2 md:grid-cols-12"
+          onSubmit={async (e) => {
             e.preventDefault();
+            setSaveError(null);
+            setSaveOk(null);
             const payload = { ...form, tags: form.tags ? form.tags.split(",").map((x) => x.trim()) : [] };
-            if (editing) {
-              update({ resource: "cameras", id: editing.id, values: payload }, { onSuccess: () => setEditing(null) });
-            } else {
-              create({ resource: "cameras", values: payload });
+            try {
+              setSaving(true);
+              if (editing) {
+                await update({ resource: "cameras", id: editing.id, values: payload });
+                setEditing(null);
+                setSaveOk("Camera actualizada");
+              } else if (canCreate) {
+                await create({ resource: "cameras", values: payload });
+                setSaveOk("Camera creada");
+              }
+              setForm({ name: "", description: "", rtspUrl: "", location: "", tags: "", isActive: true });
+              await (camerasList as any).query.refetch();
+            } catch (error) {
+              setSaveError(error instanceof Error ? error.message : "No se pudo guardar la cámara");
+            } finally {
+              setSaving(false);
             }
-            setForm({ name: "", description: "", rtspUrl: "", location: "", tags: "", isActive: true });
-            (camerasList as any).query.refetch();
           }}
         >
           <TextInput
             placeholder="name"
             value={form.name}
+            className="md:col-span-2"
             onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
           />
           <textarea
             placeholder="description"
-            className="textarea textarea-bordered w-full"
+            className="textarea textarea-bordered w-full md:col-span-3"
             value={form.description}
             onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
           />
           <TextInput
-            placeholder="rtsp://..."
+            placeholder="rtsp://usuario:password@ip:puerto/stream"
             value={form.rtspUrl}
+            className="font-mono md:col-span-5"
+            title={form.rtspUrl}
             onChange={(e) => setForm((f) => ({ ...f, rtspUrl: e.target.value }))}
           />
           <TextInput
             placeholder="location"
             value={form.location}
+            className="md:col-span-2"
             onChange={(e) => setForm((f) => ({ ...f, location: e.target.value }))}
           />
           <TextInput
             placeholder="tags csv"
             value={form.tags}
+            className="md:col-span-2"
             onChange={(e) => setForm((f) => ({ ...f, tags: e.target.value }))}
           />
           <SelectInput
             value={String(form.isActive)}
+            className="md:col-span-2"
             onChange={(e) => setForm((f) => ({ ...f, isActive: e.target.value === "true" }))}
           >
             <option value="true">Active</option>
             <option value="false">Inactive</option>
           </SelectInput>
-          <PrimaryButton type="submit">{editing ? "Save" : "Create"}</PrimaryButton>
+          <PrimaryButton type="submit" className="md:col-span-2" disabled={saving || (!editing && !canCreate)}>
+            {editing ? "Save" : "Create"}
+          </PrimaryButton>
+          {saveError && <div className="alert alert-error py-2 text-sm md:col-span-12">{saveError}</div>}
+          {saveOk && <div className="alert alert-success py-2 text-sm md:col-span-12">{saveOk}</div>}
         </form>
       )}
 
@@ -656,6 +970,7 @@ function CamerasPage() {
           <tr>
             <th>Name</th>
             <th>Location</th>
+            <th>RTSP URL</th>
             <th>Status</th>
             <th></th>
           </tr>
@@ -665,6 +980,9 @@ function CamerasPage() {
             <tr key={c.id}>
               <td>{c.name}</td>
               <td>{c.location || "-"}</td>
+              <td>
+                <code className="block max-w-[22rem] overflow-x-auto whitespace-nowrap text-xs">{c.rtspUrl}</code>
+              </td>
               <td>
                 <Badge className={c.isActive ? "badge-success" : "badge-ghost"}>
                   {c.isActive ? "Active" : "Inactive"}
@@ -1112,6 +1430,470 @@ function SubscriptionPage({ apiUrl, onChanged }: { apiUrl: string; onChanged: ()
           ))}
         </div>
       )}
+    </PageCard>
+  );
+}
+
+function CameraFeedPlayer({ playbackUrl, cameraName }: { playbackUrl: string; cameraName: string }) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const hlsRef = useRef<Hls | null>(null);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    video.muted = true;
+    video.playsInline = true;
+
+    if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      video.src = playbackUrl;
+      void video.play().catch(() => undefined);
+      const keepNearLiveEdge = () => {
+        const seekable = video.seekable;
+        if (!seekable || seekable.length === 0) return;
+        const liveEdge = seekable.end(seekable.length - 1);
+        const lag = liveEdge - video.currentTime;
+        if (lag > 1.2) {
+          video.currentTime = Math.max(0, liveEdge - 0.15);
+        }
+      };
+      const timer = window.setInterval(keepNearLiveEdge, 500);
+      return () => {
+        window.clearInterval(timer);
+        video.pause();
+        video.removeAttribute("src");
+        video.load();
+      };
+    }
+
+    if (!Hls.isSupported()) return;
+
+    const hls = new Hls({
+      enableWorker: true,
+      lowLatencyMode: true,
+      liveSyncDurationCount: 1,
+      liveMaxLatencyDurationCount: 2,
+      maxBufferLength: 1,
+      maxMaxBufferLength: 2,
+      backBufferLength: 0,
+      maxBufferSize: 0,
+      highBufferWatchdogPeriod: 0.5
+    });
+    hlsRef.current = hls;
+    hls.attachMedia(video);
+    hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+      hls.loadSource(playbackUrl);
+    });
+    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      void video.play().catch(() => undefined);
+    });
+    const liveEdgeTimer = window.setInterval(() => {
+      const liveSyncPosition = hls.liveSyncPosition;
+      if (typeof liveSyncPosition !== "number") return;
+      if (liveSyncPosition - video.currentTime > 1.2) {
+        video.currentTime = Math.max(0, liveSyncPosition - 0.1);
+      }
+    }, 500);
+
+    return () => {
+      window.clearInterval(liveEdgeTimer);
+      hlsRef.current?.destroy();
+      hlsRef.current = null;
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+    };
+  }, [playbackUrl]);
+
+  return <video ref={videoRef} className="aspect-video w-full rounded-box bg-black" controls autoPlay playsInline title={cameraName} />;
+}
+
+function MonitorPage({ apiUrl }: { apiUrl: string }) {
+  const canList = useCan({ resource: "cameras", action: "list" }).data?.can;
+  const [loading, setLoading] = useState(true);
+  const [refreshingFeeds, setRefreshingFeeds] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [onlyActive, setOnlyActive] = useState(true);
+  const [cameras, setCameras] = useState<CameraMonitorItem[]>([]);
+  const [feeds, setFeeds] = useState<Record<string, CameraFeedEntry>>({});
+  const [streamHealth, setStreamHealth] = useState<Record<string, CameraStreamHealth>>({});
+
+  const tenantId = getTenantId();
+  const token = getToken();
+
+  const visibleCameras = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return cameras.filter((camera) => {
+      if (onlyActive && !camera.isActive) return false;
+      if (!q) return true;
+      return (
+        camera.name.toLowerCase().includes(q) ||
+        String(camera.location ?? "")
+          .toLowerCase()
+          .includes(q) ||
+        camera.id.toLowerCase().includes(q)
+      );
+    });
+  }, [cameras, query, onlyActive]);
+
+  async function loadAllCameras() {
+    if (!token || !tenantId) {
+      setError("Missing auth context");
+      setLoading(false);
+      return [];
+    }
+
+    const pageSize = 50;
+    let start = 0;
+    let total = Number.MAX_SAFE_INTEGER;
+    const all: CameraMonitorItem[] = [];
+
+    while (start < total) {
+      const res = await fetch(`${apiUrl}/cameras?_start=${start}&_end=${start + pageSize}&_sort=createdAt&_order=DESC`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "X-Tenant-Id": tenantId
+        }
+      });
+      if (!res.ok) throw new Error(`cameras ${res.status}`);
+      const payload = (await res.json()) as { data?: CameraMonitorItem[]; total?: number };
+      const rows = payload.data ?? [];
+      const parsedTotal = Number(payload.total ?? res.headers.get("x-total-count") ?? rows.length);
+      total = Number.isFinite(parsedTotal) ? parsedTotal : rows.length;
+      all.push(...rows);
+      if (rows.length === 0) break;
+      start += rows.length;
+    }
+
+    setCameras(all);
+    return all;
+  }
+
+  async function issueFeedTokens(targetCameras: CameraMonitorItem[], opts?: { force?: boolean }) {
+    if (!token || !tenantId) return;
+    if (!targetCameras.length) {
+      setFeeds({});
+      return;
+    }
+
+    setRefreshingFeeds(true);
+    const force = Boolean(opts?.force);
+    const now = Date.now();
+    const validThresholdMs = 45 * 1000;
+    const targets = targetCameras.filter((camera) => {
+      if (force) return true;
+      const current = feeds[camera.id];
+      if (!current?.playbackUrl || current.status !== "ready" || !current.expiresAt) return true;
+      const expiresAtMs = Date.parse(current.expiresAt);
+      if (Number.isNaN(expiresAtMs)) return true;
+      return expiresAtMs - now <= validThresholdMs;
+    });
+
+    if (!targets.length) {
+      setRefreshingFeeds(false);
+      return;
+    }
+
+    setFeeds((prev) => {
+      const next = { ...prev };
+      for (const camera of targets) {
+        next[camera.id] = { ...(next[camera.id] ?? { status: "idle" }), status: "loading", error: undefined };
+      }
+      return next;
+    });
+
+    const nextEntries: Record<string, CameraFeedEntry> = {};
+    let reusableSessionsByCamera: Record<string, { token: string; expiresAt: string }> | null = null;
+    const loadReusableSessions = async () => {
+      if (reusableSessionsByCamera) return reusableSessionsByCamera;
+      const statuses = ["issued", "active"];
+      const map: Record<string, { token: string; expiresAt: string }> = {};
+      for (const status of statuses) {
+        const sessionsResponse = await fetch(
+          `${apiUrl}/stream-sessions?_start=0&_end=200&_sort=createdAt&_order=DESC&status=${status}`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "X-Tenant-Id": tenantId
+            }
+          }
+        );
+        if (!sessionsResponse.ok) continue;
+        const payload = (await sessionsResponse.json()) as {
+          data?: Array<{ cameraId?: string; token?: string; expiresAt?: string }>;
+        };
+        for (const session of payload.data ?? []) {
+          if (!session.cameraId || !session.token || !session.expiresAt) continue;
+          const expiresAtMs = Date.parse(session.expiresAt);
+          if (Number.isNaN(expiresAtMs) || expiresAtMs <= Date.now()) continue;
+          if (!map[session.cameraId]) {
+            map[session.cameraId] = {
+              token: session.token,
+              expiresAt: session.expiresAt
+            };
+          }
+        }
+      }
+      reusableSessionsByCamera = map;
+      return map;
+    };
+
+    for (const camera of targets) {
+      try {
+        const response = await fetch(`${apiUrl}/cameras/${camera.id}/stream-token`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "X-Tenant-Id": tenantId
+          }
+        });
+        if (response.status === 409) {
+          const reusable = await loadReusableSessions();
+          const reusableSession = reusable[camera.id];
+          if (reusableSession) {
+            nextEntries[camera.id] = {
+              status: "ready",
+              playbackUrl: buildPlaybackUrl({
+                tenantId,
+                cameraId: camera.id,
+                token: reusableSession.token
+              }),
+              expiresAt: reusableSession.expiresAt
+            };
+            continue;
+          }
+        }
+        if (!response.ok) throw new Error(`stream-token ${response.status}`);
+        const payload = (await response.json()) as { playbackUrl?: string; expiresAt?: string };
+        if (!payload.playbackUrl) {
+          nextEntries[camera.id] = { status: "error", error: "No playback URL returned" };
+          continue;
+        }
+        nextEntries[camera.id] = {
+          status: "ready",
+          playbackUrl: toPlaybackPublicUrl(payload.playbackUrl),
+          expiresAt: payload.expiresAt
+        };
+      } catch (tokenError) {
+        const existing = feeds[camera.id];
+        if (existing?.playbackUrl && existing.status === "ready") {
+          nextEntries[camera.id] = existing;
+          continue;
+        }
+        nextEntries[camera.id] = {
+          status: "error",
+          error: tokenError instanceof Error ? tokenError.message : "token error"
+        };
+      }
+    }
+
+    setFeeds((prev) => ({ ...prev, ...nextEntries }));
+    setRefreshingFeeds(false);
+  }
+
+  async function refreshStreamHealth(targetCameras: CameraMonitorItem[]) {
+    if (!tenantId || !targetCameras.length) return;
+    const baseUrl = getStreamGatewayPublicBaseUrl();
+    const next: Record<string, CameraStreamHealth> = {};
+    await Promise.all(
+      targetCameras.map(async (camera) => {
+        try {
+          const response = await fetch(
+            `${baseUrl}/health/${encodeURIComponent(tenantId)}/${encodeURIComponent(camera.id)}`
+          );
+          if (!response.ok) {
+            next[camera.id] = {
+              status: "offline",
+              message: response.status === 404 ? "Stream no provisionado" : `Health ${response.status}`,
+              checkedAt: new Date().toISOString()
+            };
+            return;
+          }
+          const payload = (await response.json()) as {
+            data?: { status?: string; health?: { connectivity?: string; error?: string | null } };
+            runtime?: {
+              liveEdgeLagMs?: number | null;
+              liveEdgeStale?: boolean | null;
+              workerState?: string | null;
+              workerLastExitCode?: number | null;
+              diagnostics?: string[];
+            };
+          };
+          const diagnostics = payload.runtime?.diagnostics ?? [];
+          const workerState = payload.runtime?.workerState ?? "unknown";
+          const connectivity = payload.data?.health?.connectivity ?? "unknown";
+          const liveEdgeLagMs = payload.runtime?.liveEdgeLagMs ?? null;
+          let status: CameraStreamHealth["status"] = "healthy";
+          if (payload.data?.status !== "ready" || workerState !== "running" || connectivity === "offline") {
+            status = "offline";
+          } else if (payload.runtime?.liveEdgeStale || connectivity === "degraded") {
+            status = "degraded";
+          }
+          const baseMessage =
+            status === "healthy"
+              ? "Feed en tiempo real OK"
+              : status === "degraded"
+                ? "Feed con atraso o degradación"
+                : "Feed caído o inestable";
+          const suffix = diagnostics.length > 0 ? ` (${diagnostics.slice(0, 2).join(", ")})` : "";
+          const exitSuffix =
+            payload.runtime?.workerLastExitCode !== null && payload.runtime?.workerLastExitCode !== undefined
+              ? ` [exit=${payload.runtime.workerLastExitCode}]`
+              : "";
+          next[camera.id] = {
+            status,
+            message: `${baseMessage}${suffix}${exitSuffix}`,
+            liveEdgeLagMs,
+            checkedAt: new Date().toISOString()
+          };
+        } catch (healthError) {
+          next[camera.id] = {
+            status: "offline",
+            message: healthError instanceof Error ? healthError.message : "Health check failed",
+            checkedAt: new Date().toISOString()
+          };
+        }
+      })
+    );
+    setStreamHealth((prev) => ({ ...prev, ...next }));
+  }
+
+  useEffect(() => {
+    if (canList === false) {
+      setLoading(false);
+      return;
+    }
+    if (!token || !tenantId) {
+      setLoading(false);
+      setError("Missing auth context");
+      return;
+    }
+
+    let canceled = false;
+    setLoading(true);
+    setError(null);
+    void (async () => {
+      try {
+        const all = await loadAllCameras();
+        if (canceled) return;
+        await issueFeedTokens(all);
+        await refreshStreamHealth(all);
+      } catch (loadError) {
+        if (canceled) return;
+        setError(loadError instanceof Error ? loadError.message : "load error");
+      } finally {
+        if (!canceled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      canceled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiUrl, canList, tenantId, token]);
+
+  useEffect(() => {
+    if (!cameras.length) return;
+    const id = window.setInterval(() => {
+      void issueFeedTokens(cameras);
+      void refreshStreamHealth(cameras);
+    }, 4 * 60 * 1000);
+    return () => window.clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cameras, apiUrl, token, tenantId]);
+
+  useEffect(() => {
+    if (!cameras.length) return;
+    const id = window.setInterval(() => {
+      void refreshStreamHealth(cameras);
+    }, 10_000);
+    return () => window.clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cameras, tenantId]);
+
+  if (canList === false) return <PageCard title="Monitor">No tenés permisos para listar cámaras.</PageCard>;
+
+  return (
+    <PageCard title="Monitor de cámaras (tiempo real)">
+      <div className="mb-3 flex flex-wrap gap-2">
+        <TextInput
+          className="max-w-sm"
+          placeholder="Buscar por nombre, location o id"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+        <label className="label cursor-pointer gap-2">
+          <input
+            type="checkbox"
+            className="checkbox checkbox-sm"
+            checked={onlyActive}
+            onChange={(event) => setOnlyActive(event.target.checked)}
+          />
+          <span className="label-text">Solo activas</span>
+        </label>
+        <PrimaryButton
+          className="btn-sm"
+          type="button"
+          onClick={() => {
+            void issueFeedTokens(cameras, { force: true });
+            void refreshStreamHealth(cameras);
+          }}
+        >
+          Refrescar feeds
+        </PrimaryButton>
+      </div>
+      <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
+        <Badge>{visibleCameras.length} visibles</Badge>
+        <Badge>{cameras.length} totales</Badge>
+        {refreshingFeeds && <Badge className="badge-warning">actualizando tokens</Badge>}
+      </div>
+      {error && <div className="alert alert-error mb-3 py-2 text-sm">{error}</div>}
+      {loading && <div className="text-sm opacity-70">Cargando cámaras y sesiones...</div>}
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-2 2xl:grid-cols-3">
+        {visibleCameras.map((camera) => {
+          const feed = feeds[camera.id];
+          const health = streamHealth[camera.id];
+          return (
+            <div key={camera.id} className="rounded-box border border-base-300 p-3">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <div className="font-semibold">{camera.name}</div>
+                <div className="flex items-center gap-1">
+                  <Badge className={camera.isActive ? "badge-success" : "badge-ghost"}>
+                    {camera.isActive ? "active" : "inactive"}
+                  </Badge>
+                  <Badge>{camera.lifecycleStatus ?? "unknown"}</Badge>
+                </div>
+              </div>
+              <div className="mb-2 text-xs opacity-70">
+                <div>id: {camera.id}</div>
+                <div>location: {camera.location ?? "-"}</div>
+                <div>token expira: {feed?.expiresAt ? new Date(feed.expiresAt).toLocaleTimeString() : "-"}</div>
+                <div>
+                  stream health:{" "}
+                  {health ? (
+                    <span>
+                      {health.status}
+                      {typeof health.liveEdgeLagMs === "number" ? ` · lag ${Math.round(health.liveEdgeLagMs)}ms` : ""}
+                    </span>
+                  ) : (
+                    "loading"
+                  )}
+                </div>
+                {health?.message && <div>diagnóstico: {health.message}</div>}
+              </div>
+              {feed?.status === "ready" && feed.playbackUrl ? (
+                <CameraFeedPlayer playbackUrl={feed.playbackUrl} cameraName={camera.name} />
+              ) : (
+                <div className="flex aspect-video items-center justify-center rounded-box bg-base-200 text-sm">
+                  {feed?.status === "loading" ? "Preparando stream..." : feed?.error ?? "Feed no disponible"}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {!loading && !visibleCameras.length && <div className="mt-3 text-sm opacity-70">No hay cámaras para mostrar.</div>}
     </PageCard>
   );
 }

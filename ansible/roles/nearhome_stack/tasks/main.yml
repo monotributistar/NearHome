@@ -1,0 +1,77 @@
+---
+- name: Ensure project parent directory exists
+  ansible.builtin.file:
+    path: "{{ nearhome_project_dir | dirname }}"
+    state: directory
+    mode: "0755"
+
+- name: Checkout repository when bootstrap is enabled
+  ansible.builtin.git:
+    repo: "{{ nearhome_repo_url }}"
+    dest: "{{ nearhome_project_dir }}"
+    version: "{{ nearhome_repo_version }}"
+    accept_hostkey: true
+    update: true
+  when: nearhome_bootstrap_repo | bool
+
+- name: Enable corepack
+  ansible.builtin.command:
+    cmd: corepack enable
+  args:
+    chdir: "{{ nearhome_project_dir }}"
+  changed_when: false
+
+- name: Prepare pinned pnpm version
+  ansible.builtin.command:
+    cmd: corepack prepare pnpm@9.15.0 --activate
+  args:
+    chdir: "{{ nearhome_project_dir }}"
+  changed_when: false
+
+- name: Install workspace dependencies
+  ansible.builtin.command:
+    cmd: pnpm i
+  args:
+    chdir: "{{ nearhome_project_dir }}"
+  when: nearhome_run_dependency_install | bool
+
+- name: Copy app env files if missing
+  ansible.builtin.shell: |
+    set -euo pipefail
+    cp -n apps/api/.env.example apps/api/.env || true
+    cp -n apps/stream-gateway/.env.example apps/stream-gateway/.env || true
+    cp -n apps/event-gateway/.env.example apps/event-gateway/.env || true
+    cp -n apps/admin/.env.example apps/admin/.env || true
+    cp -n apps/portal/.env.example apps/portal/.env || true
+  args:
+    chdir: "{{ nearhome_project_dir }}"
+    executable: /bin/bash
+  changed_when: false
+
+- name: Render on-prem env file
+  ansible.builtin.template:
+    src: env.onprem.j2
+    dest: "{{ nearhome_project_dir }}/infra/.env.onprem"
+    mode: "0640"
+
+- name: Render on-prem remote env file
+  ansible.builtin.template:
+    src: env.onprem.j2
+    dest: "{{ nearhome_project_dir }}/infra/.env.onprem.remote"
+    mode: "0640"
+
+- name: Choose stack mode
+  ansible.builtin.set_fact:
+    nearhome_stack_mode: "{{ 'onprem-remote' if vault_mode == 'remote' else 'onprem' }}"
+
+- name: Bring up on-prem stack
+  ansible.builtin.command:
+    cmd: "pnpm pilot:stack:up:{{ nearhome_stack_mode if nearhome_stack_mode != 'onprem-remote' else 'onprem:remote' }}"
+  args:
+    chdir: "{{ nearhome_project_dir }}"
+
+- name: Restart temporal clients to avoid first-boot race
+  ansible.builtin.command:
+    cmd: docker restart nearhome-stack-onprem-detection-dispatcher-1 nearhome-stack-onprem-detection-worker-1
+  changed_when: true
+  failed_when: false

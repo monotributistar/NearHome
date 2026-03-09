@@ -213,8 +213,11 @@ function buildFfmpegHlsRetentionCommand(input: StreamMediaInput, storageDir: str
   const targetBitrateKbps = Math.max(128, Number(process.env.STREAM_FFMPEG_TARGET_BITRATE_KBPS ?? 2500));
   const maxRateKbps = Math.max(targetBitrateKbps, Number(process.env.STREAM_FFMPEG_MAXRATE_KBPS ?? targetBitrateKbps));
   const bufferKbps = Math.max(maxRateKbps, Number(process.env.STREAM_FFMPEG_BUFSIZE_KBPS ?? maxRateKbps * 2));
-  const segmentSeconds = Math.max(1, Number(process.env.STREAM_RETENTION_SEGMENT_SECONDS ?? 4));
-  const liveListSize = Math.max(3, Number(process.env.STREAM_RETENTION_LIVE_LIST_SIZE ?? 15));
+  const outputFps = Math.max(5, Number(process.env.STREAM_FFMPEG_OUTPUT_FPS ?? 15));
+  const keyframeSeconds = Math.max(0.25, Number(process.env.STREAM_FFMPEG_KEYFRAME_SECONDS ?? 1));
+  const keyint = Math.max(1, Math.round(outputFps * keyframeSeconds));
+  const segmentSeconds = Math.max(1, Number(process.env.STREAM_RETENTION_SEGMENT_SECONDS ?? 1));
+  const liveListSize = Math.max(2, Number(process.env.STREAM_RETENTION_LIVE_LIST_SIZE ?? 3));
   const videoArgs =
     videoMode === "cbr"
       ? [
@@ -226,6 +229,18 @@ function buildFfmpegHlsRetentionCommand(input: StreamMediaInput, storageDir: str
           "zerolatency",
           "-pix_fmt",
           "yuv420p",
+          "-r",
+          `${outputFps}`,
+          "-g",
+          `${keyint}`,
+          "-keyint_min",
+          `${keyint}`,
+          "-sc_threshold",
+          "0",
+          "-bf",
+          "0",
+          "-force_key_frames",
+          `"expr:gte(t,n_forced*${keyframeSeconds})"`,
           "-b:v",
           `${targetBitrateKbps}k`,
           "-maxrate",
@@ -236,6 +251,14 @@ function buildFfmpegHlsRetentionCommand(input: StreamMediaInput, storageDir: str
       : ["-c:v", "copy"];
   return [
     "ffmpeg",
+    "-fflags",
+    "nobuffer",
+    "-flags",
+    "low_delay",
+    "-max_delay",
+    "0",
+    "-reorder_queue_size",
+    "0",
     ...inputArgs,
     "-an",
     ...videoArgs,
@@ -246,7 +269,7 @@ function buildFfmpegHlsRetentionCommand(input: StreamMediaInput, storageDir: str
     "-hls_list_size",
     `${liveListSize}`,
     "-hls_flags",
-    "append_list+omit_endlist+program_date_time",
+    "append_list+delete_segments+omit_endlist+program_date_time+split_by_time",
     "-strftime",
     "1",
     "-hls_segment_filename",

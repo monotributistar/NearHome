@@ -481,6 +481,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
   const playbackReadRetryMaxMs = Math.max(playbackReadRetryBaseMs, Number(process.env.STREAM_PLAYBACK_READ_RETRY_MAX_MS ?? 250));
   const playbackReadTimeoutMs = Math.max(50, Number(process.env.STREAM_PLAYBACK_READ_TIMEOUT_MS ?? 2000));
   const playbackSlowRequestMs = Math.max(1, Number(process.env.STREAM_PLAYBACK_SLOW_MS ?? 500));
+  const playbackLiveEdgeStaleMs = Math.max(1000, Number(process.env.STREAM_PLAYBACK_LIVE_EDGE_STALE_MS ?? 3000));
   const maxActiveSessionsPerTenant = Math.max(0, Number(process.env.STREAM_MAX_ACTIVE_SESSIONS_PER_TENANT ?? 0));
   const defaultIngestTransport = IngestTransportSchema.catch("auto").parse(process.env.STREAM_DEFAULT_INGEST_TRANSPORT);
   const defaultIngestEncryption = IngestEncryptionSchema.catch("optional").parse(process.env.STREAM_DEFAULT_INGEST_ENCRYPTION);
@@ -521,6 +522,9 @@ export async function buildApp(options: BuildAppOptions = {}) {
   const playbackSlowRequestCounters = new Map<string, number>();
   const playbackLatencySum = new Map<string, number>();
   const playbackLatencyCount = new Map<string, number>();
+  const playbackLiveEdgeLagGauge = new Map<string, number>();
+  const playbackLiveEdgeObservedAtGauge = new Map<string, number>();
+  const playbackLiveEdgeStaleCounters = new Map<string, number>();
 
   const metricKey = (labels: Record<string, string>) =>
     Object.entries(labels)
@@ -1245,6 +1249,35 @@ export async function buildApp(options: BuildAppOptions = {}) {
       .join("\n");
   };
 
+  const extractLatestProgramDateTimeMs = (manifest: string) => {
+    const lines = manifest.split("\n");
+    let latest: number | null = null;
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("#EXT-X-PROGRAM-DATE-TIME:")) continue;
+      const value = trimmed.slice("#EXT-X-PROGRAM-DATE-TIME:".length).trim();
+      const ts = Date.parse(value);
+      if (Number.isNaN(ts)) continue;
+      latest = ts;
+    }
+    return latest;
+  };
+
+  const updateLiveEdgeMetrics = (tenantId: string, cameraId: string, latestProgramDateTimeMs: number | null) => {
+    if (latestProgramDateTimeMs === null) return null;
+    const now = Date.now();
+    const lagMs = Math.max(0, now - latestProgramDateTimeMs);
+    const labels = { tenant_id: tenantId, camera_id: cameraId };
+    observeValue(playbackLiveEdgeLagGauge, labels, 0);
+    playbackLiveEdgeLagGauge.set(metricKey(labels), lagMs);
+    observeValue(playbackLiveEdgeObservedAtGauge, labels, 0);
+    playbackLiveEdgeObservedAtGauge.set(metricKey(labels), Math.floor(now / 1000));
+    if (lagMs > playbackLiveEdgeStaleMs) {
+      incCounter(playbackLiveEdgeStaleCounters, labels);
+    }
+    return lagMs;
+  };
+
   const eventClipKey = (tenantId: string, cameraId: string, eventId: string) => `${tenantId}:${cameraId}:${eventId}`;
 
   const listCameraSegments = async (cameraDir: string) => {
@@ -1412,6 +1445,28 @@ export async function buildApp(options: BuildAppOptions = {}) {
     return null;
   };
 
+  const getWorkerDiagnostic = (tenantId: string, cameraId: string) => {
+    const workerDetails = mediaEngine.diagnostics?.().workers?.details ?? [];
+    return workerDetails.find((worker) => worker.tenantId === tenantId && worker.cameraId === cameraId) ?? null;
+  };
+
+  const getLiveEdgeRuntime = (tenantId: string, cameraId: string) => {
+    const labels = { tenant_id: tenantId, camera_id: cameraId };
+    const key = metricKey(labels);
+    const lagMs = playbackLiveEdgeLagGauge.get(key) ?? null;
+    const observedAtSeconds = playbackLiveEdgeObservedAtGauge.get(key) ?? null;
+    if (lagMs === null || observedAtSeconds === null) {
+      return {
+        lagMs: null as number | null,
+        observedAt: null as string | null,
+        stale: null as boolean | null
+      };
+    }
+    const observedAt = new Date(observedAtSeconds * 1000).toISOString();
+    const stale = lagMs > playbackLiveEdgeStaleMs;
+    return { lagMs, observedAt, stale };
+  };
+
   app.get("/health", async () => ({
     ok: true,
     streams: streams.size,
@@ -1466,6 +1521,10 @@ export async function buildApp(options: BuildAppOptions = {}) {
       lastError: retentionLastError,
       lastSummary: retentionLastSummary,
       diskUsage: retentionDiskUsage
+    },
+    playback: {
+      liveEdgeStaleMs: playbackLiveEdgeStaleMs,
+      observedStreams: playbackLiveEdgeLagGauge.size
     },
     ...(mediaEngine.diagnostics ? { mediaEngineDiagnostics: mediaEngine.diagnostics() } : {})
   }));
@@ -1532,6 +1591,15 @@ export async function buildApp(options: BuildAppOptions = {}) {
       "# HELP nearhome_playback_latency_ms_count Count of successful playback request latency observations by tenant/camera/asset",
       "# TYPE nearhome_playback_latency_ms_count counter",
       ...formatMetricLines("nearhome_playback_latency_ms_count", playbackLatencyCount),
+      "# HELP nearhome_playback_live_edge_lag_ms Latest observed live-edge lag in ms by tenant/camera",
+      "# TYPE nearhome_playback_live_edge_lag_ms gauge",
+      ...formatMetricLines("nearhome_playback_live_edge_lag_ms", playbackLiveEdgeLagGauge),
+      "# HELP nearhome_playback_live_edge_observed_unixtime_seconds Unix time of the latest live-edge observation by tenant/camera",
+      "# TYPE nearhome_playback_live_edge_observed_unixtime_seconds gauge",
+      ...formatMetricLines("nearhome_playback_live_edge_observed_unixtime_seconds", playbackLiveEdgeObservedAtGauge),
+      "# HELP nearhome_playback_live_edge_stale_total Number of stale live-edge observations above STREAM_PLAYBACK_LIVE_EDGE_STALE_MS",
+      "# TYPE nearhome_playback_live_edge_stale_total counter",
+      ...formatMetricLines("nearhome_playback_live_edge_stale_total", playbackLiveEdgeStaleCounters),
       "# HELP nearhome_media_workers_total Media engine workers by state",
       "# TYPE nearhome_media_workers_total gauge",
       `nearhome_media_workers_total{state=\"running\"} ${workerStats?.running ?? 0}`,
@@ -1609,7 +1677,30 @@ export async function buildApp(options: BuildAppOptions = {}) {
       reply.status(404);
       return { ok: false, reason: "not_provisioned" };
     }
-    return { ok: true, data: entry };
+    const worker = getWorkerDiagnostic(tenantId, cameraId);
+    const liveEdge = getLiveEdgeRuntime(tenantId, cameraId);
+    const diagnostics: string[] = [];
+    if (entry.status !== "ready") diagnostics.push(`stream_${entry.status}`);
+    if (entry.health.connectivity !== "online") diagnostics.push(`connectivity_${entry.health.connectivity}`);
+    if (entry.health.error) diagnostics.push(`stream_error:${entry.health.error}`);
+    if (!worker) diagnostics.push("worker_missing");
+    if (worker && worker.state !== "running") diagnostics.push(`worker_${worker.state}`);
+    if (worker && worker.lastExitCode !== null) diagnostics.push(`worker_last_exit_${worker.lastExitCode}`);
+    if (liveEdge.stale === true) diagnostics.push("live_edge_stale");
+    return {
+      ok: true,
+      data: entry,
+      runtime: {
+        liveEdgeLagMs: liveEdge.lagMs,
+        liveEdgeObservedAt: liveEdge.observedAt,
+        liveEdgeStale: liveEdge.stale,
+        workerState: worker?.state ?? null,
+        workerRestartCount: worker?.restartCount ?? null,
+        workerLastExitCode: worker?.lastExitCode ?? null,
+        workerLastExitSignal: worker?.lastExitSignal ?? null,
+        diagnostics
+      }
+    };
   });
 
   app.get("/storage/vaults", async () => {
@@ -2092,6 +2183,8 @@ export async function buildApp(options: BuildAppOptions = {}) {
             details: { tenantId, cameraId, path: `${tenantId}/${cameraId}/index.m3u8` }
           });
         }
+        const latestProgramDateTimeMs = extractLatestProgramDateTimeMs(manifest);
+        updateLiveEdgeMetrics(tenantId, cameraId, latestProgramDateTimeMs);
         const patchedManifest = rewriteManifestSegmentUris(manifest, tenantId, cameraId, query.token as string);
 
         reply.header("content-type", "application/vnd.apple.mpegurl");

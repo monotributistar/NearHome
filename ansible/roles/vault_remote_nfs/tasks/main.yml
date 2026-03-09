@@ -1,0 +1,21 @@
+---
+- name: Install NFS client packages
+  ansible.builtin.apt:
+    update_cache: true
+    name:
+      - nfs-common
+    state: present
+
+- name: Ensure remote vault mount directory exists
+  ansible.builtin.file:
+    path: "{{ onprem_vault_remote_path }}"
+    state: directory
+    mode: "0755"
+
+- name: Mount remote vault over NFS
+  ansible.posix.mount:
+    path: "{{ onprem_vault_remote_path }}"
+    src: "{{ nfs_server }}:{{ nfs_export_path }}"
+    fstype: nfs
+    opts: "rw,_netdev,hard,timeo=600,retrans=2"
+    state: mounted

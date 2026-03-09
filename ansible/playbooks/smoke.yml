@@ -1,0 +1,8 @@
+---
+- name: Run NearHome smoke checks
+  hosts: nearhome_hosts
+  become: true
+  gather_facts: false
+
+  roles:
+    - role: smoke_checks

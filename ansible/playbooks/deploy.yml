@@ -1,0 +1,23 @@
+---
+- name: Deploy NearHome on-prem
+  hosts: nearhome_hosts
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Validate vault_mode
+      ansible.builtin.assert:
+        that:
+          - vault_mode in ["local", "remote"]
+        fail_msg: "vault_mode debe ser local o remote"
+
+  roles:
+    - role: base
+    - role: docker
+    - role: vault_local
+      when: vault_mode == "local"
+    - role: vault_remote_nfs
+      when: vault_mode == "remote"
+    - role: nearhome_stack
+    - role: smoke_checks
+      when: nearhome_run_smoke_after_deploy | bool

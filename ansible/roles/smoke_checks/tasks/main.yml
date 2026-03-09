@@ -1,0 +1,18 @@
+---
+- name: Run pilot smoke with retries
+  ansible.builtin.shell: |
+    set -euo pipefail
+    rm -f /tmp/api.json /tmp/stream.json /tmp/event.json /tmp/bridge.json \
+      /tmp/stream_cam1.json /tmp/stream_cam2.json /tmp/provision_cam1.json \
+      /tmp/provision_cam2.json /tmp/event_publish.json /tmp/event_replay.txt \
+      /tmp/yolo.json /tmp/mediapipe.json /tmp/dispatcher.json /tmp/temporal_ui.html
+    pnpm pilot:smoke
+  args:
+    chdir: "{{ nearhome_project_dir }}"
+    executable: /bin/bash
+  become: false
+  register: smoke_result
+  retries: 5
+  delay: 10
+  until: smoke_result.rc == 0
+  changed_when: false
