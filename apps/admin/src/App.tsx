@@ -129,6 +129,41 @@ function getTenantId() {
   return localStorage.getItem("nearhome_active_tenant");
 }
 
+function summarizeApiError(error: unknown, fallback: string) {
+  const err = error as {
+    message?: string;
+    statusCode?: number;
+    response?: { status?: number; data?: unknown };
+    data?: unknown;
+  };
+  const status = err.response?.status ?? err.statusCode;
+  const payload = (err.response?.data ?? err.data) as
+    | { code?: unknown; message?: unknown; details?: unknown }
+    | string
+    | undefined;
+
+  if (payload && typeof payload === "object") {
+    const code = typeof payload.code === "string" ? payload.code : null;
+    const message = typeof payload.message === "string" ? payload.message : null;
+    const details =
+      payload.details && typeof payload.details === "object"
+        ? Object.entries(payload.details as Record<string, unknown>)
+            .map(([key, value]) => `${key}=${String(value)}`)
+            .join(", ")
+        : null;
+    const parts = [code, message, details].filter(Boolean) as string[];
+    if (parts.length > 0) return status ? `[${status}] ${parts.join(" | ")}` : parts.join(" | ");
+  }
+
+  if (typeof payload === "string" && payload.trim().length > 0) {
+    return status ? `[${status}] ${payload}` : payload;
+  }
+  if (err.message && err.message.trim().length > 0) {
+    return status ? `[${status}] ${err.message}` : err.message;
+  }
+  return status ? `[${status}] ${fallback}` : fallback;
+}
+
 function useSession(apiUrl: string) {
   const [loading, setLoading] = useState(true);
   const [me, setMe] = useState<any>(null);
@@ -919,7 +954,7 @@ function CamerasPage() {
               setForm({ name: "", description: "", rtspUrl: "", location: "", tags: "", isActive: true });
               await (camerasList as any).query.refetch();
             } catch (error) {
-              setSaveError(error instanceof Error ? error.message : "No se pudo guardar la cámara");
+              setSaveError(summarizeApiError(error, "No se pudo guardar la cámara"));
             } finally {
               setSaving(false);
             }
@@ -964,9 +999,31 @@ function CamerasPage() {
             <option value="true">Active</option>
             <option value="false">Inactive</option>
           </SelectInput>
-          <PrimaryButton type="submit" className="md:col-span-2" disabled={saving || (!editing && !canCreate)}>
-            {editing ? "Save" : "Create"}
+          <PrimaryButton
+            type="submit"
+            className="md:col-span-2"
+            disabled={saving || (editing ? !canEdit : !canCreate)}
+          >
+            {editing ? "Guardar cambios" : "Crear cámara"}
           </PrimaryButton>
+          {editing && (
+            <button
+              type="button"
+              className="btn btn-ghost md:col-span-2"
+              onClick={() => {
+                setEditing(null);
+                setForm({ name: "", description: "", rtspUrl: "", location: "", tags: "", isActive: true });
+                setSaveError(null);
+              }}
+            >
+              Cancelar edición
+            </button>
+          )}
+          {editing && (
+            <div className="alert py-2 text-sm md:col-span-12">
+              Editando cámara: <strong>{editing.name}</strong> ({editing.id})
+            </div>
+          )}
           {saveError && <div className="alert alert-error py-2 text-sm md:col-span-12">{saveError}</div>}
           {saveOk && <div className="alert alert-success py-2 text-sm md:col-span-12">{saveOk}</div>}
         </form>
@@ -1004,6 +1061,8 @@ function CamerasPage() {
                     className="btn btn-xs"
                     onClick={() => {
                       setEditing(c);
+                      setSaveError(null);
+                      setSaveOk(null);
                       setForm({
                         name: c.name,
                         description: c.description ?? "",
