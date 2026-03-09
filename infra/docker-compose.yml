@@ -121,8 +121,23 @@ services:
     build:
       context: ../apps/inference-node-mediapipe
       dockerfile: Dockerfile
+    environment:
+      INFERENCE_BRIDGE_URL: http://inference-bridge:8090
+      NODE_ID: ${MEDIAPIPE_NODE_ID:-node-mediapipe-1}
+      NODE_RUNTIME: mediapipe
+      NODE_ENDPOINT: ${MEDIAPIPE_NODE_ENDPOINT:-http://inference-node-mediapipe:8092}
+      NODE_TASK_TYPES: ${MEDIAPIPE_NODE_TASK_TYPES:-pose_estimation,action_recognition}
+      NODE_MODELS: ${MEDIAPIPE_NODE_MODELS:-mediapipe_pose@0.10.0}
+      NODE_MAX_CONCURRENT: ${MEDIAPIPE_NODE_MAX_CONCURRENT:-2}
+      NODE_RESOURCES_CPU: ${MEDIAPIPE_NODE_RESOURCES_CPU:-4}
+      NODE_RESOURCES_GPU: ${MEDIAPIPE_NODE_RESOURCES_GPU:-0}
+      NODE_RESOURCES_VRAM_MB: ${MEDIAPIPE_NODE_RESOURCES_VRAM_MB:-0}
+      NODE_HEARTBEAT_INTERVAL_MS: ${MEDIAPIPE_NODE_HEARTBEAT_INTERVAL_MS:-10000}
+      NODE_AUTH_ADMIN_SECRET: ${NODE_AUTH_ADMIN_SECRET:-dev-node-auth-admin-secret}
     ports:
       - "8092:8092"
+    depends_on:
+      - inference-bridge
     networks:
       - nearhome_net
 
