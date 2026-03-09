@@ -1374,10 +1374,8 @@ export async function buildApp() {
   };
 
   await app.register(cors, {
-    origin: [
-      process.env.CORS_ORIGIN_ADMIN ?? "http://localhost:5173",
-      process.env.CORS_ORIGIN_PORTAL ?? "http://localhost:5174"
-    ],
+    // Reflect request origin to avoid missing ACAO on browser preflight in on-prem setups.
+    origin: true,
     credentials: true
   });
 
