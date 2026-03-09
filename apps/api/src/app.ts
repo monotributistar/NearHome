@@ -15,6 +15,7 @@ type RequestContext = {
   userId: string;
   tenantId?: string;
   role?: Role;
+  isSuperuser?: boolean;
 };
 
 type ApiErrorBody = {
@@ -675,6 +676,7 @@ async function resolveEventsFromDate(tenantId: string, requestedFrom?: Date) {
 }
 
 function assertRole(request: FastifyRequest, roles: Role[]) {
+  if (request.ctx?.isSuperuser) return;
   if (!request.ctx?.role || !roles.includes(request.ctx.role)) {
     throw new Error("FORBIDDEN_ROLE");
   }
@@ -979,6 +981,12 @@ export async function buildApp() {
   const loginRateLimitMax = Number(process.env.LOGIN_RATE_LIMIT_MAX ?? 20);
   const loginRateLimitWindowMs = Number(process.env.LOGIN_RATE_LIMIT_WINDOW_MS ?? 60_000);
   const readinessForceFail = process.env.READINESS_FORCE_FAIL === "1";
+  const superuserEmails = new Set(
+    (process.env.SUPERUSER_EMAILS ?? "admin@nearhome.dev")
+      .split(",")
+      .map((value) => value.trim().toLowerCase())
+      .filter((value) => value.length > 0)
+  );
   const loginBuckets = new Map<string, LoginBucket>();
   let streamSyncTimer: NodeJS.Timeout | null = null;
   let streamSyncInFlight = false;
@@ -1637,24 +1645,41 @@ export async function buildApp() {
   const authPreHandler = async (request: FastifyRequest) => {
     await request.jwtVerify<{ userId: string }>();
     const payload = request.user as { userId: string };
-    request.ctx = { userId: payload.userId };
+    const authUser = await prisma.user.findUnique({
+      where: { id: payload.userId },
+      select: { email: true, isActive: true }
+    });
+    if (!authUser || !authUser.isActive) {
+      throw app.httpErrors.unauthorized("User inactive or not found");
+    }
+    const isSuperuser = superuserEmails.has(authUser.email.toLowerCase());
+    request.ctx = { userId: payload.userId, isSuperuser };
 
     const tenantHeader = request.headers["x-tenant-id"] as string | undefined;
     if (tenantHeader) {
-      const membership = await prisma.membership.findFirst({
-        where: {
-          tenantId: tenantHeader,
-          userId: payload.userId,
-          tenant: { deletedAt: null }
+      if (isSuperuser) {
+        const tenant = await prisma.tenant.findFirst({ where: { id: tenantHeader, deletedAt: null }, select: { id: true } });
+        if (!tenant) {
+          throw app.httpErrors.forbidden("Invalid tenant context");
         }
-      });
+        request.ctx.tenantId = tenantHeader;
+        request.ctx.role = "tenant_admin";
+      } else {
+        const membership = await prisma.membership.findFirst({
+          where: {
+            tenantId: tenantHeader,
+            userId: payload.userId,
+            tenant: { deletedAt: null }
+          }
+        });
 
-      if (!membership) {
-        throw app.httpErrors.forbidden("Invalid tenant context");
+        if (!membership) {
+          throw app.httpErrors.forbidden("Invalid tenant context");
+        }
+
+        request.ctx.tenantId = tenantHeader;
+        request.ctx.role = membership.role as Role;
       }
-
-      request.ctx.tenantId = tenantHeader;
-      request.ctx.role = membership.role as Role;
     }
   };
 
@@ -1897,14 +1922,38 @@ export async function buildApp() {
 
   app.get("/auth/me", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
     const user = await prisma.user.findUniqueOrThrow({ where: { id: request.ctx!.userId } });
-    const memberships = await prisma.membership.findMany({
-      where: {
+    let memberships: Array<{
+      id: string;
+      tenantId: string;
+      userId: string;
+      role: string;
+      createdAt: Date;
+      tenant: { id: string; name: string; createdAt: Date };
+    }> = [];
+
+    if (request.ctx?.isSuperuser) {
+      const tenants = await prisma.tenant.findMany({
+        where: { deletedAt: null },
+        orderBy: { createdAt: "asc" }
+      });
+      memberships = tenants.map((tenant) => ({
+        id: `super-${tenant.id}`,
+        tenantId: tenant.id,
         userId: user.id,
-        tenant: { deletedAt: null }
-      },
-      include: { tenant: true },
-      orderBy: { createdAt: "asc" }
-    });
+        role: "tenant_admin",
+        createdAt: tenant.createdAt,
+        tenant: { id: tenant.id, name: tenant.name, createdAt: tenant.createdAt }
+      }));
+    } else {
+      memberships = await prisma.membership.findMany({
+        where: {
+          userId: user.id,
+          tenant: { deletedAt: null }
+        },
+        include: { tenant: true },
+        orderBy: { createdAt: "asc" }
+      });
+    }
 
     const activeTenantId = (request.headers["x-tenant-id"] as string | undefined) ?? memberships[0]?.tenantId;
     const activeTenant = memberships.find((m: any) => m.tenantId === activeTenantId)?.tenant;
@@ -1915,7 +1964,8 @@ export async function buildApp() {
         email: user.email,
         name: user.name,
         createdAt: toISO(user.createdAt),
-        isActive: user.isActive
+        isActive: user.isActive,
+        isSuperuser: Boolean(request.ctx?.isSuperuser)
       },
       memberships: memberships.map((m: any) => ({
         id: m.id,
@@ -1933,18 +1983,24 @@ export async function buildApp() {
   });
 
   app.get("/tenants", { preHandler: authPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const memberships = await prisma.membership.findMany({
-      where: {
-        userId: request.ctx!.userId,
-        tenant: { deletedAt: null }
-      },
-      include: { tenant: true }
-    });
-    const data = memberships.map((m: any) => ({
-      id: m.tenant.id,
-      name: m.tenant.name,
-      createdAt: toISO(m.tenant.createdAt)
-    }));
+    let data: Array<{ id: string; name: string; createdAt: string }> = [];
+    if (request.ctx?.isSuperuser) {
+      const tenants = await prisma.tenant.findMany({ where: { deletedAt: null }, orderBy: { createdAt: "asc" } });
+      data = tenants.map((tenant) => ({ id: tenant.id, name: tenant.name, createdAt: toISO(tenant.createdAt) }));
+    } else {
+      const memberships = await prisma.membership.findMany({
+        where: {
+          userId: request.ctx!.userId,
+          tenant: { deletedAt: null }
+        },
+        include: { tenant: true }
+      });
+      data = memberships.map((m: any) => ({
+        id: m.tenant.id,
+        name: m.tenant.name,
+        createdAt: toISO(m.tenant.createdAt)
+      }));
+    }
     reply.header("x-total-count", String(data.length));
     return { data, total: data.length };
   });
@@ -1960,14 +2016,16 @@ export async function buildApp() {
 
   app.get("/tenants/:id", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
     const id = (request.params as { id: string }).id;
-    const membership = await prisma.membership.findFirst({
-      where: {
-        tenantId: id,
-        userId: request.ctx!.userId,
-        tenant: { deletedAt: null }
-      }
-    });
-    if (!membership) throw app.httpErrors.forbidden();
+    if (!request.ctx?.isSuperuser) {
+      const membership = await prisma.membership.findFirst({
+        where: {
+          tenantId: id,
+          userId: request.ctx!.userId,
+          tenant: { deletedAt: null }
+        }
+      });
+      if (!membership) throw app.httpErrors.forbidden();
+    }
     const tenant = await prisma.tenant.findFirst({ where: { id, deletedAt: null } });
     if (!tenant) throw app.httpErrors.notFound();
     return { data: { id: tenant.id, name: tenant.name, createdAt: toISO(tenant.createdAt) } };
@@ -1976,29 +2034,33 @@ export async function buildApp() {
   app.put("/tenants/:id", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
     const id = (request.params as { id: string }).id;
     const body = z.object({ name: z.string().min(2) }).parse(request.body);
-    const membership = await prisma.membership.findFirst({
-      where: {
-        tenantId: id,
-        userId: request.ctx!.userId,
-        tenant: { deletedAt: null }
-      }
-    });
-    if (!membership || membership.role !== "tenant_admin") throw app.httpErrors.forbidden();
+    if (!request.ctx?.isSuperuser) {
+      const membership = await prisma.membership.findFirst({
+        where: {
+          tenantId: id,
+          userId: request.ctx!.userId,
+          tenant: { deletedAt: null }
+        }
+      });
+      if (!membership || membership.role !== "tenant_admin") throw app.httpErrors.forbidden();
+    }
     const tenant = await prisma.tenant.update({ where: { id }, data: { name: body.name } });
     return { data: { id: tenant.id, name: tenant.name, createdAt: toISO(tenant.createdAt) } };
   });
 
   app.delete("/tenants/:id", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
     const id = (request.params as { id: string }).id;
-    const membership = await prisma.membership.findFirst({
-      where: {
-        tenantId: id,
-        userId: request.ctx!.userId,
-        role: "tenant_admin",
-        tenant: { deletedAt: null }
-      }
-    });
-    if (!membership) throw app.httpErrors.forbidden();
+    if (!request.ctx?.isSuperuser) {
+      const membership = await prisma.membership.findFirst({
+        where: {
+          tenantId: id,
+          userId: request.ctx!.userId,
+          role: "tenant_admin",
+          tenant: { deletedAt: null }
+        }
+      });
+      if (!membership) throw app.httpErrors.forbidden();
+    }
 
     const tenant = await prisma.tenant.update({
       where: { id },
@@ -3184,8 +3246,10 @@ export async function buildApp() {
 
   app.post("/tenants/:id/subscription", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
     const tenantId = (request.params as { id: string }).id;
-    const membership = await prisma.membership.findFirst({ where: { userId: request.ctx!.userId, tenantId } });
-    if (!membership || membership.role !== "tenant_admin") throw app.httpErrors.forbidden();
+    if (!request.ctx?.isSuperuser) {
+      const membership = await prisma.membership.findFirst({ where: { userId: request.ctx!.userId, tenantId } });
+      if (!membership || membership.role !== "tenant_admin") throw app.httpErrors.forbidden();
+    }
 
     const body = z.object({ planId: z.string() }).parse(request.body);
     const plan = await prisma.plan.findUniqueOrThrow({ where: { id: body.planId } });
@@ -3241,8 +3305,10 @@ export async function buildApp() {
 
   app.get("/tenants/:id/entitlements", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
     const tenantId = (request.params as { id: string }).id;
-    const membership = await prisma.membership.findFirst({ where: { userId: request.ctx!.userId, tenantId } });
-    if (!membership) throw app.httpErrors.forbidden();
+    if (!request.ctx?.isSuperuser) {
+      const membership = await prisma.membership.findFirst({ where: { userId: request.ctx!.userId, tenantId } });
+      if (!membership) throw app.httpErrors.forbidden();
+    }
 
     const entitlements = await getEntitlementsForTenant(tenantId);
     return { data: entitlements };

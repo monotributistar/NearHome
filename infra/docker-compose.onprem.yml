@@ -5,6 +5,7 @@ services:
     environment:
       CORS_ORIGIN_ADMIN: ${ONPREM_ADMIN_ORIGIN}
       CORS_ORIGIN_PORTAL: ${ONPREM_PORTAL_ORIGIN}
+      SUPERUSER_EMAILS: ${SUPERUSER_EMAILS:-admin@nearhome.dev}
       STREAM_GATEWAY_URL: http://stream-gateway:3010
       EVENT_GATEWAY_URL: http://event-gateway:3011
   stream-gateway:

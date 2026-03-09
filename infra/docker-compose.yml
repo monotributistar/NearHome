@@ -17,6 +17,7 @@ services:
       DETECTION_CALLBACK_SECRET: dev-detection-callback-secret
       EVENT_GATEWAY_URL: http://event-gateway:3011
       EVENT_PUBLISH_SECRET: dev-event-publish-secret
+      SUPERUSER_EMAILS: ${SUPERUSER_EMAILS:-admin@nearhome.dev}
       CORS_ORIGIN_ADMIN: http://localhost:5173
       CORS_ORIGIN_PORTAL: http://localhost:5174
       TEMPORAL_ADDRESS: temporal:7233
@@ -116,6 +117,7 @@ services:
       INFERENCE_BRIDGE_URL: http://inference-bridge:8090
       NODE_ID: ${YOLO_NODE_ID:-node-yolo-1}
       NODE_RUNTIME: yolo
+      NODE_TENANT_ID: ${YOLO_NODE_TENANT_ID:-}
       NODE_ENDPOINT: ${YOLO_NODE_ENDPOINT:-http://inference-node-yolo:8091}
       NODE_TASK_TYPES: ${YOLO_NODE_TASK_TYPES:-object_detection}
       NODE_MODELS: ${YOLO_NODE_MODELS:-yolo26n@1.0.0,yolo26s@1.0.0}
@@ -140,6 +142,7 @@ services:
       INFERENCE_BRIDGE_URL: http://inference-bridge:8090
       NODE_ID: ${MEDIAPIPE_NODE_ID:-node-mediapipe-1}
       NODE_RUNTIME: mediapipe
+      NODE_TENANT_ID: ${MEDIAPIPE_NODE_TENANT_ID:-}
       NODE_ENDPOINT: ${MEDIAPIPE_NODE_ENDPOINT:-http://inference-node-mediapipe:8092}
       NODE_TASK_TYPES: ${MEDIAPIPE_NODE_TASK_TYPES:-pose_estimation,action_recognition}
       NODE_MODELS: ${MEDIAPIPE_NODE_MODELS:-mediapipe_pose@0.10.0}
