@@ -112,8 +112,23 @@ services:
     build:
       context: ../apps/inference-node-yolo
       dockerfile: Dockerfile
+    environment:
+      INFERENCE_BRIDGE_URL: http://inference-bridge:8090
+      NODE_ID: ${YOLO_NODE_ID:-node-yolo-1}
+      NODE_RUNTIME: yolo
+      NODE_ENDPOINT: ${YOLO_NODE_ENDPOINT:-http://inference-node-yolo:8091}
+      NODE_TASK_TYPES: ${YOLO_NODE_TASK_TYPES:-object_detection}
+      NODE_MODELS: ${YOLO_NODE_MODELS:-yolo26n@1.0.0,yolo26s@1.0.0}
+      NODE_MAX_CONCURRENT: ${YOLO_NODE_MAX_CONCURRENT:-4}
+      NODE_RESOURCES_CPU: ${YOLO_NODE_RESOURCES_CPU:-8}
+      NODE_RESOURCES_GPU: ${YOLO_NODE_RESOURCES_GPU:-0}
+      NODE_RESOURCES_VRAM_MB: ${YOLO_NODE_RESOURCES_VRAM_MB:-0}
+      NODE_HEARTBEAT_INTERVAL_MS: ${YOLO_NODE_HEARTBEAT_INTERVAL_MS:-10000}
+      NODE_AUTH_ADMIN_SECRET: ${NODE_AUTH_ADMIN_SECRET:-dev-node-auth-admin-secret}
     ports:
       - "8091:8091"
+    depends_on:
+      - inference-bridge
     networks:
       - nearhome_net
 
