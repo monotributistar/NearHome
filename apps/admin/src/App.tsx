@@ -29,8 +29,13 @@ type DeploymentNodeItem = {
   nodeId?: string;
   status?: "online" | "degraded" | "offline" | string;
   tenantId?: string | null;
+  runtime?: string;
+  endpoint?: string;
+  maxConcurrent?: number;
   isDrained?: boolean;
   queueDepth?: number;
+  resources?: Record<string, unknown>;
+  contractVersion?: string;
   capabilities?: Array<{ taskTypes?: string[] }>;
   models?: string[];
 };
@@ -478,10 +483,15 @@ function ControlPanelPage({ apiUrl }: { apiUrl: string }) {
                 <th>Node</th>
                 <th>Status</th>
                 <th>Tenant</th>
+                <th>Runtime</th>
+                <th>Endpoint</th>
                 <th>Queue</th>
+                <th>Max</th>
                 <th>Drained</th>
+                <th>Resources</th>
                 <th>Capabilities</th>
                 <th>Models</th>
+                <th>Contract</th>
               </tr>
             </thead>
             <tbody>
@@ -502,14 +512,25 @@ function ControlPanelPage({ apiUrl }: { apiUrl: string }) {
                     </Badge>
                   </td>
                   <td>{node.tenantId ?? "-"}</td>
+                  <td>{node.runtime ?? "-"}</td>
+                  <td className="text-xs">{node.endpoint ?? "-"}</td>
                   <td>{node.queueDepth ?? 0}</td>
+                  <td>{node.maxConcurrent ?? 0}</td>
                   <td>{node.isDrained ? "yes" : "no"}</td>
+                  <td className="text-xs">
+                    {node.resources
+                      ? Object.entries(node.resources)
+                          .map(([key, value]) => `${key}:${String(value)}`)
+                          .join(", ")
+                      : "-"}
+                  </td>
                   <td className="text-xs">
                     {(node.capabilities ?? [])
                       .flatMap((cap) => cap.taskTypes ?? [])
                       .join(", ") || "-"}
                   </td>
                   <td className="text-xs">{(node.models ?? []).join(", ") || "-"}</td>
+                  <td className="text-xs">{node.contractVersion ?? "-"}</td>
                 </tr>
               ))}
             </tbody>

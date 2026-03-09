@@ -129,6 +129,29 @@ type DeploymentProbeResult = {
   payload: Record<string, unknown> | null;
 };
 
+type BridgeNodeCapability = {
+  capabilityId: string;
+  taskTypes: string[];
+  models: string[];
+};
+
+type BridgeNodeSnapshot = {
+  nodeId: string;
+  tenantId: string | null;
+  runtime: string;
+  transport: string;
+  endpoint: string;
+  status: "online" | "degraded" | "offline";
+  resources: Record<string, number>;
+  capabilities: BridgeNodeCapability[];
+  models: string[];
+  maxConcurrent: number;
+  queueDepth: number;
+  isDrained: boolean;
+  lastHeartbeatAt: Date;
+  contractVersion: string;
+};
+
 const CameraLifecycleStatusSchema = z.enum(["draft", "provisioning", "ready", "degraded", "offline", "error", "retired"]);
 const CameraConnectivitySchema = z.enum(["online", "degraded", "offline"]);
 const StreamSessionStatusSchema = z.enum(["requested", "issued", "active", "ended", "expired"]);
@@ -952,6 +975,7 @@ export async function buildApp() {
   const streamHealthSyncBatchSize = Number(process.env.STREAM_HEALTH_SYNC_BATCH_SIZE ?? 100);
   const inferenceBridgeUrl =
     process.env.INFERENCE_BRIDGE_URL?.replace(/\/$/, "") ?? detectionBridgeUrl ?? "http://inference-bridge:8090";
+  const nodeAuthAdminSecret = process.env.NODE_AUTH_ADMIN_SECRET ?? "dev-node-auth-admin-secret";
   const loginRateLimitMax = Number(process.env.LOGIN_RATE_LIMIT_MAX ?? 20);
   const loginRateLimitWindowMs = Number(process.env.LOGIN_RATE_LIMIT_WINDOW_MS ?? 60_000);
   const readinessForceFail = process.env.READINESS_FORCE_FAIL === "1";
@@ -1697,6 +1721,148 @@ export async function buildApp() {
       };
     } finally {
       clearTimeout(timeout);
+    }
+  };
+
+  const normalizeBridgeNode = (nodeRaw: Record<string, unknown>): BridgeNodeSnapshot | null => {
+    const nodeId = typeof nodeRaw.nodeId === "string" ? nodeRaw.nodeId : null;
+    if (!nodeId) return null;
+    const tenantId = typeof nodeRaw.tenantId === "string" && nodeRaw.tenantId.length > 0 ? nodeRaw.tenantId : null;
+    const runtime = typeof nodeRaw.runtime === "string" ? nodeRaw.runtime : "unknown";
+    const transport = typeof nodeRaw.transport === "string" ? nodeRaw.transport : "http";
+    const endpoint = typeof nodeRaw.endpoint === "string" ? nodeRaw.endpoint : "";
+    const statusValue = typeof nodeRaw.status === "string" ? nodeRaw.status : "offline";
+    const status: "online" | "degraded" | "offline" =
+      statusValue === "online" || statusValue === "degraded" ? statusValue : "offline";
+    const resourcesRaw =
+      nodeRaw.resources && typeof nodeRaw.resources === "object"
+        ? (nodeRaw.resources as Record<string, unknown>)
+        : { cpu: 0, gpu: 0, vramMb: 0 };
+    const resources = Object.fromEntries(
+      Object.entries(resourcesRaw).map(([key, value]) => [key, Number.isFinite(Number(value)) ? Number(value) : 0])
+    );
+    const capabilitiesRaw = Array.isArray(nodeRaw.capabilities) ? nodeRaw.capabilities : [];
+    const capabilities: BridgeNodeCapability[] = capabilitiesRaw.map((item, index) => {
+      const entry = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+      return {
+        capabilityId:
+          typeof entry.capabilityId === "string" && entry.capabilityId.length > 0 ? entry.capabilityId : `cap-${index}`,
+        taskTypes: Array.isArray(entry.taskTypes) ? entry.taskTypes.filter((x): x is string => typeof x === "string") : [],
+        models: Array.isArray(entry.models) ? entry.models.filter((x): x is string => typeof x === "string") : []
+      };
+    });
+    const models = Array.isArray(nodeRaw.models) ? nodeRaw.models.filter((x): x is string => typeof x === "string") : [];
+    const maxConcurrent = Number.isFinite(Number(nodeRaw.maxConcurrent)) ? Math.max(1, Number(nodeRaw.maxConcurrent)) : 1;
+    const queueDepth = Number.isFinite(Number(nodeRaw.queueDepth)) ? Math.max(0, Number(nodeRaw.queueDepth)) : 0;
+    const isDrained = nodeRaw.isDrained === true;
+    const parsedHeartbeat =
+      typeof nodeRaw.lastHeartbeatAt === "string" ? Date.parse(nodeRaw.lastHeartbeatAt) : Date.now();
+    const lastHeartbeatAt = Number.isFinite(parsedHeartbeat) ? new Date(parsedHeartbeat) : new Date();
+    const contractVersion = typeof nodeRaw.contractVersion === "string" ? nodeRaw.contractVersion : "1.0";
+    return {
+      nodeId,
+      tenantId,
+      runtime,
+      transport,
+      endpoint,
+      status,
+      resources,
+      capabilities,
+      models,
+      maxConcurrent,
+      queueDepth,
+      isDrained,
+      lastHeartbeatAt,
+      contractVersion
+    };
+  };
+
+  const snapshotResponse = (row: {
+    nodeId: string;
+    tenantId: string | null;
+    runtime: string;
+    transport: string;
+    endpoint: string;
+    status: string;
+    resources: string;
+    capabilities: string;
+    models: string;
+    maxConcurrent: number;
+    queueDepth: number;
+    isDrained: boolean;
+    lastHeartbeatAt: Date;
+    contractVersion: string;
+    createdAt: Date;
+    updatedAt: Date;
+  }) => ({
+    nodeId: row.nodeId,
+    tenantId: row.tenantId,
+    runtime: row.runtime,
+    transport: row.transport,
+    endpoint: row.endpoint,
+    status: row.status,
+    resources: parseJson<Record<string, number>>(row.resources),
+    capabilities: parseJson<BridgeNodeCapability[]>(row.capabilities),
+    models: parseJson<string[]>(row.models),
+    maxConcurrent: row.maxConcurrent,
+    queueDepth: row.queueDepth,
+    isDrained: row.isDrained,
+    lastHeartbeatAt: row.lastHeartbeatAt.toISOString(),
+    contractVersion: row.contractVersion,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString()
+  });
+
+  const syncInferenceNodeSnapshots = async (nodesRaw: Array<Record<string, unknown>>) => {
+    const normalized = nodesRaw.map(normalizeBridgeNode).filter((item): item is BridgeNodeSnapshot => Boolean(item));
+    if (!normalized.length) return;
+    const tenantIds = Array.from(
+      new Set(normalized.map((node) => node.tenantId).filter((tenantId): tenantId is string => Boolean(tenantId)))
+    );
+    const existingTenants = tenantIds.length
+      ? await prisma.tenant.findMany({
+          where: { id: { in: tenantIds }, deletedAt: null },
+          select: { id: true }
+        })
+      : [];
+    const validTenantIds = new Set(existingTenants.map((tenant) => tenant.id));
+
+    for (const node of normalized) {
+      const tenantId = node.tenantId && validTenantIds.has(node.tenantId) ? node.tenantId : null;
+      await prisma.inferenceNodeSnapshot.upsert({
+        where: { nodeId: node.nodeId },
+        update: {
+          tenantId,
+          runtime: node.runtime,
+          transport: node.transport,
+          endpoint: node.endpoint,
+          status: node.status,
+          resources: JSON.stringify(node.resources),
+          capabilities: JSON.stringify(node.capabilities),
+          models: JSON.stringify(node.models),
+          maxConcurrent: node.maxConcurrent,
+          queueDepth: node.queueDepth,
+          isDrained: node.isDrained,
+          lastHeartbeatAt: node.lastHeartbeatAt,
+          contractVersion: node.contractVersion
+        },
+        create: {
+          nodeId: node.nodeId,
+          tenantId,
+          runtime: node.runtime,
+          transport: node.transport,
+          endpoint: node.endpoint,
+          status: node.status,
+          resources: JSON.stringify(node.resources),
+          capabilities: JSON.stringify(node.capabilities),
+          models: JSON.stringify(node.models),
+          maxConcurrent: node.maxConcurrent,
+          queueDepth: node.queueDepth,
+          isDrained: node.isDrained,
+          lastHeartbeatAt: node.lastHeartbeatAt,
+          contractVersion: node.contractVersion
+        }
+      });
     }
   };
 
@@ -3565,6 +3731,13 @@ export async function buildApp() {
 
     const nodesProbe = await probeService("inference-bridge-nodes", `${inferenceBridgeUrl}/v1/nodes`);
     const nodesRaw = Array.isArray(nodesProbe.payload?.data) ? (nodesProbe.payload?.data as Array<Record<string, unknown>>) : [];
+    if (nodesProbe.ok && nodesRaw.length > 0) {
+      try {
+        await syncInferenceNodeSnapshots(nodesRaw);
+      } catch (error) {
+        app.log.warn({ error }, "ops.nodes.sync_failed");
+      }
+    }
     const totalNodes = nodesRaw.length;
     const online = nodesRaw.filter((node) => node.status === "online").length;
     const degraded = nodesRaw.filter((node) => node.status === "degraded").length;
@@ -3592,6 +3765,194 @@ export async function buildApp() {
         }
       }
     };
+  });
+
+  app.get("/ops/nodes", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
+    const q = request.query as { sync?: string };
+    if (q.sync !== "0") {
+      const nodesProbe = await probeService("inference-bridge-nodes", `${inferenceBridgeUrl}/v1/nodes`);
+      const nodesRaw = Array.isArray(nodesProbe.payload?.data) ? (nodesProbe.payload?.data as Array<Record<string, unknown>>) : [];
+      if (nodesProbe.ok && nodesRaw.length > 0) {
+        try {
+          await syncInferenceNodeSnapshots(nodesRaw);
+        } catch (error) {
+          app.log.warn({ error }, "ops.nodes.sync_failed");
+        }
+      }
+    }
+    const rows = await prisma.inferenceNodeSnapshot.findMany({ orderBy: { updatedAt: "desc" } });
+    return { data: rows.map(snapshotResponse), total: rows.length };
+  });
+
+  app.get("/ops/nodes/:nodeId", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
+    const { nodeId } = request.params as { nodeId: string };
+    const row = await prisma.inferenceNodeSnapshot.findUnique({ where: { nodeId } });
+    if (!row) throw app.httpErrors.notFound("Node not found");
+    return { data: snapshotResponse(row) };
+  });
+
+  app.post("/ops/nodes/provision", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
+    const body = z
+      .object({
+        nodeId: z.string().min(3),
+        tenantScope: z.string().optional(),
+        runtime: z.string().default("mediapipe"),
+        transport: z.enum(["http", "grpc"]).default("http"),
+        endpoint: z.string().min(1),
+        capabilities: z
+          .array(
+            z.object({
+              capabilityId: z.string(),
+              taskTypes: z.array(z.string()).default([]),
+              models: z.array(z.string()).default([])
+            })
+          )
+          .default([]),
+        models: z.array(z.string()).default([]),
+        resources: z.record(z.number()).default({ cpu: 1, gpu: 0, vramMb: 0 }),
+        maxConcurrent: z.number().int().min(1).default(1),
+        contractVersion: z.string().default("1.0"),
+        ttlSeconds: z.number().int().min(60).max(3600).optional()
+      })
+      .parse(request.body);
+
+    const tenantId = body.tenantScope && body.tenantScope !== "*" ? body.tenantScope : null;
+    if (tenantId) {
+      const tenant = await prisma.tenant.findFirst({ where: { id: tenantId, deletedAt: null }, select: { id: true } });
+      if (!tenant) throw app.httpErrors.badRequest("Invalid tenantScope");
+    }
+
+    const snapshot = await prisma.inferenceNodeSnapshot.upsert({
+      where: { nodeId: body.nodeId },
+      update: {
+        tenantId,
+        runtime: body.runtime,
+        transport: body.transport,
+        endpoint: body.endpoint,
+        status: "offline",
+        resources: JSON.stringify(body.resources),
+        capabilities: JSON.stringify(body.capabilities),
+        models: JSON.stringify(body.models),
+        maxConcurrent: body.maxConcurrent,
+        queueDepth: 0,
+        isDrained: false,
+        lastHeartbeatAt: new Date(),
+        contractVersion: body.contractVersion
+      },
+      create: {
+        nodeId: body.nodeId,
+        tenantId,
+        runtime: body.runtime,
+        transport: body.transport,
+        endpoint: body.endpoint,
+        status: "offline",
+        resources: JSON.stringify(body.resources),
+        capabilities: JSON.stringify(body.capabilities),
+        models: JSON.stringify(body.models),
+        maxConcurrent: body.maxConcurrent,
+        queueDepth: 0,
+        isDrained: false,
+        lastHeartbeatAt: new Date(),
+        contractVersion: body.contractVersion
+      }
+    });
+
+    const response = await fetch(`${inferenceBridgeUrl}/internal/nodes/enrollment-tokens`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-node-auth-admin-secret": nodeAuthAdminSecret
+      },
+      body: JSON.stringify({
+        nodeId: body.nodeId,
+        tenantScope: body.tenantScope ?? "*",
+        ttlSeconds: body.ttlSeconds
+      })
+    });
+    const raw = await response.text();
+    let payload: Record<string, unknown> | null = null;
+    try {
+      payload = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      payload = null;
+    }
+    if (!response.ok) {
+      throw new ApiDomainError({
+        statusCode: 502,
+        apiCode: "NODE_PROVISION_BRIDGE_FAILED",
+        message: "Failed creating node enrollment token",
+        details: { statusCode: response.status, body: payload ?? raw }
+      });
+    }
+    return { data: { snapshot: snapshotResponse(snapshot), enrollment: payload?.data ?? payload } };
+  });
+
+  app.post("/ops/nodes/:nodeId/drain", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
+    const { nodeId } = request.params as { nodeId: string };
+    const response = await fetch(`${inferenceBridgeUrl}/v1/nodes/${encodeURIComponent(nodeId)}/drain`, {
+      method: "POST",
+      headers: { "x-node-auth-admin-secret": nodeAuthAdminSecret }
+    });
+    const raw = await response.text();
+    if (!response.ok) {
+      throw new ApiDomainError({
+        statusCode: 502,
+        apiCode: "NODE_DRAIN_BRIDGE_FAILED",
+        message: "Failed draining node in inference bridge",
+        details: { statusCode: response.status, body: raw }
+      });
+    }
+    await prisma.inferenceNodeSnapshot.updateMany({ where: { nodeId }, data: { isDrained: true } });
+    const row = await prisma.inferenceNodeSnapshot.findUnique({ where: { nodeId } });
+    return { data: row ? snapshotResponse(row) : { nodeId, isDrained: true } };
+  });
+
+  app.post("/ops/nodes/:nodeId/undrain", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
+    const { nodeId } = request.params as { nodeId: string };
+    const response = await fetch(`${inferenceBridgeUrl}/v1/nodes/${encodeURIComponent(nodeId)}/undrain`, {
+      method: "POST",
+      headers: { "x-node-auth-admin-secret": nodeAuthAdminSecret }
+    });
+    const raw = await response.text();
+    if (!response.ok) {
+      throw new ApiDomainError({
+        statusCode: 502,
+        apiCode: "NODE_UNDRAIN_BRIDGE_FAILED",
+        message: "Failed undraining node in inference bridge",
+        details: { statusCode: response.status, body: raw }
+      });
+    }
+    await prisma.inferenceNodeSnapshot.updateMany({ where: { nodeId }, data: { isDrained: false } });
+    const row = await prisma.inferenceNodeSnapshot.findUnique({ where: { nodeId } });
+    return { data: row ? snapshotResponse(row) : { nodeId, isDrained: false } };
+  });
+
+  app.post("/ops/nodes/:nodeId/revoke", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
+    const { nodeId } = request.params as { nodeId: string };
+    const body = z.object({ reason: z.string().default("manual_revoke") }).parse(request.body ?? {});
+    const response = await fetch(`${inferenceBridgeUrl}/v1/nodes/${encodeURIComponent(nodeId)}/revoke`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-node-auth-admin-secret": nodeAuthAdminSecret
+      },
+      body: JSON.stringify({ reason: body.reason })
+    });
+    const raw = await response.text();
+    if (!response.ok) {
+      throw new ApiDomainError({
+        statusCode: 502,
+        apiCode: "NODE_REVOKE_BRIDGE_FAILED",
+        message: "Failed revoking node in inference bridge",
+        details: { statusCode: response.status, body: raw }
+      });
+    }
+    await prisma.inferenceNodeSnapshot.updateMany({
+      where: { nodeId },
+      data: { status: "offline", isDrained: true, lastHeartbeatAt: new Date() }
+    });
+    const row = await prisma.inferenceNodeSnapshot.findUnique({ where: { nodeId } });
+    return { data: row ? snapshotResponse(row) : { nodeId, status: "offline", isDrained: true } };
   });
 
   app.get("/readiness", async (request, reply) => {
