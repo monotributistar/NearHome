@@ -40,6 +40,25 @@ type DeploymentNodeItem = {
   models?: string[];
 };
 
+type OpsNodeSnapshot = {
+  nodeId: string;
+  tenantId: string | null;
+  runtime: string;
+  transport: string;
+  endpoint: string;
+  status: string;
+  resources: Record<string, number>;
+  capabilities: Array<{ capabilityId: string; taskTypes: string[]; models: string[] }>;
+  models: string[];
+  maxConcurrent: number;
+  queueDepth: number;
+  isDrained: boolean;
+  lastHeartbeatAt: string;
+  contractVersion: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type DeploymentStatusData = {
   generatedAt: string;
   overallOk: boolean;
@@ -325,6 +344,7 @@ function Layout({ apiUrl }: { apiUrl: string }) {
               ["/memberships", "Memberships"],
               ["/cameras", "Cameras"],
               ["/monitor", "Monitor"],
+              ["/nodes", "Nodes"],
               ["/realtime", "Realtime"],
               ["/plans", "Plans"],
               ["/subscriptions", "Subscriptions"]
@@ -348,6 +368,7 @@ function Layout({ apiUrl }: { apiUrl: string }) {
             <Route path="/cameras" element={<CamerasPage />} />
             <Route path="/cameras/:id" element={<CameraShow />} />
             <Route path="/monitor" element={<MonitorPage apiUrl={apiUrl} />} />
+            <Route path="/nodes" element={<DetectionNodesPage apiUrl={apiUrl} />} />
             <Route path="/realtime" element={<RealtimePage apiUrl={apiUrl} />} />
             <Route path="/plans" element={<PlansPage />} />
             <Route path="/subscriptions" element={<SubscriptionPage apiUrl={apiUrl} onChanged={refresh} />} />
@@ -1130,6 +1151,352 @@ function CamerasPage() {
         </button>
       </div>
     </PageCard>
+  );
+}
+
+function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
+  const [nodes, setNodes] = useState<OpsNodeSnapshot[]>([]);
+  const [selectedNodeId, setSelectedNodeId] = useState<string>("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [ok, setOk] = useState<string | null>(null);
+  const [enrollmentToken, setEnrollmentToken] = useState<string | null>(null);
+  const [form, setForm] = useState({
+    nodeId: "",
+    tenantScope: "*",
+    runtime: "mediapipe",
+    endpoint: "http://inference-node-mediapipe:8092",
+    maxConcurrent: 2,
+    contractVersion: "1.0",
+    capabilities: "pose_estimation",
+    models: "mediapipe_pose@0.10.0",
+    cpu: 4,
+    gpu: 0,
+    vramMb: 0
+  });
+
+  const selectedNode = useMemo(() => nodes.find((node) => node.nodeId === selectedNodeId) ?? null, [nodes, selectedNodeId]);
+
+  async function loadNodes(sync = true) {
+    const token = getToken();
+    if (!token) {
+      setLoading(false);
+      setError("Missing auth token");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`${apiUrl}/ops/nodes${sync ? "" : "?sync=0"}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error(`ops nodes ${res.status}`);
+      const body = (await res.json()) as { data?: OpsNodeSnapshot[] };
+      const list = body.data ?? [];
+      setNodes(list);
+      if (!selectedNodeId && list.length > 0) setSelectedNodeId(list[0].nodeId);
+      if (selectedNodeId && !list.some((node) => node.nodeId === selectedNodeId)) {
+        setSelectedNodeId(list[0]?.nodeId ?? "");
+      }
+    } catch (loadError) {
+      setError(summarizeApiError(loadError, "No se pudo cargar el registry de nodos"));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadNodes(true);
+    const id = window.setInterval(() => {
+      void loadNodes(true);
+    }, 15000);
+    return () => window.clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiUrl]);
+
+  async function executeNodeAction(nodeId: string, action: "drain" | "undrain" | "revoke") {
+    const token = getToken();
+    if (!token) {
+      setError("Missing auth token");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    setOk(null);
+    try {
+      const res = await fetch(`${apiUrl}/ops/nodes/${encodeURIComponent(nodeId)}/${action}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "content-type": "application/json"
+        },
+        body: action === "revoke" ? JSON.stringify({ reason: "manual_revoke_from_panel" }) : "{}"
+      });
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(`node ${action} ${res.status}: ${body}`);
+      }
+      setOk(`Acción ${action} aplicada sobre ${nodeId}`);
+      await loadNodes(true);
+    } catch (actionError) {
+      setError(summarizeApiError(actionError, `No se pudo ejecutar ${action}`));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function provisionNode(e: FormEvent) {
+    e.preventDefault();
+    const token = getToken();
+    if (!token) {
+      setError("Missing auth token");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    setOk(null);
+    setEnrollmentToken(null);
+    try {
+      const models = form.models
+        .split(",")
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0);
+      const taskTypes = form.capabilities
+        .split(",")
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0);
+      const payload = {
+        nodeId: form.nodeId,
+        tenantScope: form.tenantScope || "*",
+        runtime: form.runtime,
+        transport: "http",
+        endpoint: form.endpoint,
+        capabilities: [
+          {
+            capabilityId: `${form.runtime}-default`,
+            taskTypes,
+            models
+          }
+        ],
+        models,
+        resources: { cpu: form.cpu, gpu: form.gpu, vramMb: form.vramMb },
+        maxConcurrent: Number(form.maxConcurrent),
+        contractVersion: form.contractVersion
+      };
+      const res = await fetch(`${apiUrl}/ops/nodes/provision`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+      const body = (await res.json()) as { data?: { enrollment?: { enrollmentToken?: string }; snapshot?: OpsNodeSnapshot } };
+      if (!res.ok) throw new Error(JSON.stringify(body));
+      const tokenValue = body.data?.enrollment?.enrollmentToken;
+      if (tokenValue) setEnrollmentToken(tokenValue);
+      if (body.data?.snapshot?.nodeId) setSelectedNodeId(body.data.snapshot.nodeId);
+      setOk(`Nodo ${form.nodeId} provisionado`);
+      await loadNodes(true);
+    } catch (provisionError) {
+      setError(summarizeApiError(provisionError, "No se pudo provisionar el nodo"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <PageCard title="Detection Nodes">
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <PrimaryButton className="btn-sm" type="button" onClick={() => void loadNodes(true)} disabled={loading || saving}>
+            Sync bridge
+          </PrimaryButton>
+          <PrimaryButton className="btn-sm" type="button" onClick={() => void loadNodes(false)} disabled={loading || saving}>
+            Reload cache
+          </PrimaryButton>
+          <Badge className="badge-ghost">total: {nodes.length}</Badge>
+        </div>
+        {error && <div className="alert alert-error py-2 text-sm">{error}</div>}
+        {ok && <div className="alert alert-success py-2 text-sm">{ok}</div>}
+        {enrollmentToken && (
+          <div className="alert py-2 text-sm">
+            enrollment token: <code className="break-all">{enrollmentToken}</code>
+          </div>
+        )}
+        <div className="overflow-x-auto">
+          <table className="table table-zebra">
+            <thead>
+              <tr>
+                <th>Node</th>
+                <th>Status</th>
+                <th>Runtime</th>
+                <th>Endpoint</th>
+                <th>Tenant</th>
+                <th>Queue</th>
+                <th>Drained</th>
+                <th>Models</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {nodes.map((node) => (
+                <tr key={node.nodeId} className={selectedNodeId === node.nodeId ? "bg-base-200" : ""}>
+                  <td>
+                    <button className="link link-hover text-left" type="button" onClick={() => setSelectedNodeId(node.nodeId)}>
+                      {node.nodeId}
+                    </button>
+                  </td>
+                  <td>
+                    <Badge
+                      className={
+                        node.status === "online"
+                          ? "badge-success"
+                          : node.status === "degraded"
+                            ? "badge-warning"
+                            : "badge-error"
+                      }
+                    >
+                      {node.status}
+                    </Badge>
+                  </td>
+                  <td>{node.runtime}</td>
+                  <td className="text-xs">{node.endpoint}</td>
+                  <td>{node.tenantId ?? "*"}</td>
+                  <td>
+                    {node.queueDepth}/{node.maxConcurrent}
+                  </td>
+                  <td>{node.isDrained ? "yes" : "no"}</td>
+                  <td className="text-xs">{node.models.join(", ") || "-"}</td>
+                  <td className="flex gap-2">
+                    <button className="btn btn-xs" disabled={saving} onClick={() => void executeNodeAction(node.nodeId, "drain")}>
+                      Drain
+                    </button>
+                    <button className="btn btn-xs" disabled={saving} onClick={() => void executeNodeAction(node.nodeId, "undrain")}>
+                      Undrain
+                    </button>
+                    <DangerButton className="btn-xs" onClick={() => void executeNodeAction(node.nodeId, "revoke")}>
+                      Revoke
+                    </DangerButton>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </PageCard>
+
+      <PageCard title="Node Provisioning">
+        <form className="grid grid-cols-1 gap-2 md:grid-cols-12" onSubmit={provisionNode}>
+          <TextInput
+            placeholder="nodeId"
+            className="md:col-span-3"
+            value={form.nodeId}
+            onChange={(e) => setForm((prev) => ({ ...prev, nodeId: e.target.value }))}
+          />
+          <TextInput
+            placeholder="tenantScope (* o tenantId)"
+            className="md:col-span-3"
+            value={form.tenantScope}
+            onChange={(e) => setForm((prev) => ({ ...prev, tenantScope: e.target.value }))}
+          />
+          <TextInput
+            placeholder="runtime"
+            className="md:col-span-2"
+            value={form.runtime}
+            onChange={(e) => setForm((prev) => ({ ...prev, runtime: e.target.value }))}
+          />
+          <TextInput
+            placeholder="maxConcurrent"
+            className="md:col-span-2"
+            value={String(form.maxConcurrent)}
+            onChange={(e) => setForm((prev) => ({ ...prev, maxConcurrent: Number(e.target.value || 1) }))}
+          />
+          <TextInput
+            placeholder="contractVersion"
+            className="md:col-span-2"
+            value={form.contractVersion}
+            onChange={(e) => setForm((prev) => ({ ...prev, contractVersion: e.target.value }))}
+          />
+          <TextInput
+            placeholder="http://inference-node-mediapipe:8092"
+            className="font-mono md:col-span-7"
+            value={form.endpoint}
+            onChange={(e) => setForm((prev) => ({ ...prev, endpoint: e.target.value }))}
+          />
+          <TextInput
+            placeholder="taskTypes csv (pose_estimation,action_recognition)"
+            className="md:col-span-5"
+            value={form.capabilities}
+            onChange={(e) => setForm((prev) => ({ ...prev, capabilities: e.target.value }))}
+          />
+          <TextInput
+            placeholder="models csv"
+            className="md:col-span-6"
+            value={form.models}
+            onChange={(e) => setForm((prev) => ({ ...prev, models: e.target.value }))}
+          />
+          <TextInput
+            placeholder="cpu"
+            className="md:col-span-2"
+            value={String(form.cpu)}
+            onChange={(e) => setForm((prev) => ({ ...prev, cpu: Number(e.target.value || 0) }))}
+          />
+          <TextInput
+            placeholder="gpu"
+            className="md:col-span-2"
+            value={String(form.gpu)}
+            onChange={(e) => setForm((prev) => ({ ...prev, gpu: Number(e.target.value || 0) }))}
+          />
+          <TextInput
+            placeholder="vramMb"
+            className="md:col-span-2"
+            value={String(form.vramMb)}
+            onChange={(e) => setForm((prev) => ({ ...prev, vramMb: Number(e.target.value || 0) }))}
+          />
+          <PrimaryButton className="md:col-span-2" type="submit" disabled={saving || !form.nodeId.trim() || !form.endpoint.trim()}>
+            Provision node
+          </PrimaryButton>
+        </form>
+      </PageCard>
+
+      <PageCard title="Node Configuration Detail">
+        {!selectedNode ? (
+          <div className="text-sm opacity-70">{loading ? "Loading..." : "Seleccioná un nodo para ver su configuración."}</div>
+        ) : (
+          <div className="space-y-2 text-sm">
+            <div>
+              <strong>{selectedNode.nodeId}</strong> | status: {selectedNode.status} | contract: {selectedNode.contractVersion}
+            </div>
+            <div>endpoint: {selectedNode.endpoint}</div>
+            <div>runtime: {selectedNode.runtime}</div>
+            <div>tenant: {selectedNode.tenantId ?? "*"}</div>
+            <div>queue/max: {selectedNode.queueDepth}/{selectedNode.maxConcurrent}</div>
+            <div>drained: {selectedNode.isDrained ? "yes" : "no"}</div>
+            <div>last heartbeat: {new Date(selectedNode.lastHeartbeatAt).toLocaleString()}</div>
+            <div>
+              resources:
+              <pre className="mt-1 overflow-x-auto rounded-box bg-base-200 p-2 text-xs">
+                {JSON.stringify(selectedNode.resources ?? {}, null, 2)}
+              </pre>
+            </div>
+            <div>
+              capabilities:
+              <pre className="mt-1 overflow-x-auto rounded-box bg-base-200 p-2 text-xs">
+                {JSON.stringify(selectedNode.capabilities ?? [], null, 2)}
+              </pre>
+            </div>
+            <div>
+              models:
+              <pre className="mt-1 overflow-x-auto rounded-box bg-base-200 p-2 text-xs">
+                {JSON.stringify(selectedNode.models ?? [], null, 2)}
+              </pre>
+            </div>
+          </div>
+        )}
+      </PageCard>
+    </div>
   );
 }
 
