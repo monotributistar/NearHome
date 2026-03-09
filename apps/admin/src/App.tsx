@@ -1694,11 +1694,20 @@ function MonitorPage({ apiUrl }: { apiUrl: string }) {
 
   async function refreshStreamHealth(targetCameras: CameraMonitorItem[]) {
     if (!tenantId || !targetCameras.length) return;
-    const baseUrl = getStreamGatewayPublicBaseUrl();
     const next: Record<string, CameraStreamHealth> = {};
     await Promise.all(
       targetCameras.map(async (camera) => {
         try {
+          const playbackOrigin = (() => {
+            const currentPlaybackUrl = feeds[camera.id]?.playbackUrl;
+            if (!currentPlaybackUrl) return null;
+            try {
+              return new URL(currentPlaybackUrl).origin;
+            } catch {
+              return null;
+            }
+          })();
+          const baseUrl = playbackOrigin ?? getStreamGatewayPublicBaseUrl();
           const response = await fetch(
             `${baseUrl}/health/${encodeURIComponent(tenantId)}/${encodeURIComponent(camera.id)}`
           );
@@ -1749,8 +1758,8 @@ function MonitorPage({ apiUrl }: { apiUrl: string }) {
           };
         } catch (healthError) {
           next[camera.id] = {
-            status: "offline",
-            message: healthError instanceof Error ? healthError.message : "Health check failed",
+            status: "unknown",
+            message: healthError instanceof Error ? `Health endpoint unreachable: ${healthError.message}` : "Health check failed",
             checkedAt: new Date().toISOString()
           };
         }
