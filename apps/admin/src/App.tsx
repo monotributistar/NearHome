@@ -142,29 +142,36 @@ function useSession(apiUrl: string) {
       return;
     }
 
-    const res = await fetch(`${apiUrl}/auth/me`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        ...(getTenantId() ? { "X-Tenant-Id": getTenantId()! } : {})
+    try {
+      const res = await fetch(`${apiUrl}/auth/me`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...(getTenantId() ? { "X-Tenant-Id": getTenantId()! } : {})
+        }
+      });
+      if (!res.ok) {
+        localStorage.removeItem("nearhome_access_token");
+        localStorage.removeItem("nearhome_active_tenant");
+        setMe(null);
+        setLoading(false);
+        navigate("/login");
+        return;
       }
-    });
 
-    if (!res.ok) {
+      const data = await res.json();
+      localStorage.setItem("nearhome_me", JSON.stringify(data));
+      if (!getTenantId() && data.memberships?.[0]?.tenantId) {
+        localStorage.setItem("nearhome_active_tenant", data.memberships[0].tenantId);
+      }
+      setMe(data);
+      setLoading(false);
+    } catch {
       localStorage.removeItem("nearhome_access_token");
       localStorage.removeItem("nearhome_active_tenant");
       setMe(null);
       setLoading(false);
       navigate("/login");
-      return;
     }
-
-    const data = await res.json();
-    localStorage.setItem("nearhome_me", JSON.stringify(data));
-    if (!getTenantId() && data.memberships?.[0]?.tenantId) {
-      localStorage.setItem("nearhome_active_tenant", data.memberships[0].tenantId);
-    }
-    setMe(data);
-    setLoading(false);
   };
 
   useEffect(() => {

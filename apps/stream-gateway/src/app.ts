@@ -496,6 +496,31 @@ export async function buildApp(options: BuildAppOptions = {}) {
     Math.max(1, Number(process.env.STREAM_RETENTION_TARGET_DISK_USAGE_PCT ?? 75))
   );
   const retentionExtensions = parseRetentionExtensions(process.env.STREAM_RETENTION_FILE_EXTENSIONS);
+  const corsOrigins = (process.env.STREAM_CORS_ORIGINS ?? process.env.CORS_ORIGIN_ADMIN ?? "*")
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+  const corsAllowAll = corsOrigins.includes("*");
+  const corsIsAllowed = (origin?: string) => {
+    if (!origin) return false;
+    if (corsAllowAll) return true;
+    return corsOrigins.includes(origin);
+  };
+  app.addHook("onRequest", async (request, reply) => {
+    const origin = request.headers.origin;
+    if (corsAllowAll) {
+      reply.header("access-control-allow-origin", "*");
+    } else if (corsIsAllowed(origin)) {
+      reply.header("access-control-allow-origin", origin as string);
+      reply.header("vary", "Origin");
+    }
+    reply.header("access-control-allow-methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
+    reply.header("access-control-allow-headers", "Content-Type, Authorization, X-Tenant-Id");
+    if (request.method === "OPTIONS") {
+      reply.code(204);
+      return reply.send();
+    }
+  });
   let probeTimer: NodeJS.Timeout | null = null;
   let sessionSweepTimer: NodeJS.Timeout | null = null;
   let retentionSweepTimer: NodeJS.Timeout | null = null;

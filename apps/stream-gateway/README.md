@@ -44,6 +44,7 @@ Servicio MVP para provisionar playback por cámara.
 - `STREAM_PLAYBACK_READ_TIMEOUT_MS`
 - `STREAM_PLAYBACK_SLOW_MS`
 - `STREAM_PLAYBACK_LIVE_EDGE_STALE_MS` (default `3000`, umbral para marcar lag de live-edge como degradado)
+- `STREAM_CORS_ORIGINS` (CSV de origins permitidos para browser; default `*`)
 - `STREAM_MAX_ACTIVE_SESSIONS_PER_TENANT` (`0` deshabilita límite)
 - `STREAM_MEDIA_ENGINE` (`mock|process|process-mediamtx`, `mock` por defecto)
 - `STREAM_STORAGE_DEFAULT_VAULT_ID` (vault por defecto)

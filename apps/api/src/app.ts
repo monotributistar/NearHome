@@ -2298,7 +2298,7 @@ export async function buildApp() {
     let playbackUrl: string | undefined;
     if (streamGatewayUrl) {
       try {
-        await fetch(`${streamGatewayUrl}/provision`, {
+        const provisionResponse = await fetch(`${streamGatewayUrl}/provision`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
@@ -2311,6 +2311,12 @@ export async function buildApp() {
             eventClipPostSeconds: recordingPolicy.eventClipPostSeconds
           })
         });
+        if (!provisionResponse.ok) {
+          const errorBody = await provisionResponse.text();
+          throw new Error(
+            `stream_gateway.provision_failed status=${provisionResponse.status} body=${errorBody.slice(0, 500)}`
+          );
+        }
         playbackUrl = `${streamGatewayUrl}/playback/${ctx.tenantId}/${id}/index.m3u8?token=${encodeURIComponent(token)}`;
       } catch (error) {
         request.log.warn({ error, tenantId: ctx.tenantId, cameraId: id }, "stream_gateway.provision_failed");
