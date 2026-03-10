@@ -347,6 +347,7 @@ function Layout({ apiUrl }: { apiUrl: string }) {
               ["/cameras", "Cameras"],
               ["/monitor", "Monitor"],
               ["/nodes", "Nodes"],
+              ["/notifications", "Notifications"],
               ["/realtime", "Realtime"],
               ["/plans", "Plans"],
               ["/subscriptions", "Subscriptions"]
@@ -371,6 +372,7 @@ function Layout({ apiUrl }: { apiUrl: string }) {
             <Route path="/cameras/:id" element={<CameraShow />} />
             <Route path="/monitor" element={<MonitorPage apiUrl={apiUrl} />} />
             <Route path="/nodes" element={<DetectionNodesPage apiUrl={apiUrl} />} />
+            <Route path="/notifications" element={<NotificationsPage apiUrl={apiUrl} />} />
             <Route path="/realtime" element={<RealtimePage apiUrl={apiUrl} />} />
             <Route path="/plans" element={<PlansPage />} />
             <Route path="/subscriptions" element={<SubscriptionPage apiUrl={apiUrl} onChanged={refresh} />} />
@@ -1589,6 +1591,22 @@ function CameraShow() {
   const [loadingLifecycle, setLoadingLifecycle] = useState(true);
   const [lifecycleMessage, setLifecycleMessage] = useState<string | null>(null);
 
+  function normalizeNotificationRule(raw: any) {
+    const base = raw && typeof raw === "object" ? raw : {};
+    const channels = base.channels && typeof base.channels === "object" ? base.channels : {};
+    return {
+      enabled: base.enabled === true,
+      minConfidence: typeof base.minConfidence === "number" ? base.minConfidence : 0.6,
+      labels: Array.isArray(base.labels) ? base.labels.join(",") : "",
+      cooldownSeconds: typeof base.cooldownSeconds === "number" ? base.cooldownSeconds : 30,
+      channels: {
+        realtime: channels.realtime !== false,
+        webhook: channels.webhook === true,
+        email: channels.email === true
+      }
+    };
+  }
+
   async function loadCamera() {
     const cameraId = id;
     if (!cameraId) return;
@@ -1652,7 +1670,10 @@ function CameraShow() {
       });
       if (res.ok) {
         const body = await res.json();
-        setProfile(body.data);
+        setProfile({
+          ...body.data,
+          notificationRule: normalizeNotificationRule(body.data?.rulesProfile?.notification)
+        });
       }
       setLoadingProfile(false);
     };
@@ -1682,6 +1703,23 @@ function CameraShow() {
         recordingStorageKey: profile.recordingStorageKey,
         detectorConfigKey: profile.detectorConfigKey,
         detectorResultsKey: profile.detectorResultsKey,
+        rulesProfile: {
+          ...(profile.rulesProfile ?? {}),
+          notification: {
+            enabled: profile.notificationRule?.enabled === true,
+            minConfidence: Number(profile.notificationRule?.minConfidence ?? 0.6),
+            labels: String(profile.notificationRule?.labels ?? "")
+              .split(",")
+              .map((label) => label.trim())
+              .filter((label) => label.length > 0),
+            cooldownSeconds: Number(profile.notificationRule?.cooldownSeconds ?? 30),
+            channels: {
+              realtime: profile.notificationRule?.channels?.realtime !== false,
+              webhook: profile.notificationRule?.channels?.webhook === true,
+              email: profile.notificationRule?.channels?.email === true
+            }
+          }
+        },
         detectorFlags: profile.detectorFlags,
         status: profile.status,
         lastHealthAt: profile.lastHealthAt ?? null,
@@ -1881,6 +1919,84 @@ function CameraShow() {
               </label>
             ))}
           </div>
+          <div className="rounded-box border border-base-300 p-3 md:col-span-2">
+            <div className="mb-2 font-medium">Notification Rule</div>
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-6">
+              <label className="label cursor-pointer gap-2 md:col-span-1">
+                <input
+                  type="checkbox"
+                  className="checkbox checkbox-sm"
+                  checked={Boolean(profile.notificationRule?.enabled)}
+                  disabled={!canEdit}
+                  onChange={(e) =>
+                    setProfile((prev: any) => ({
+                      ...prev,
+                      notificationRule: { ...(prev.notificationRule ?? {}), enabled: e.target.checked }
+                    }))
+                  }
+                />
+                <span className="label-text">Enabled</span>
+              </label>
+              <TextInput
+                className="md:col-span-1"
+                placeholder="min conf 0-1"
+                value={String(profile.notificationRule?.minConfidence ?? 0.6)}
+                disabled={!canEdit}
+                onChange={(e) =>
+                  setProfile((prev: any) => ({
+                    ...prev,
+                    notificationRule: { ...(prev.notificationRule ?? {}), minConfidence: Number(e.target.value || 0) }
+                  }))
+                }
+              />
+              <TextInput
+                className="md:col-span-2"
+                placeholder="labels csv (person,vehicle)"
+                value={profile.notificationRule?.labels ?? ""}
+                disabled={!canEdit}
+                onChange={(e) =>
+                  setProfile((prev: any) => ({
+                    ...prev,
+                    notificationRule: { ...(prev.notificationRule ?? {}), labels: e.target.value }
+                  }))
+                }
+              />
+              <TextInput
+                className="md:col-span-1"
+                placeholder="cooldown sec"
+                value={String(profile.notificationRule?.cooldownSeconds ?? 30)}
+                disabled={!canEdit}
+                onChange={(e) =>
+                  setProfile((prev: any) => ({
+                    ...prev,
+                    notificationRule: { ...(prev.notificationRule ?? {}), cooldownSeconds: Number(e.target.value || 0) }
+                  }))
+                }
+              />
+              <div className="flex items-center gap-3 md:col-span-1">
+                {(["realtime", "webhook", "email"] as const).map((channel) => (
+                  <label key={channel} className="label cursor-pointer gap-2">
+                    <input
+                      type="checkbox"
+                      className="checkbox checkbox-sm"
+                      checked={Boolean(profile.notificationRule?.channels?.[channel])}
+                      disabled={!canEdit}
+                      onChange={(e) =>
+                        setProfile((prev: any) => ({
+                          ...prev,
+                          notificationRule: {
+                            ...(prev.notificationRule ?? {}),
+                            channels: { ...(prev.notificationRule?.channels ?? {}), [channel]: e.target.checked }
+                          }
+                        }))
+                      }
+                    />
+                    <span className="label-text">{channel}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
           {canEdit && (
             <PrimaryButton data-testid="profile-save" type="submit" className="md:col-span-2">
               Save internal profile
@@ -1890,6 +2006,201 @@ function CameraShow() {
         </form>
       )}
     </PageCard>
+  );
+}
+
+function NotificationsPage({ apiUrl }: { apiUrl: string }) {
+  const canCreate = useCan({ resource: "notifications", action: "create" }).data?.can;
+  const canEdit = useCan({ resource: "notifications", action: "edit" }).data?.can;
+  const canDelete = useCan({ resource: "notifications", action: "delete" }).data?.can;
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [ok, setOk] = useState<string | null>(null);
+  const [form, setForm] = useState({
+    name: "",
+    type: "webhook",
+    endpoint: "",
+    emailTo: "",
+    authToken: "",
+    isActive: true
+  });
+
+  const channelsList = useList({
+    resource: "notification-channels",
+    pagination: { current: 1, pageSize: 100 }
+  } as any);
+  const deliveriesList = useList({
+    resource: "notifications/deliveries",
+    pagination: { current: 1, pageSize: 50 },
+    sorters: [{ field: "createdAt", order: "desc" }]
+  } as any);
+  const { mutateAsync: create } = useCreate();
+  const { mutateAsync: update } = useUpdate();
+  const { mutate: remove } = useDelete();
+
+  async function saveChannel(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setOk(null);
+    setSaving(true);
+    try {
+      await create({
+        resource: "notification-channels",
+        values: {
+          name: form.name,
+          type: form.type,
+          endpoint: form.type === "webhook" ? form.endpoint : undefined,
+          emailTo: form.type === "email" ? form.emailTo : undefined,
+          authToken: form.authToken || undefined,
+          isActive: form.isActive
+        }
+      } as any);
+      setForm({ name: "", type: "webhook", endpoint: "", emailTo: "", authToken: "", isActive: true });
+      setOk("Canal creado");
+      await Promise.all([(channelsList as any).query.refetch(), (deliveriesList as any).query.refetch()]);
+    } catch (cause) {
+      setError(summarizeApiError(cause, "No se pudo guardar el canal"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const channels = ((channelsList as any).result?.data ?? []) as any[];
+  const deliveries = ((deliveriesList as any).result?.data ?? []) as any[];
+
+  return (
+    <div className="space-y-4">
+      <PageCard title="Notification Channels">
+        {error && <div className="alert alert-error py-2 text-sm">{error}</div>}
+        {ok && <div className="alert alert-success py-2 text-sm">{ok}</div>}
+        {canCreate && (
+          <form className="mb-4 grid grid-cols-1 gap-2 md:grid-cols-12" onSubmit={saveChannel}>
+            <TextInput
+              className="md:col-span-3"
+              placeholder="Name"
+              value={form.name}
+              onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
+            />
+            <SelectInput
+              className="md:col-span-2"
+              value={form.type}
+              onChange={(e) => setForm((prev) => ({ ...prev, type: e.target.value }))}
+            >
+              <option value="webhook">webhook</option>
+              <option value="email">email</option>
+            </SelectInput>
+            {form.type === "webhook" ? (
+              <TextInput
+                className="font-mono md:col-span-4"
+                placeholder="https://example/hooks/nearhome"
+                value={form.endpoint}
+                onChange={(e) => setForm((prev) => ({ ...prev, endpoint: e.target.value }))}
+              />
+            ) : (
+              <TextInput
+                className="md:col-span-4"
+                placeholder="alerts@tenant.com"
+                value={form.emailTo}
+                onChange={(e) => setForm((prev) => ({ ...prev, emailTo: e.target.value }))}
+              />
+            )}
+            <TextInput
+              className="md:col-span-2"
+              placeholder="Auth token"
+              value={form.authToken}
+              onChange={(e) => setForm((prev) => ({ ...prev, authToken: e.target.value }))}
+            />
+            <PrimaryButton className="md:col-span-1" type="submit" disabled={saving || !form.name.trim()}>
+              Add
+            </PrimaryButton>
+          </form>
+        )}
+        <div className="overflow-x-auto">
+          <table className="table table-zebra table-sm">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Type</th>
+                <th>Target</th>
+                <th>Active</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {channels.map((channel) => (
+                <tr key={channel.id}>
+                  <td>{channel.name}</td>
+                  <td>{channel.type}</td>
+                  <td className="text-xs font-mono">{channel.type === "webhook" ? channel.endpoint : channel.emailTo}</td>
+                  <td>{channel.isActive ? "yes" : "no"}</td>
+                  <td className="flex gap-2">
+                    {canEdit && (
+                      <button
+                        className="btn btn-xs"
+                        onClick={async () => {
+                          try {
+                            await update({
+                              resource: "notification-channels",
+                              id: channel.id,
+                              values: { isActive: !channel.isActive }
+                            } as any);
+                            (channelsList as any).query.refetch();
+                          } catch (cause) {
+                            setError(summarizeApiError(cause, "No se pudo actualizar canal"));
+                          }
+                        }}
+                      >
+                        {channel.isActive ? "Disable" : "Enable"}
+                      </button>
+                    )}
+                    {canDelete && (
+                      <DangerButton
+                        className="btn-xs"
+                        onClick={() => {
+                          remove({ resource: "notification-channels", id: channel.id });
+                          (channelsList as any).query.refetch();
+                        }}
+                      >
+                        Delete
+                      </DangerButton>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </PageCard>
+
+      <PageCard title="Notification Deliveries (recent)">
+        <div className="overflow-x-auto">
+          <table className="table table-zebra table-sm">
+            <thead>
+              <tr>
+                <th>When</th>
+                <th>Channel</th>
+                <th>Status</th>
+                <th>Camera</th>
+                <th>Incident</th>
+                <th>Error</th>
+              </tr>
+            </thead>
+            <tbody>
+              {deliveries.map((delivery) => (
+                <tr key={delivery.id}>
+                  <td>{new Date(delivery.createdAt).toLocaleString()}</td>
+                  <td>{delivery.channelType}</td>
+                  <td>{delivery.status}</td>
+                  <td className="font-mono text-xs">{delivery.cameraId}</td>
+                  <td className="font-mono text-xs">{delivery.incidentId}</td>
+                  <td className="text-xs">{delivery.error ?? "-"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </PageCard>
+    </div>
   );
 }
 

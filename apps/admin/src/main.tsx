@@ -55,6 +55,8 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           { name: "users" },
           { name: "memberships" },
           { name: "cameras" },
+          { name: "notification-channels" },
+          { name: "notifications/deliveries" },
           { name: "plans" },
           { name: "subscriptions" }
         ]}

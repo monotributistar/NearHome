@@ -53,6 +53,7 @@ const ACL: Record<Role, Record<string, string[]>> = {
     users: ["list", "create", "edit", "show"],
     memberships: ["list", "create", "edit", "show"],
     cameras: ["list", "create", "edit", "show", "delete"],
+    notifications: ["list", "create", "edit", "show", "delete"],
     plans: ["list", "show"],
     subscriptions: ["list", "create", "edit", "show"]
   },
@@ -61,6 +62,7 @@ const ACL: Record<Role, Record<string, string[]>> = {
     users: ["list", "show"],
     memberships: ["list", "show"],
     cameras: ["list", "show"],
+    notifications: ["list", "show"],
     plans: ["list"],
     subscriptions: ["list", "show"]
   },
@@ -69,6 +71,7 @@ const ACL: Record<Role, Record<string, string[]>> = {
     users: [],
     memberships: [],
     cameras: ["list", "show"],
+    notifications: [],
     plans: [],
     subscriptions: ["show"]
   }

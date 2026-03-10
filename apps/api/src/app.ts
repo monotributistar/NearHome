@@ -98,6 +98,18 @@ type CameraRecordingPolicy = {
   eventClipPostSeconds: number;
 };
 
+type CameraNotificationRule = {
+  enabled: boolean;
+  minConfidence: number;
+  labels: string[];
+  cooldownSeconds: number;
+  channels: {
+    realtime: boolean;
+    webhook: boolean;
+    email: boolean;
+  };
+};
+
 type ProfileStatus = "pending" | "ready" | "error";
 type CameraLifecycleStatus = "draft" | "provisioning" | "ready" | "degraded" | "offline" | "error" | "retired";
 type StreamSessionStatus = "requested" | "issued" | "active" | "ended" | "expired";
@@ -237,6 +249,44 @@ function parseCameraRecordingPolicy(rulesProfileRaw: string | null): CameraRecor
           : fallback.mode,
       eventClipPreSeconds: Math.max(0, Math.min(120, preSeconds)),
       eventClipPostSeconds: Math.max(1, Math.min(300, postSeconds))
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function parseCameraNotificationRule(rulesProfileRaw: string | null): CameraNotificationRule {
+  const fallback: CameraNotificationRule = {
+    enabled: false,
+    minConfidence: 0.6,
+    labels: [],
+    cooldownSeconds: 30,
+    channels: {
+      realtime: true,
+      webhook: false,
+      email: false
+    }
+  };
+  if (!rulesProfileRaw) return fallback;
+  try {
+    const parsed = parseJson<Record<string, unknown>>(rulesProfileRaw);
+    const notification = parsed.notification;
+    if (!notification || typeof notification !== "object") return fallback;
+    const value = notification as Record<string, unknown>;
+    const channelsRaw = value.channels && typeof value.channels === "object" ? (value.channels as Record<string, unknown>) : {};
+    const labels = Array.isArray(value.labels) ? value.labels.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0) : [];
+    const minConfidenceRaw = typeof value.minConfidence === "number" ? value.minConfidence : fallback.minConfidence;
+    const cooldownRaw = typeof value.cooldownSeconds === "number" ? Math.floor(value.cooldownSeconds) : fallback.cooldownSeconds;
+    return {
+      enabled: value.enabled === true,
+      minConfidence: Math.max(0, Math.min(1, minConfidenceRaw)),
+      labels,
+      cooldownSeconds: Math.max(0, Math.min(3600, cooldownRaw)),
+      channels: {
+        realtime: channelsRaw.realtime !== false,
+        webhook: channelsRaw.webhook === true,
+        email: channelsRaw.email === true
+      }
     };
   } catch {
     return fallback;
@@ -530,6 +580,64 @@ function incidentEvidenceResponse(evidence: {
     clipUrl: evidence.clipUrl,
     snapshotUrl: evidence.snapshotUrl,
     createdAt: toISO(evidence.createdAt)
+  };
+}
+
+function notificationChannelResponse(channel: {
+  id: string;
+  tenantId: string;
+  name: string;
+  type: string;
+  endpoint: string | null;
+  authToken: string | null;
+  headersJson: string | null;
+  emailTo: string | null;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}) {
+  return {
+    id: channel.id,
+    tenantId: channel.tenantId,
+    name: channel.name,
+    type: channel.type,
+    endpoint: channel.endpoint,
+    headers: channel.headersJson ? parseJson<Record<string, string>>(channel.headersJson) : undefined,
+    emailTo: channel.emailTo,
+    isActive: channel.isActive,
+    hasAuthToken: Boolean(channel.authToken),
+    createdAt: toISO(channel.createdAt),
+    updatedAt: toISO(channel.updatedAt)
+  };
+}
+
+function notificationDeliveryResponse(delivery: {
+  id: string;
+  tenantId: string;
+  cameraId: string;
+  incidentId: string;
+  channelId: string | null;
+  channelType: string;
+  status: string;
+  error: string | null;
+  responseCode: number | null;
+  requestPayload: string | null;
+  responsePayload: string | null;
+  createdAt: Date;
+}) {
+  return {
+    id: delivery.id,
+    tenantId: delivery.tenantId,
+    cameraId: delivery.cameraId,
+    incidentId: delivery.incidentId,
+    channelId: delivery.channelId,
+    channelType: delivery.channelType,
+    status: delivery.status,
+    error: delivery.error,
+    responseCode: delivery.responseCode,
+    requestPayload: delivery.requestPayload ? parseJson<Record<string, unknown>>(delivery.requestPayload) : undefined,
+    responsePayload: delivery.responsePayload ? parseJson<Record<string, unknown>>(delivery.responsePayload) : undefined,
+    createdAt: toISO(delivery.createdAt)
   };
 }
 
@@ -1050,6 +1158,184 @@ export async function buildApp() {
     return updated;
   };
 
+  const publishRealtimeEvent = async (args: {
+    eventType: string;
+    tenantId: string;
+    cameraId?: string;
+    correlationId?: string;
+    payload: Record<string, unknown>;
+  }) => {
+    if (!eventGatewayUrl) return;
+    try {
+      await fetch(`${eventGatewayUrl}/internal/events/publish`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-event-publish-secret": eventPublishSecret
+        },
+        body: JSON.stringify(args)
+      });
+    } catch (error) {
+      app.log.warn({ error, eventType: args.eventType, tenantId: args.tenantId }, "event_gateway.publish_failed");
+    }
+  };
+
+  const processIncidentNotifications = async (args: {
+    jobId: string;
+    tenantId: string;
+    cameraId: string;
+    cameraName: string;
+    incidentId: string;
+    incidentType: string;
+    severity: string;
+    summary: string;
+    label: string;
+    confidence: number;
+    rulesProfileRaw: string | null;
+  }) => {
+    const rule = parseCameraNotificationRule(args.rulesProfileRaw);
+    if (!rule.enabled) return;
+    if (args.confidence < rule.minConfidence) return;
+    if (rule.labels.length > 0 && !rule.labels.includes(args.label)) return;
+
+    if (rule.cooldownSeconds > 0) {
+      const threshold = new Date(Date.now() - rule.cooldownSeconds * 1000);
+      const recent = await prisma.notificationDelivery.count({
+        where: {
+          tenantId: args.tenantId,
+          cameraId: args.cameraId,
+          incident: { type: args.incidentType },
+          createdAt: { gte: threshold },
+          status: { in: ["sent", "queued"] }
+        }
+      });
+      if (recent > 0) return;
+    }
+
+    const payload = {
+      tenantId: args.tenantId,
+      cameraId: args.cameraId,
+      cameraName: args.cameraName,
+      incidentId: args.incidentId,
+      incidentType: args.incidentType,
+      severity: args.severity,
+      summary: args.summary,
+      label: args.label,
+      confidence: args.confidence,
+      occurredAt: new Date().toISOString()
+    };
+
+    if (rule.channels.realtime) {
+      await publishRealtimeEvent({
+        eventType: "notification.sent",
+        tenantId: args.tenantId,
+        cameraId: args.cameraId,
+        correlationId: `det-${args.jobId}`,
+        payload: { channel: "realtime", ...payload }
+      });
+      await prisma.notificationDelivery.create({
+        data: {
+          tenantId: args.tenantId,
+          cameraId: args.cameraId,
+          incidentId: args.incidentId,
+          channelType: "realtime",
+          status: "sent",
+          requestPayload: JSON.stringify(payload)
+        }
+      });
+    }
+
+    if (rule.channels.webhook) {
+      const channels = await prisma.notificationChannel.findMany({
+        where: {
+          tenantId: args.tenantId,
+          isActive: true,
+          type: "webhook"
+        }
+      });
+      for (const channel of channels) {
+        if (!channel.endpoint) continue;
+        const headers: Record<string, string> = {
+          "content-type": "application/json"
+        };
+        if (channel.authToken) headers.authorization = `Bearer ${channel.authToken}`;
+        if (channel.headersJson) {
+          const extra = parseJson<Record<string, string>>(channel.headersJson);
+          for (const [key, value] of Object.entries(extra)) headers[key] = String(value);
+        }
+
+        let status = "sent";
+        let responseCode: number | null = null;
+        let responsePayload: string | null = null;
+        let error: string | null = null;
+        try {
+          const response = await fetch(channel.endpoint, {
+            method: "POST",
+            headers,
+            body: JSON.stringify(payload)
+          });
+          responseCode = response.status;
+          responsePayload = await response.text();
+          if (!response.ok) {
+            status = "failed";
+            error = `webhook_http_${response.status}`;
+          }
+        } catch (cause) {
+          status = "failed";
+          error = cause instanceof Error ? cause.message : "webhook_send_failed";
+        }
+
+        await prisma.notificationDelivery.create({
+          data: {
+            tenantId: args.tenantId,
+            cameraId: args.cameraId,
+            incidentId: args.incidentId,
+            channelId: channel.id,
+            channelType: "webhook",
+            status,
+            error,
+            responseCode,
+            requestPayload: JSON.stringify(payload),
+            responsePayload: responsePayload ? JSON.stringify({ body: responsePayload.slice(0, 2000) }) : null
+          }
+        });
+      }
+    }
+
+    if (rule.channels.email) {
+      const channels = await prisma.notificationChannel.findMany({
+        where: {
+          tenantId: args.tenantId,
+          isActive: true,
+          type: "email"
+        }
+      });
+      for (const channel of channels) {
+        await prisma.notificationDelivery.create({
+          data: {
+            tenantId: args.tenantId,
+            cameraId: args.cameraId,
+            incidentId: args.incidentId,
+            channelId: channel.id,
+            channelType: "email",
+            status: "queued",
+            requestPayload: JSON.stringify({
+              ...payload,
+              emailTo: channel.emailTo
+            })
+          }
+        });
+      }
+      await publishRealtimeEvent({
+        eventType: "notification.email_queued",
+        tenantId: args.tenantId,
+        cameraId: args.cameraId,
+        correlationId: `det-${args.jobId}`,
+        payload
+      });
+    }
+  };
+
   const completeDetectionJob = async (args: {
     jobId: string;
     detections: Array<{
@@ -1092,6 +1378,8 @@ export async function buildApp() {
       summary: string;
       cameraId: string;
       tenantId: string;
+      label: string;
+      confidence: number;
     }> = [];
 
     await prisma.$transaction(async (tx) => {
@@ -1189,7 +1477,9 @@ export async function buildApp() {
           severity: incidentEvent.severity,
           summary: incidentEvent.summary,
           cameraId: incidentEvent.cameraId,
-          tenantId: incidentEvent.tenantId
+          tenantId: incidentEvent.tenantId,
+          label,
+          confidence
         });
 
         await tx.incidentEvidence.create({
@@ -1217,43 +1507,42 @@ export async function buildApp() {
     const updated = await prisma.detectionJob.findUnique({ where: { id: job.id } });
     if (updated && eventGatewayUrl) {
       try {
-        await fetch(`${eventGatewayUrl}/internal/events/publish`, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "x-event-publish-secret": eventPublishSecret
-          },
-          body: JSON.stringify({
-            eventType: "detection.job",
-            tenantId: updated.tenantId,
-            cameraId: updated.cameraId,
-            correlationId: `det-${updated.id}`,
-            payload: {
-              jobId: updated.id,
-              status: updated.status
-            }
-          })
+        await publishRealtimeEvent({
+          eventType: "detection.job",
+          tenantId: updated.tenantId,
+          cameraId: updated.cameraId,
+          correlationId: `det-${updated.id}`,
+          payload: {
+            jobId: updated.id,
+            status: updated.status
+          }
         });
         for (const incident of incidentsCreated) {
-          await fetch(`${eventGatewayUrl}/internal/events/publish`, {
-            method: "POST",
-            headers: {
-              "content-type": "application/json",
-              "x-event-publish-secret": eventPublishSecret
-            },
-            body: JSON.stringify({
-              eventType: "incident",
-              tenantId: incident.tenantId,
-              cameraId: incident.cameraId,
-              correlationId: `det-${updated.id}`,
-              payload: {
-                incidentId: incident.id,
-                type: incident.type,
-                severity: incident.severity,
-                summary: incident.summary,
-                jobId: updated.id
-              }
-            })
+          await publishRealtimeEvent({
+            eventType: "incident",
+            tenantId: incident.tenantId,
+            cameraId: incident.cameraId,
+            correlationId: `det-${updated.id}`,
+            payload: {
+              incidentId: incident.id,
+              type: incident.type,
+              severity: incident.severity,
+              summary: incident.summary,
+              jobId: updated.id
+            }
+          });
+          await processIncidentNotifications({
+            jobId: updated.id,
+            tenantId: incident.tenantId,
+            cameraId: incident.cameraId,
+            cameraName: job.camera.name,
+            incidentId: incident.id,
+            incidentType: incident.type,
+            severity: incident.severity,
+            summary: incident.summary,
+            label: incident.label,
+            confidence: incident.confidence,
+            rulesProfileRaw: job.camera.profile?.rulesProfile ?? null
           });
         }
       } catch (error) {
@@ -2274,6 +2563,120 @@ export async function buildApp() {
 
     reply.header("x-total-count", String(total));
     return { data: rows.map(auditLogResponse), total };
+  });
+
+  app.get("/notification-channels", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin", "monitor"]);
+    const { skip, take } = parseListQuery(request.query as Record<string, unknown>);
+    const [rows, total] = await Promise.all([
+      prisma.notificationChannel.findMany({
+        where: { tenantId: ctx.tenantId },
+        skip,
+        take,
+        orderBy: { createdAt: "desc" }
+      }),
+      prisma.notificationChannel.count({ where: { tenantId: ctx.tenantId } })
+    ]);
+    reply.header("x-total-count", String(total));
+    return { data: rows.map(notificationChannelResponse), total };
+  });
+
+  app.post("/notification-channels", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin"]);
+    const body = z
+      .object({
+        name: z.string().min(2),
+        type: z.enum(["webhook", "email"]),
+        endpoint: z.string().url().optional(),
+        authToken: z.string().optional(),
+        headers: z.record(z.string()).optional(),
+        emailTo: z.string().email().optional(),
+        isActive: z.boolean().optional()
+      })
+      .parse(request.body);
+    if (body.type === "webhook" && !body.endpoint) throw app.httpErrors.badRequest("endpoint is required for webhook channel");
+    if (body.type === "email" && !body.emailTo) throw app.httpErrors.badRequest("emailTo is required for email channel");
+
+    const created = await prisma.notificationChannel.create({
+      data: {
+        tenantId: ctx.tenantId,
+        name: body.name,
+        type: body.type,
+        endpoint: body.endpoint ?? null,
+        authToken: body.authToken ?? null,
+        headersJson: body.headers ? JSON.stringify(body.headers) : null,
+        emailTo: body.emailTo ?? null,
+        isActive: body.isActive ?? true
+      }
+    });
+    return { data: notificationChannelResponse(created) };
+  });
+
+  app.put("/notification-channels/:id", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin"]);
+    const { id } = request.params as { id: string };
+    const body = z
+      .object({
+        name: z.string().min(2).optional(),
+        endpoint: z.string().url().nullable().optional(),
+        authToken: z.string().nullable().optional(),
+        headers: z.record(z.string()).nullable().optional(),
+        emailTo: z.string().email().nullable().optional(),
+        isActive: z.boolean().optional()
+      })
+      .parse(request.body ?? {});
+
+    const existing = await prisma.notificationChannel.findFirst({ where: { id, tenantId: ctx.tenantId } });
+    if (!existing) throw app.httpErrors.notFound();
+
+    const updated = await prisma.notificationChannel.update({
+      where: { id },
+      data: {
+        ...(body.name !== undefined ? { name: body.name } : {}),
+        ...(body.endpoint !== undefined ? { endpoint: body.endpoint } : {}),
+        ...(body.authToken !== undefined ? { authToken: body.authToken } : {}),
+        ...(body.headers !== undefined ? { headersJson: body.headers ? JSON.stringify(body.headers) : null } : {}),
+        ...(body.emailTo !== undefined ? { emailTo: body.emailTo } : {}),
+        ...(body.isActive !== undefined ? { isActive: body.isActive } : {})
+      }
+    });
+    return { data: notificationChannelResponse(updated) };
+  });
+
+  app.delete("/notification-channels/:id", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin"]);
+    const { id } = request.params as { id: string };
+    const existing = await prisma.notificationChannel.findFirst({ where: { id, tenantId: ctx.tenantId } });
+    if (!existing) throw app.httpErrors.notFound();
+    await prisma.notificationChannel.delete({ where: { id } });
+    return { data: { id } };
+  });
+
+  app.get("/notifications/deliveries", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin", "monitor"]);
+    const q = request.query as Record<string, unknown>;
+    const { skip, take } = parseListQuery(q);
+    const cameraId = typeof q.cameraId === "string" && q.cameraId.length > 0 ? q.cameraId : undefined;
+    const where = {
+      tenantId: ctx.tenantId,
+      ...(cameraId ? { cameraId } : {})
+    };
+    const [rows, total] = await Promise.all([
+      prisma.notificationDelivery.findMany({
+        where,
+        skip,
+        take,
+        orderBy: { createdAt: "desc" }
+      }),
+      prisma.notificationDelivery.count({ where })
+    ]);
+    reply.header("x-total-count", String(total));
+    return { data: rows.map(notificationDeliveryResponse), total };
   });
 
   app.get("/cameras", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
