@@ -3637,3 +3637,158 @@ describe("NH-043 subscription request with payment proof", () => {
     expect(reviewAsMonitor.statusCode).toBe(403);
   });
 });
+
+describe("NH-DP-17 camera detection profile", () => {
+  it("allows tenant roles to read detection profile and tenant_admin to update it", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const adminMe = await me(adminToken);
+    const tenantId = adminMe.memberships[0].tenantId;
+
+    const camerasResponse = await app.inject({
+      method: "GET",
+      url: "/cameras?_start=0&_end=1",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+    expect(camerasResponse.statusCode).toBe(200);
+    const cameraId = camerasResponse.json<{ data: Array<{ id: string }> }>().data[0]?.id;
+    expect(cameraId).toBeTruthy();
+
+    const getAsAdmin = await app.inject({
+      method: "GET",
+      url: `/cameras/${cameraId}/detection-profile`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+    expect(getAsAdmin.statusCode).toBe(200);
+    expect(getAsAdmin.json()).toMatchObject({
+      data: {
+        cameraId,
+        tenantId,
+        pipelines: expect.any(Array)
+      }
+    });
+
+    const updateAsAdmin = await app.inject({
+      method: "PUT",
+      url: `/cameras/${cameraId}/detection-profile`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        pipelines: [
+          {
+            pipelineId: "person-fast",
+            provider: "yolo",
+            taskType: "person_detection",
+            quality: "fast",
+            enabled: true,
+            schedule: { mode: "realtime", frameStride: 2 }
+          }
+        ]
+      }
+    });
+    expect(updateAsAdmin.statusCode).toBe(200);
+    expect(updateAsAdmin.json()).toMatchObject({
+      data: {
+        cameraId,
+        tenantId,
+        pipelines: [{ pipelineId: "person-fast", provider: "yolo", taskType: "person_detection", quality: "fast" }]
+      }
+    });
+
+    const monitorToken = await login("monitor@nearhome.dev");
+    const updateAsMonitor = await app.inject({
+      method: "PUT",
+      url: `/cameras/${cameraId}/detection-profile`,
+      headers: {
+        authorization: `Bearer ${monitorToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        pipelines: []
+      }
+    });
+    expect(updateAsMonitor.statusCode).toBe(403);
+  });
+});
+
+describe("NH-DP-18 model catalog operations", () => {
+  it("allows superuser to create and update model catalog entries", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+
+    const createResponse = await app.inject({
+      method: "POST",
+      url: "/ops/model-catalog",
+      headers: {
+        authorization: `Bearer ${adminToken}`
+      },
+      payload: {
+        provider: "yolo",
+        taskType: "person_detection",
+        quality: "balanced",
+        modelRef: `yolo-v8-${Date.now()}`,
+        displayName: "YOLOv8 Person Balanced",
+        resources: { cpu: 2, gpu: 1, vramMb: 2048 },
+        status: "active"
+      }
+    });
+    expect(createResponse.statusCode).toBe(200);
+    const id = createResponse.json<{ data: { id: string } }>().data.id;
+
+    const updateResponse = await app.inject({
+      method: "PUT",
+      url: `/ops/model-catalog/${id}`,
+      headers: {
+        authorization: `Bearer ${adminToken}`
+      },
+      payload: {
+        status: "disabled",
+        displayName: "YOLOv8 Person Balanced (disabled)"
+      }
+    });
+    expect(updateResponse.statusCode).toBe(200);
+    expect(updateResponse.json()).toMatchObject({
+      data: {
+        id,
+        status: "disabled"
+      }
+    });
+
+    const listResponse = await app.inject({
+      method: "GET",
+      url: "/ops/model-catalog?provider=yolo&taskType=person_detection",
+      headers: {
+        authorization: `Bearer ${adminToken}`
+      }
+    });
+    expect(listResponse.statusCode).toBe(200);
+    expect(listResponse.json<{ data: Array<{ id: string }> }>().data.some((row) => row.id === id)).toBe(true);
+  });
+
+  it("denies non-superuser catalog creation", async () => {
+    const monitorToken = await login("monitor@nearhome.dev");
+    const response = await app.inject({
+      method: "POST",
+      url: "/ops/model-catalog",
+      headers: {
+        authorization: `Bearer ${monitorToken}`
+      },
+      payload: {
+        provider: "mediapipe",
+        taskType: "pose_estimation",
+        quality: "fast",
+        modelRef: `mp-pose-${Date.now()}`,
+        displayName: "MediaPipe Pose Fast",
+        resources: { cpu: 1, gpu: 0, vramMb: 0 },
+        status: "active"
+      }
+    });
+    expect(response.statusCode).toBe(403);
+  });
+});

@@ -35,6 +35,16 @@
     - `POST /subscriptions/requests`
     - `PUT /subscriptions/requests/:id/review`
   - al aprobar una solicitud se activa/actualiza `subscriptions` para el tenant.
+- NH-DP-17/NH-DP-18: configuración operativa de inferencia:
+  - perfil de detección por cámara:
+    - `GET /cameras/:id/detection-profile`
+    - `PUT /cameras/:id/detection-profile` (`tenant_admin`)
+  - catálogo de modelos:
+    - `GET /ops/model-catalog`
+    - `POST /ops/model-catalog` y `PUT /ops/model-catalog/:id` (solo superuser)
+  - configuración deseada de nodos:
+    - `GET /ops/nodes/:nodeId/config`
+    - `PUT /ops/nodes/:nodeId/config` (solo superuser)
 
 ## 2026-02-24 - v1.2.0
 

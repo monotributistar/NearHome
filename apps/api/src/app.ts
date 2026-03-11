@@ -331,13 +331,14 @@ function parseCameraDetectionProfile(raw: string | null, tenantId: string, camer
   const fallback = defaultCameraDetectionProfile(tenantId, cameraId);
   if (!raw) return fallback;
   try {
-    const parsed = CameraDetectionProfileInputSchema.partial().parse(parseJson<Record<string, unknown>>(raw));
+    const source = parseJson<Record<string, unknown>>(raw);
+    const parsed = CameraDetectionProfileInputSchema.partial().parse(source);
     return {
       cameraId,
       tenantId,
       pipelines: parsed.pipelines ?? fallback.pipelines,
       configVersion: parsed.configVersion ?? fallback.configVersion,
-      updatedAt: fallback.updatedAt
+      updatedAt: typeof source.updatedAt === "string" ? source.updatedAt : fallback.updatedAt
     };
   } catch {
     return fallback;
@@ -5383,6 +5384,208 @@ export async function buildApp() {
     }
   };
 
+  app.get("/ops/model-catalog", { preHandler: authPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const query = request.query as Record<string, unknown>;
+    const where = {
+      ...(typeof query.provider === "string" ? { provider: query.provider } : {}),
+      ...(typeof query.taskType === "string" ? { taskType: query.taskType } : {}),
+      ...(typeof query.quality === "string" ? { quality: query.quality } : {}),
+      ...(typeof query.status === "string" ? { status: query.status } : {})
+    };
+    const rows = await prisma.modelCatalogEntry.findMany({
+      where,
+      orderBy: [{ provider: "asc" }, { taskType: "asc" }, { quality: "asc" }, { displayName: "asc" }]
+    });
+    reply.header("x-total-count", String(rows.length));
+    return { data: rows.map(modelCatalogEntryResponse), total: rows.length };
+  });
+
+  app.post("/ops/model-catalog", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
+    if (!request.ctx?.isSuperuser) throw app.httpErrors.forbidden("Only superuser can create catalog entries");
+    const body = ModelCatalogEntryInputSchema.parse(request.body ?? {});
+    const row = await prisma.modelCatalogEntry.create({
+      data: {
+        provider: body.provider,
+        taskType: body.taskType,
+        quality: body.quality,
+        modelRef: body.modelRef,
+        displayName: body.displayName,
+        resources: JSON.stringify(body.resources),
+        defaults: body.defaults ? JSON.stringify(body.defaults) : null,
+        outputs: body.outputs ? JSON.stringify(body.outputs) : null,
+        status: body.status
+      }
+    });
+    return { data: modelCatalogEntryResponse(row) };
+  });
+
+  app.put("/ops/model-catalog/:id", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
+    if (!request.ctx?.isSuperuser) throw app.httpErrors.forbidden("Only superuser can update catalog entries");
+    const { id } = request.params as { id: string };
+    const body = ModelCatalogEntryInputSchema.partial().parse(request.body ?? {});
+    const row = await prisma.modelCatalogEntry.update({
+      where: { id },
+      data: {
+        ...(body.provider !== undefined ? { provider: body.provider } : {}),
+        ...(body.taskType !== undefined ? { taskType: body.taskType } : {}),
+        ...(body.quality !== undefined ? { quality: body.quality } : {}),
+        ...(body.modelRef !== undefined ? { modelRef: body.modelRef } : {}),
+        ...(body.displayName !== undefined ? { displayName: body.displayName } : {}),
+        ...(body.resources !== undefined ? { resources: JSON.stringify(body.resources) } : {}),
+        ...(body.defaults !== undefined ? { defaults: body.defaults ? JSON.stringify(body.defaults) : null } : {}),
+        ...(body.outputs !== undefined ? { outputs: body.outputs ? JSON.stringify(body.outputs) : null } : {}),
+        ...(body.status !== undefined ? { status: body.status } : {})
+      }
+    });
+    return { data: modelCatalogEntryResponse(row) };
+  });
+
+  app.get("/ops/nodes/:nodeId/config", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
+    const { nodeId } = request.params as { nodeId: string };
+    const [desiredRow, observedRow] = await Promise.all([
+      prisma.inferenceNodeDesiredConfig.findUnique({ where: { nodeId } }),
+      prisma.inferenceNodeSnapshot.findUnique({
+        where: { nodeId },
+        include: { assignments: { select: { tenantId: true }, orderBy: { tenantId: "asc" } } }
+      })
+    ]);
+
+    if (!desiredRow && !observedRow) throw app.httpErrors.notFound("Node not found");
+
+    const desired = desiredRow ? normalizeDesiredNodeConfig(desiredRow) : null;
+    const observed = observedRow ? nodeObservedConfigResponse(observedRow) : null;
+    const diff = buildNodeConfigDiff({
+      desired,
+      observed: observed
+        ? {
+            runtime: observed.runtime,
+            transport: observed.transport,
+            endpoint: observed.endpoint,
+            resources: observed.resources,
+            capabilities: observed.capabilities,
+            models: observed.models,
+            assignedTenantIds: observed.assignedTenantIds,
+            maxConcurrent: observed.maxConcurrent
+          }
+        : null
+    });
+
+    return {
+      data: {
+        nodeId,
+        desiredConfig: desired,
+        observedConfig: observed,
+        diff
+      }
+    };
+  });
+
+  app.put("/ops/nodes/:nodeId/config", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
+    if (!request.ctx?.isSuperuser) throw app.httpErrors.forbidden("Only superuser can update node config");
+    const { nodeId } = request.params as { nodeId: string };
+    const body = z
+      .object({
+        runtime: z.string().min(1),
+        transport: z.enum(["http", "grpc"]).default("http"),
+        endpoint: z.string().min(1),
+        resources: z.record(z.number()).default({ cpu: 1, gpu: 0, vramMb: 0 }),
+        capabilities: z.array(DesiredNodeCapabilitySchema).default([]),
+        models: z.array(z.string()).default([]),
+        tenantIds: z.array(z.string()).default([]),
+        maxConcurrent: z.number().int().min(1).default(1),
+        contractVersion: z.string().default("1.0"),
+        markApplied: z.boolean().default(false)
+      })
+      .parse(request.body ?? {});
+    const normalizedTenantIds = Array.from(new Set(body.tenantIds.map((tenantId) => tenantId.trim()).filter(Boolean)));
+    if (normalizedTenantIds.length > 0) {
+      const existingTenants = await prisma.tenant.findMany({
+        where: { id: { in: normalizedTenantIds }, deletedAt: null },
+        select: { id: true }
+      });
+      const existingIds = new Set(existingTenants.map((tenant) => tenant.id));
+      const invalid = normalizedTenantIds.filter((tenantId) => !existingIds.has(tenantId));
+      if (invalid.length > 0) {
+        throw app.httpErrors.badRequest(`Invalid tenant ids: ${invalid.join(", ")}`);
+      }
+    }
+
+    await prisma.inferenceNodeSnapshot.upsert({
+      where: { nodeId },
+      update: {
+        tenantId: normalizedTenantIds.length === 1 ? normalizedTenantIds[0] : null,
+        runtime: body.runtime,
+        transport: body.transport,
+        endpoint: body.endpoint,
+        status: "offline",
+        resources: JSON.stringify(body.resources),
+        capabilities: JSON.stringify(body.capabilities),
+        models: JSON.stringify(body.models),
+        maxConcurrent: body.maxConcurrent,
+        queueDepth: 0,
+        isDrained: false,
+        lastHeartbeatAt: new Date(),
+        contractVersion: body.contractVersion
+      },
+      create: {
+        nodeId,
+        tenantId: normalizedTenantIds.length === 1 ? normalizedTenantIds[0] : null,
+        runtime: body.runtime,
+        transport: body.transport,
+        endpoint: body.endpoint,
+        status: "offline",
+        resources: JSON.stringify(body.resources),
+        capabilities: JSON.stringify(body.capabilities),
+        models: JSON.stringify(body.models),
+        maxConcurrent: body.maxConcurrent,
+        queueDepth: 0,
+        isDrained: false,
+        lastHeartbeatAt: new Date(),
+        contractVersion: body.contractVersion
+      }
+    });
+    await prisma.inferenceNodeTenantAssignment.deleteMany({ where: { nodeId } });
+    if (normalizedTenantIds.length > 0) {
+      await prisma.inferenceNodeTenantAssignment.createMany({
+        data: normalizedTenantIds.map((tenantId) => ({ nodeId, tenantId }))
+      });
+    }
+
+    const existing = await prisma.inferenceNodeDesiredConfig.findUnique({ where: { nodeId } });
+    const row = await prisma.inferenceNodeDesiredConfig.upsert({
+      where: { nodeId },
+      update: {
+        runtime: body.runtime,
+        transport: body.transport,
+        endpoint: body.endpoint,
+        desiredResources: JSON.stringify(body.resources),
+        desiredCapabilities: JSON.stringify(body.capabilities),
+        desiredModels: JSON.stringify(body.models),
+        desiredTenantIds: JSON.stringify(normalizedTenantIds),
+        maxConcurrent: body.maxConcurrent,
+        contractVersion: body.contractVersion,
+        configVersion: existing ? existing.configVersion + 1 : 1,
+        ...(body.markApplied ? { lastAppliedAt: new Date() } : {})
+      },
+      create: {
+        nodeId,
+        runtime: body.runtime,
+        transport: body.transport,
+        endpoint: body.endpoint,
+        desiredResources: JSON.stringify(body.resources),
+        desiredCapabilities: JSON.stringify(body.capabilities),
+        desiredModels: JSON.stringify(body.models),
+        desiredTenantIds: JSON.stringify(normalizedTenantIds),
+        maxConcurrent: body.maxConcurrent,
+        contractVersion: body.contractVersion,
+        configVersion: 1,
+        ...(body.markApplied ? { lastAppliedAt: new Date() } : {})
+      }
+    });
+
+    return { data: normalizeDesiredNodeConfig(row) };
+  });
+
   app.get("/ops/nodes", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
     const q = request.query as { sync?: string };
     if (q.sync !== "0") {
@@ -5487,7 +5690,8 @@ export async function buildApp() {
             z.object({
               capabilityId: z.string(),
               taskTypes: z.array(z.string()).default([]),
-              models: z.array(z.string()).default([])
+              models: z.array(z.string()).default([]),
+              qualities: z.array(DetectionQualitySchema).default([])
             })
           )
           .default([]),
@@ -5537,6 +5741,35 @@ export async function buildApp() {
         isDrained: false,
         lastHeartbeatAt: new Date(),
         contractVersion: body.contractVersion
+      }
+    });
+    const existingDesired = await prisma.inferenceNodeDesiredConfig.findUnique({ where: { nodeId: body.nodeId } });
+    await prisma.inferenceNodeDesiredConfig.upsert({
+      where: { nodeId: body.nodeId },
+      update: {
+        runtime: body.runtime,
+        transport: body.transport,
+        endpoint: body.endpoint,
+        desiredResources: JSON.stringify(body.resources),
+        desiredCapabilities: JSON.stringify(body.capabilities),
+        desiredModels: JSON.stringify(body.models),
+        desiredTenantIds: JSON.stringify(tenantId ? [tenantId] : []),
+        maxConcurrent: body.maxConcurrent,
+        contractVersion: body.contractVersion,
+        configVersion: existingDesired ? existingDesired.configVersion + 1 : 1
+      },
+      create: {
+        nodeId: body.nodeId,
+        runtime: body.runtime,
+        transport: body.transport,
+        endpoint: body.endpoint,
+        desiredResources: JSON.stringify(body.resources),
+        desiredCapabilities: JSON.stringify(body.capabilities),
+        desiredModels: JSON.stringify(body.models),
+        desiredTenantIds: JSON.stringify(tenantId ? [tenantId] : []),
+        maxConcurrent: body.maxConcurrent,
+        contractVersion: body.contractVersion,
+        configVersion: 1
       }
     });
     await prisma.inferenceNodeTenantAssignment.deleteMany({ where: { nodeId: body.nodeId } });

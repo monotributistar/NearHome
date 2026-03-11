@@ -110,6 +110,10 @@ Versionado:
   - `rulesProfile.notification` gobierna notificaciones por cámara:
     - `enabled`, `minConfidence`, `labels`, `cooldownSeconds`
     - `channels.realtime|webhook|email`
+- `GET /cameras/:id/detection-profile` (`tenant_admin|monitor|client_user`)
+- `PUT /cameras/:id/detection-profile` (`tenant_admin`)
+  - in: `{ pipelines[], configVersion? }`
+  - persistencia en `CameraProfile.detectionProfile`
 - `GET /cameras/:id/lifecycle` (tenant roles)
   - out: `{ data: { cameraId, currentStatus, lastSeenAt?, lastTransitionAt?, healthSnapshot?, history[] } }`
 - `POST /cameras/:id/validate` (tenant_admin|client_user)
@@ -191,6 +195,11 @@ Versionado:
 - `GET /ops/deployment/status` (auth requerido)
   - consolida estado operativo de servicios desplegados y lifecycle de nodos de inferencia
   - out: `{ data: { generatedAt, overallOk, services[], nodes{ total, online, degraded, offline, drained, revokedEstimate, items[] } } }`
+- `GET /ops/model-catalog` (auth requerido)
+- `POST /ops/model-catalog` (solo superuser)
+- `PUT /ops/model-catalog/:id` (solo superuser)
+- `GET /ops/nodes/:nodeId/config` (auth requerido)
+- `PUT /ops/nodes/:nodeId/config` (solo superuser)
 
 ### Observabilidad por servicio (estado actual)
 

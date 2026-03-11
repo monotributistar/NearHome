@@ -394,6 +394,9 @@
   - nueva prueba `admin.subscription-requests.spec.ts` para revisión/aprobación de solicitudes `pending_review`.
   - validación: `pnpm test:e2e -- e2e/tests/admin.subscription-requests.spec.ts` en verde.
   - `admin.rbac.spec.ts` cubre restricción de review para `monitor` en solicitudes de suscripción.
+- Coverage inferencia operativa:
+  - cobertura API para `detection-profile` tenant-scoped y `ops/model-catalog` superuser-only.
+  - validación: `pnpm --filter @app/api test -- -t \"NH-DP-17|NH-DP-18\"` en verde.
 
 ## Próximo bloque recomendado
 

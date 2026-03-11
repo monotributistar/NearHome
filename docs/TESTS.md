@@ -111,6 +111,12 @@ Cobertura incluida:
   - callback `complete` publica `detection.job` e `incident` hacia event-gateway
   - callback `fail` publica `detection.job` con estado `failed`
   - assertions por payload publicado (`jobId`, `status`, `incident.type`)
+- NH-DP-17 perfil de detección por cámara
+  - `GET /cameras/:id/detection-profile` devuelve perfil tenant-scoped
+  - `PUT /cameras/:id/detection-profile` permitido para `tenant_admin`; `monitor` recibe `403`
+- NH-DP-18 catálogo de modelos operativo
+  - `POST/PUT /ops/model-catalog` permitido solo para superuser
+  - `GET /ops/model-catalog` lista entradas filtrables por provider/task/quality/status
 
 ## Event-gateway tests
 
