@@ -15,9 +15,12 @@ type RoleInput = z.infer<typeof RoleInputSchema>;
 
 type RequestContext = {
   userId: string;
+  realUserId?: string;
   tenantId?: string;
   role?: Role;
   isSuperuser?: boolean;
+  isImpersonating?: boolean;
+  impersonatedRole?: Role;
 };
 
 type ApiErrorBody = {
@@ -793,10 +796,14 @@ async function resolveEventsFromDate(tenantId: string, requestedFrom?: Date) {
 }
 
 function assertRole(request: FastifyRequest, roles: Role[]) {
-  if (request.ctx?.isSuperuser) return;
+  if (request.ctx?.isSuperuser && !request.ctx?.isImpersonating) return;
   if (!request.ctx?.role || !roles.includes(request.ctx.role)) {
     throw new Error("FORBIDDEN_ROLE");
   }
+}
+
+function hasGlobalSuperuserPrivileges(request: FastifyRequest) {
+  return Boolean(request.ctx?.isSuperuser && !request.ctx?.isImpersonating);
 }
 
 function getTenantContext(request: FastifyRequest): { userId: string; tenantId: string; role?: Role } {
@@ -979,15 +986,36 @@ async function appendAuditLog(args: {
   action: string;
   resourceId?: string;
   payload?: Record<string, unknown>;
+  context?: RequestContext;
 }) {
+  const actorUserId = args.actorUserId ?? args.context?.realUserId ?? args.context?.userId;
+  const authContext = args.context
+    ? {
+        actorUserId: args.context.realUserId ?? args.context.userId,
+        effectiveUserId: args.context.userId,
+        effectiveRole: args.context.role ?? null,
+        isSuperuser: Boolean(args.context.isSuperuser),
+        isImpersonating: Boolean(args.context.isImpersonating),
+        impersonatedRole: args.context.impersonatedRole ?? null,
+        tenantId: args.context.tenantId ?? null
+      }
+    : undefined;
+  const payload =
+    args.payload || authContext
+      ? {
+          ...(args.payload ?? {}),
+          ...(authContext ? { _auth: authContext } : {})
+        }
+      : undefined;
+
   await prisma.auditLog.create({
     data: {
       tenantId: args.tenantId,
-      actorUserId: args.actorUserId,
+      actorUserId,
       resource: args.resource,
       action: args.action,
       resourceId: args.resourceId ?? null,
-      payload: args.payload ? JSON.stringify(args.payload) : null
+      payload: payload ? JSON.stringify(payload) : null
     }
   });
 }
@@ -1973,9 +2001,22 @@ export async function buildApp() {
       throw app.httpErrors.unauthorized("User inactive or not found");
     }
     const isSuperuser = superuserEmails.has(authUser.email.toLowerCase());
-    request.ctx = { userId: payload.userId, isSuperuser };
+    request.ctx = { userId: payload.userId, realUserId: payload.userId, isSuperuser };
 
     const tenantHeader = request.headers["x-tenant-id"] as string | undefined;
+    const rawImpersonateRole = request.headers["x-impersonate-role"];
+    const impersonateRoleHeader = Array.isArray(rawImpersonateRole) ? rawImpersonateRole[0] : rawImpersonateRole;
+    const impersonatedRole = impersonateRoleHeader
+      ? z.enum(["tenant_admin", "monitor", "client_user"]).parse(impersonateRoleHeader)
+      : undefined;
+
+    if (impersonatedRole && !isSuperuser) {
+      throw app.httpErrors.forbidden("Impersonation requires superuser");
+    }
+    if (impersonatedRole && !tenantHeader) {
+      throw app.httpErrors.badRequest("Impersonation requires X-Tenant-Id");
+    }
+
     if (tenantHeader) {
       if (isSuperuser) {
         const tenant = await prisma.tenant.findFirst({ where: { id: tenantHeader, deletedAt: null }, select: { id: true } });
@@ -1983,7 +2024,9 @@ export async function buildApp() {
           throw app.httpErrors.forbidden("Invalid tenant context");
         }
         request.ctx.tenantId = tenantHeader;
-        request.ctx.role = "tenant_admin";
+        request.ctx.role = impersonatedRole ?? "tenant_admin";
+        request.ctx.isImpersonating = Boolean(impersonatedRole);
+        request.ctx.impersonatedRole = impersonatedRole;
       } else {
         const membership = await prisma.membership.findFirst({
           where: {
@@ -2284,6 +2327,7 @@ export async function buildApp() {
 
   app.get("/auth/me", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
     const user = await prisma.user.findUniqueOrThrow({ where: { id: request.ctx!.userId } });
+    const effectiveRole = request.ctx?.role ?? null;
     let memberships: Array<{
       id: string;
       tenantId: string;
@@ -2302,7 +2346,7 @@ export async function buildApp() {
         id: `super-${tenant.id}`,
         tenantId: tenant.id,
         userId: user.id,
-        role: "tenant_admin",
+        role: request.ctx?.impersonatedRole ?? "tenant_admin",
         createdAt: tenant.createdAt,
         tenant: { id: tenant.id, name: tenant.name, createdAt: tenant.createdAt }
       }));
@@ -2340,15 +2384,26 @@ export async function buildApp() {
       activeTenant: activeTenant
         ? { id: activeTenant.id, name: activeTenant.name, createdAt: toISO(activeTenant.createdAt) }
         : undefined,
-      entitlements: activeTenant ? await computeEntitlements(activeTenant.id) : undefined
+      entitlements: activeTenant ? await computeEntitlements(activeTenant.id) : undefined,
+      context: {
+        actorUserId: request.ctx?.realUserId ?? request.ctx?.userId ?? user.id,
+        effectiveUserId: request.ctx?.userId ?? user.id,
+        effectiveRole,
+        tenantId: request.ctx?.tenantId ?? null,
+        isImpersonating: Boolean(request.ctx?.isImpersonating),
+        impersonatedRole: request.ctx?.impersonatedRole ?? null
+      }
     };
   });
 
   app.get("/tenants", { preHandler: authPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
     let data: Array<{ id: string; name: string; createdAt: string }> = [];
-    if (request.ctx?.isSuperuser) {
+    if (hasGlobalSuperuserPrivileges(request)) {
       const tenants = await prisma.tenant.findMany({ where: { deletedAt: null }, orderBy: { createdAt: "asc" } });
       data = tenants.map((tenant) => ({ id: tenant.id, name: tenant.name, createdAt: toISO(tenant.createdAt) }));
+    } else if (request.ctx?.isSuperuser && request.ctx?.tenantId) {
+      const tenant = await prisma.tenant.findFirst({ where: { id: request.ctx.tenantId, deletedAt: null } });
+      data = tenant ? [{ id: tenant.id, name: tenant.name, createdAt: toISO(tenant.createdAt) }] : [];
     } else {
       const memberships = await prisma.membership.findMany({
         where: {
@@ -2378,7 +2433,9 @@ export async function buildApp() {
 
   app.get("/tenants/:id", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
     const id = (request.params as { id: string }).id;
-    if (!request.ctx?.isSuperuser) {
+    if (request.ctx?.isSuperuser && request.ctx?.isImpersonating) {
+      if (request.ctx.tenantId !== id) throw app.httpErrors.forbidden("Impersonated context can only access active tenant");
+    } else if (!hasGlobalSuperuserPrivileges(request)) {
       const membership = await prisma.membership.findFirst({
         where: {
           tenantId: id,
@@ -2396,7 +2453,10 @@ export async function buildApp() {
   app.put("/tenants/:id", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
     const id = (request.params as { id: string }).id;
     const body = z.object({ name: z.string().min(2) }).parse(request.body);
-    if (!request.ctx?.isSuperuser) {
+    if (request.ctx?.isSuperuser && request.ctx?.isImpersonating) {
+      if (request.ctx.role !== "tenant_admin") throw app.httpErrors.forbidden();
+      if (request.ctx.tenantId !== id) throw app.httpErrors.forbidden("Impersonated context can only edit active tenant");
+    } else if (!hasGlobalSuperuserPrivileges(request)) {
       const membership = await prisma.membership.findFirst({
         where: {
           tenantId: id,
@@ -2412,7 +2472,10 @@ export async function buildApp() {
 
   app.delete("/tenants/:id", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
     const id = (request.params as { id: string }).id;
-    if (!request.ctx?.isSuperuser) {
+    if (request.ctx?.isSuperuser && request.ctx?.isImpersonating) {
+      if (request.ctx.role !== "tenant_admin") throw app.httpErrors.forbidden();
+      if (request.ctx.tenantId !== id) throw app.httpErrors.forbidden("Impersonated context can only delete active tenant");
+    } else if (!hasGlobalSuperuserPrivileges(request)) {
       const membership = await prisma.membership.findFirst({
         where: {
           tenantId: id,
@@ -2435,7 +2498,8 @@ export async function buildApp() {
       resource: "tenant",
       action: "delete",
       resourceId: id,
-      payload: { name: tenant.name }
+      payload: { name: tenant.name },
+      context: request.ctx
     });
 
     return { data: { id: tenant.id, name: tenant.name, createdAt: toISO(tenant.createdAt) } };
@@ -2549,7 +2613,7 @@ export async function buildApp() {
     const queryUserId = typeof query.userId === "string" ? query.userId : undefined;
 
     const where =
-      request.ctx?.isSuperuser && !request.ctx?.tenantId
+      hasGlobalSuperuserPrivileges(request) && !request.ctx?.tenantId
         ? {
             ...(queryTenantId ? { tenantId: queryTenantId } : {}),
             ...(queryUserId ? { userId: queryUserId } : {}),
@@ -2708,7 +2772,8 @@ export async function buildApp() {
       resource: "camera_assignment",
       action: "replace",
       resourceId: userId,
-      payload: { cameraIds: dedupCameraIds }
+      payload: { cameraIds: dedupCameraIds },
+      context: request.ctx
     });
 
     return {
@@ -2954,7 +3019,8 @@ export async function buildApp() {
         name: camera.name,
         isActive: camera.isActive,
         lifecycleStatus: camera.lifecycleStatus
-      }
+      },
+      context: request.ctx
     });
 
     const withProfile = await prisma.camera.findUniqueOrThrow({ where: { id: camera.id }, include: { profile: true } });
@@ -3033,7 +3099,8 @@ export async function buildApp() {
         name: camera.name,
         isActive: camera.isActive,
         lifecycleStatus: camera.lifecycleStatus
-      }
+      },
+      context: request.ctx
     });
 
     const withProfile = await prisma.camera.findUniqueOrThrow({ where: { id: camera.id }, include: { profile: true } });
@@ -3056,7 +3123,8 @@ export async function buildApp() {
       payload: {
         name: camera.name,
         lifecycleStatus: camera.lifecycleStatus
-      }
+      },
+      context: request.ctx
     });
 
     if (streamGatewayUrl) {
@@ -3556,7 +3624,8 @@ export async function buildApp() {
         payload: {
           status: normalized.status,
           configComplete: false
-        }
+        },
+        context: request.ctx
       });
       return { data: profileResponse(normalized) };
     }
@@ -3570,7 +3639,8 @@ export async function buildApp() {
       payload: {
         status: profile.status,
         configComplete
-      }
+      },
+      context: request.ctx
     });
 
     return { data: profileResponse(profile) };
@@ -3692,7 +3762,8 @@ export async function buildApp() {
       resourceId: id,
       payload: {
         lifecycleStatus: transitioned.lifecycleStatus
-      }
+      },
+      context: request.ctx
     });
 
     return { data: cameraResponse(transitioned) };
@@ -3726,7 +3797,8 @@ export async function buildApp() {
       payload: {
         lifecycleStatus: transitioned.lifecycleStatus,
         isActive: false
-      }
+      },
+      context: request.ctx
     });
 
     return { data: cameraResponse({ ...deactivated, lifecycleStatus: transitioned.lifecycleStatus }) };
@@ -3760,7 +3832,8 @@ export async function buildApp() {
       payload: {
         lifecycleStatus: transitioned.lifecycleStatus,
         isActive: true
-      }
+      },
+      context: request.ctx
     });
 
     return { data: cameraResponse({ ...activated, lifecycleStatus: transitioned.lifecycleStatus }) };
@@ -3826,7 +3899,8 @@ export async function buildApp() {
       payload: {
         connectivity: body.connectivity,
         lifecycleStatus: transitioned.lifecycleStatus
-      }
+      },
+      context: request.ctx
     });
 
     return { data: cameraResponse(transitioned) };
@@ -3862,7 +3936,7 @@ export async function buildApp() {
 
   app.post("/tenants/:id/subscription", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
     const tenantId = (request.params as { id: string }).id;
-    if (!request.ctx?.isSuperuser) {
+    if (!hasGlobalSuperuserPrivileges(request)) {
       const membership = await prisma.membership.findFirst({ where: { userId: request.ctx!.userId, tenantId } });
       if (!membership || membership.role !== "tenant_admin") throw app.httpErrors.forbidden();
     }
@@ -3897,7 +3971,8 @@ export async function buildApp() {
       payload: {
         planId: subscription.planId,
         status: subscription.status
-      }
+      },
+      context: request.ctx
     });
 
     return {
@@ -3921,7 +3996,7 @@ export async function buildApp() {
 
   app.get("/tenants/:id/entitlements", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
     const tenantId = (request.params as { id: string }).id;
-    if (!request.ctx?.isSuperuser) {
+    if (!hasGlobalSuperuserPrivileges(request)) {
       const membership = await prisma.membership.findFirst({ where: { userId: request.ctx!.userId, tenantId } });
       if (!membership) throw app.httpErrors.forbidden();
     }
@@ -4068,7 +4143,8 @@ export async function buildApp() {
         mode: job.mode,
         source: job.source,
         provider: job.provider
-      }
+      },
+      context: request.ctx
     });
 
     if (detectionExecutionMode === "temporal") {
@@ -4146,7 +4222,8 @@ export async function buildApp() {
       actorUserId: ctx.userId,
       resource: "detection_job",
       action: "cancel",
-      resourceId: updated.id
+      resourceId: updated.id,
+      context: request.ctx
     });
 
     return { data: detectionJobResponse(updated) };
@@ -4520,7 +4597,7 @@ export async function buildApp() {
   });
 
   app.put("/ops/nodes/:nodeId/tenants", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
-    if (!request.ctx?.isSuperuser) throw app.httpErrors.forbidden("Only superuser can assign node tenants");
+    if (!hasGlobalSuperuserPrivileges(request)) throw app.httpErrors.forbidden("Only superuser can assign node tenants");
     const { nodeId } = request.params as { nodeId: string };
     const body = z.object({ tenantIds: z.array(z.string().min(1)).default([]) }).parse(request.body ?? {});
     const normalizedTenantIds = Array.from(new Set(body.tenantIds.map((tenantId) => tenantId.trim()).filter(Boolean)));

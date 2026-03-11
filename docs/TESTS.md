@@ -27,6 +27,10 @@ Cobertura incluida:
   - `tenant_admin` puede crear/editar/eliminar tenant (soft delete)
   - tenant eliminado no aparece en `/tenants`
   - `monitor` no puede eliminar tenant
+- NH-035 superadmin + switch de contexto
+  - `super_admin` puede impersonar rol tenant-scoped vía `X-Impersonate-Role`
+  - contexto impersonado restringe permisos (ej: `monitor` no crea cámaras)
+  - auditoría registra actor real y contexto efectivo en `payload._auth`
 - NH-025 camera internal profile
   - crear cámara activa genera `profile` interno automáticamente
   - `tenant_admin` puede configurar `PUT /cameras/:id/profile`

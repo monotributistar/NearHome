@@ -9,6 +9,11 @@
   - comandos `prisma:generate:postgres` y `db:push:postgres` en `@app/api`.
   - override de infraestructura `infra/docker-compose.postgres-staging.yml` para levantar API + Postgres en staging.
   - guía de ejecución en `docs/POSTGRES_STAGING.md`.
+- NH-035: superadmin global con switch de contexto impersonado tenant-scoped:
+  - header opcional `X-Impersonate-Role` (`tenant_admin|monitor|client_user`) para `super_admin`.
+  - `/auth/me` expone `context` con actor real/efectivo e indicadores de impersonación.
+  - enforcement de permisos por rol impersonado en rutas tenant-scoped.
+  - auditoría en `AuditLog.payload._auth` con actor real + contexto efectivo.
 
 ## 2026-02-24 - v1.2.0
 

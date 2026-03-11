@@ -354,9 +354,12 @@
   - `pnpm --filter @app/api prisma:generate:postgres`
   - `DATABASE_URL=postgresql://... pnpm --filter @app/api db:push:postgres`
   - API `health/readiness` en verde con Postgres (`2026-03-11`)
+- `NH-035` validación impersonación superadmin:
+  - `pnpm --filter @app/api test -- -t NH-035` en verde (context switch + auditoría)
+  - `pnpm --filter @app/api typecheck` y `pnpm --filter @app/admin typecheck` en verde
 
 ## Próximo bloque recomendado
 
-1. NH-035: superadmin global + switch de contexto (impersonación auditada).
-2. NH-036: membresías N:M operadores/customers por tenant.
+1. NH-036: membresías N:M operadores/customers por tenant.
+2. NH-037: gestión de roles y memberships desde panel.
 3. Endurecimiento e2e multi-tenant para concurrencia de playback (escenarios simultáneos por tenant).

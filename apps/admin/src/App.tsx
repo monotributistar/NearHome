@@ -201,6 +201,10 @@ function getTenantId() {
   return localStorage.getItem("nearhome_active_tenant");
 }
 
+function getImpersonateRole() {
+  return localStorage.getItem("nearhome_impersonate_role");
+}
+
 function hasBackofficeAccess(me: any) {
   if (me?.user?.isSuperuser) return true;
   return (me?.memberships ?? []).some((membership: any) => membership.role === "tenant_admin" || membership.role === "monitor");
@@ -258,12 +262,14 @@ function useSession(apiUrl: string) {
       const res = await fetch(`${apiUrl}/auth/me`, {
         headers: {
           Authorization: `Bearer ${token}`,
-          ...(getTenantId() ? { "X-Tenant-Id": getTenantId()! } : {})
+          ...(getTenantId() ? { "X-Tenant-Id": getTenantId()! } : {}),
+          ...(getImpersonateRole() ? { "X-Impersonate-Role": getImpersonateRole()! } : {})
         }
       });
       if (!res.ok) {
         localStorage.removeItem("nearhome_access_token");
         localStorage.removeItem("nearhome_active_tenant");
+        localStorage.removeItem("nearhome_impersonate_role");
         setMe(null);
         setLoading(false);
         navigate("/login");
@@ -274,6 +280,7 @@ function useSession(apiUrl: string) {
       if (!hasBackofficeAccess(data)) {
         localStorage.removeItem("nearhome_access_token");
         localStorage.removeItem("nearhome_active_tenant");
+        localStorage.removeItem("nearhome_impersonate_role");
         setMe(null);
         setLoading(false);
         navigate("/login");
@@ -288,6 +295,7 @@ function useSession(apiUrl: string) {
     } catch {
       localStorage.removeItem("nearhome_access_token");
       localStorage.removeItem("nearhome_active_tenant");
+      localStorage.removeItem("nearhome_impersonate_role");
       setMe(null);
       setLoading(false);
       navigate("/login");
@@ -324,6 +332,7 @@ function LoginPage({ apiUrl }: { apiUrl: string }) {
 
     const data = await res.json();
     localStorage.setItem("nearhome_access_token", data.accessToken);
+    localStorage.removeItem("nearhome_impersonate_role");
     navigate("/");
   }
 
@@ -359,7 +368,10 @@ function Layout({ apiUrl }: { apiUrl: string }) {
   if (!me) return <Navigate to="/login" replace />;
 
   const activeTenant = getTenantId();
-  const role = me?.user?.isSuperuser ? "super_admin" : me.memberships?.find((m: any) => m.tenantId === activeTenant)?.role;
+  const persistedImpersonationRole = getImpersonateRole();
+  const role =
+    me?.context?.effectiveRole ??
+    (me?.user?.isSuperuser ? (persistedImpersonationRole ?? "super_admin") : me.memberships?.find((m: any) => m.tenantId === activeTenant)?.role);
   const navigation: WorkspaceNavGroup[] = [
     {
       title: "Operaciones",
@@ -401,24 +413,47 @@ function Layout({ apiUrl }: { apiUrl: string }) {
       subtitle="Panel operativo para administradores y operadores"
       role={<Badge data-testid="current-role">{role ?? "no-role"}</Badge>}
       tenantSwitcher={
-        <SelectInput
-          className="w-[220px]"
-          value={activeTenant ?? ""}
-          onChange={(e) => {
-            localStorage.setItem("nearhome_active_tenant", e.target.value);
-            refresh();
-          }}
-        >
-          {me.memberships?.map((m: any) => (
-            <option key={m.tenantId} value={m.tenantId}>
-              {m.tenant.name}
-            </option>
-          ))}
-        </SelectInput>
+        <div className="flex items-center gap-2">
+          <SelectInput
+            className="w-[220px]"
+            value={activeTenant ?? ""}
+            onChange={(e) => {
+              localStorage.setItem("nearhome_active_tenant", e.target.value);
+              refresh();
+            }}
+          >
+            {me.memberships?.map((m: any) => (
+              <option key={m.tenantId} value={m.tenantId}>
+                {m.tenant.name}
+              </option>
+            ))}
+          </SelectInput>
+          {me?.user?.isSuperuser ? (
+            <SelectInput
+              className="w-[190px]"
+              value={persistedImpersonationRole ?? "super_admin"}
+              onChange={(e) => {
+                const selectedRole = e.target.value;
+                if (selectedRole === "super_admin") {
+                  localStorage.removeItem("nearhome_impersonate_role");
+                } else {
+                  localStorage.setItem("nearhome_impersonate_role", selectedRole);
+                }
+                refresh();
+              }}
+            >
+              <option value="super_admin">super_admin</option>
+              <option value="tenant_admin">tenant_admin</option>
+              <option value="monitor">monitor</option>
+              <option value="client_user">client_user</option>
+            </SelectInput>
+          ) : null}
+        </div>
       }
       onLogout={() => {
         localStorage.removeItem("nearhome_access_token");
         localStorage.removeItem("nearhome_active_tenant");
+        localStorage.removeItem("nearhome_impersonate_role");
         navigate("/login");
       }}
       navigation={navigation}

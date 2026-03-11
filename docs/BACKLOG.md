@@ -336,7 +336,7 @@ Fuente: `docs/HISTORIAS_USUARIO_RBAC_TENANTS_PANEL_APP.md`
 
 ### NH-035 (P0) - Superadmin global + switch de contexto
 
-- Estado: `todo`
+- Estado: `done`
 - Scope:
   - `super_admin` con visibilidad total de tenants.
   - Impersonación/switch de contexto con auditoría completa.

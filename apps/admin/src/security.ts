@@ -16,11 +16,13 @@ export const authProvider: AuthProvider = {
 
     const data = await res.json();
     localStorage.setItem("nearhome_access_token", data.accessToken);
+    localStorage.removeItem("nearhome_impersonate_role");
     return { success: true, redirectTo: "/" };
   },
   logout: async () => {
     localStorage.removeItem("nearhome_access_token");
     localStorage.removeItem("nearhome_active_tenant");
+    localStorage.removeItem("nearhome_impersonate_role");
     localStorage.removeItem("nearhome_me");
     return { success: true, redirectTo: "/login" };
   },
@@ -40,7 +42,13 @@ export const authProvider: AuthProvider = {
     const raw = localStorage.getItem("nearhome_me");
     if (!raw) return null;
     const me = JSON.parse(raw);
-    if (me?.user?.isSuperuser) return "super_admin";
+    if (me?.user?.isSuperuser) {
+      const effectiveRole = me?.context?.effectiveRole;
+      if (me?.context?.isImpersonating && typeof effectiveRole === "string") {
+        return effectiveRole;
+      }
+      return "super_admin";
+    }
     const tenantId = localStorage.getItem("nearhome_active_tenant");
     const role = me.memberships?.find((m: any) => m.tenantId === tenantId)?.role;
     return role ?? null;

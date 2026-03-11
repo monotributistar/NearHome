@@ -474,6 +474,135 @@ describe("NH-039 operator camera zoning", () => {
   });
 });
 
+describe("NH-035 superadmin context switch + impersonation audit", () => {
+  it("restricts actions when superadmin impersonates monitor", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+
+    const createTenantResponse = await app.inject({
+      method: "POST",
+      url: "/tenants",
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { name: `Tenant NH035 ${Date.now()}` }
+    });
+    expect(createTenantResponse.statusCode).toBe(200);
+    const tenantId = createTenantResponse.json<{ data: { id: string } }>().data.id;
+
+    const meImpersonated = await app.inject({
+      method: "GET",
+      url: "/auth/me",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId,
+        "x-impersonate-role": "monitor"
+      }
+    });
+    expect(meImpersonated.statusCode).toBe(200);
+    expect(meImpersonated.json()).toMatchObject({
+      context: {
+        tenantId,
+        effectiveRole: "monitor",
+        isImpersonating: true,
+        impersonatedRole: "monitor"
+      }
+    });
+
+    const createAsMonitorContext = await app.inject({
+      method: "POST",
+      url: "/cameras",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId,
+        "x-impersonate-role": "monitor"
+      },
+      payload: {
+        name: `NH035 Blocked Cam ${Date.now()}`,
+        rtspUrl: "rtsp://demo/nh035-blocked",
+        isActive: false
+      }
+    });
+    expect(createAsMonitorContext.statusCode).toBe(403);
+
+    const createAsGlobalSuperadmin = await app.inject({
+      method: "POST",
+      url: "/cameras",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        name: `NH035 Allowed Cam ${Date.now()}`,
+        rtspUrl: "rtsp://demo/nh035-allowed",
+        isActive: false
+      }
+    });
+    expect(createAsGlobalSuperadmin.statusCode).toBe(200);
+  });
+
+  it("stores real actor and impersonated context in audit logs", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+
+    const createTenantResponse = await app.inject({
+      method: "POST",
+      url: "/tenants",
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { name: `Tenant NH035 Audit ${Date.now()}` }
+    });
+    expect(createTenantResponse.statusCode).toBe(200);
+    const tenantId = createTenantResponse.json<{ data: { id: string } }>().data.id;
+
+    const meResponse = await app.inject({
+      method: "GET",
+      url: "/auth/me",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId,
+        "x-impersonate-role": "tenant_admin"
+      }
+    });
+    expect(meResponse.statusCode).toBe(200);
+    const actorUserId = meResponse.json<{ user: { id: string } }>().user.id;
+
+    const createCameraResponse = await app.inject({
+      method: "POST",
+      url: "/cameras",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId,
+        "x-impersonate-role": "tenant_admin"
+      },
+      payload: {
+        name: `NH035 Audit Cam ${Date.now()}`,
+        rtspUrl: "rtsp://demo/nh035-audit",
+        isActive: false
+      }
+    });
+    expect(createCameraResponse.statusCode).toBe(200);
+    const cameraId = createCameraResponse.json<{ data: { id: string } }>().data.id;
+
+    const logsResponse = await app.inject({
+      method: "GET",
+      url: "/audit-logs?_start=0&_end=50",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId,
+        "x-impersonate-role": "tenant_admin"
+      }
+    });
+    expect(logsResponse.statusCode).toBe(200);
+    const logs = logsResponse.json<{ data: Array<{ actorUserId: string; resource: string; action: string; resourceId: string; payload: any }> }>().data;
+    const cameraCreateLog = logs.find((entry) => entry.resource === "camera" && entry.action === "create" && entry.resourceId === cameraId);
+    expect(cameraCreateLog).toBeTruthy();
+    expect(cameraCreateLog?.actorUserId).toBe(actorUserId);
+    expect(cameraCreateLog?.payload?._auth).toMatchObject({
+      actorUserId,
+      effectiveRole: "tenant_admin",
+      isImpersonating: true,
+      impersonatedRole: "tenant_admin",
+      tenantId
+    });
+  });
+});
+
 describe("NH-015 client camera assignment subset", () => {
   it("applies allowlist to client_user only when assignments exist", async () => {
     const adminToken = await login("admin@nearhome.dev");

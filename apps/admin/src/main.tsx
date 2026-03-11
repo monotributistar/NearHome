@@ -15,11 +15,13 @@ const httpClient = axios.create();
 httpClient.interceptors.request.use((config) => {
   const token = localStorage.getItem("nearhome_access_token");
   const tenantId = localStorage.getItem("nearhome_active_tenant");
+  const impersonateRole = localStorage.getItem("nearhome_impersonate_role");
 
   config.headers = {
     ...(config.headers ?? {}),
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...(tenantId ? { "X-Tenant-Id": tenantId } : {})
+    ...(tenantId ? { "X-Tenant-Id": tenantId } : {}),
+    ...(impersonateRole ? { "X-Impersonate-Role": impersonateRole } : {})
   } as any;
 
   return config;
@@ -35,6 +37,7 @@ httpClient.interceptors.response.use(
   (error) => {
     if (error?.response?.status === 401) {
       localStorage.removeItem("nearhome_access_token");
+      localStorage.removeItem("nearhome_impersonate_role");
       window.location.href = "/login";
     }
     return Promise.reject(error);

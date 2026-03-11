@@ -41,6 +41,7 @@ Versionado:
 
 - Header `Authorization: Bearer <jwt>`
 - Header `X-Tenant-Id: <tenantId>` para recursos tenant-scoped
+- Header opcional `X-Impersonate-Role: tenant_admin|monitor|client_user` (solo `super_admin`, requiere `X-Tenant-Id`)
 - Header opcional `X-Request-Id: <requestId>` (si no viene, el backend genera uno)
 - 401: token inválido/expirado
 - 403: sin membresía o permiso insuficiente
@@ -70,7 +71,14 @@ Versionado:
     - `LOGIN_RATE_LIMIT_WINDOW_MS` (default `60000`)
   - cuando excede límite: `429` con `{ code: "TOO_MANY_REQUESTS", ... }`
 - `GET /auth/me`
-  - out: `{ user, memberships[], activeTenant?, entitlements? }`
+  - out: `{ user, memberships[], activeTenant?, entitlements?, context? }`
+  - `context` incluye:
+    - `actorUserId`
+    - `effectiveUserId`
+    - `effectiveRole`
+    - `tenantId`
+    - `isImpersonating`
+    - `impersonatedRole`
 
 - `GET /tenants`
 - `POST /tenants`
@@ -171,6 +179,7 @@ Para seguridad de nodos de detección (enrolamiento, credenciales, heartbeat, re
 
 Roles:
 
+- `super_admin`: visibilidad global de tenants; puede operar globalmente o con contexto impersonado tenant-scoped.
 - `tenant_admin`: full sobre tenant.
 - `monitor`: lectura de cámaras/eventos; sin cambios de billing.
 - `client_user`: lectura de cámaras/eventos.
