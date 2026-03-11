@@ -390,6 +390,9 @@
 - Endurecimiento multi-tenant playback:
   - nueva cobertura en API para aislamiento de `maxConcurrentStreams` entre tenants (saturación en tenant A no bloquea tenant B).
   - validación: `pnpm --filter @app/api test -- -t \"NH-035 entitlement enforcement\"` en verde.
+- Endurecimiento e2e comercial admin:
+  - nueva prueba `admin.subscription-requests.spec.ts` para revisión/aprobación de solicitudes `pending_review`.
+  - validación: `pnpm test:e2e -- e2e/tests/admin.subscription-requests.spec.ts` en verde.
 
 ## Próximo bloque recomendado
 

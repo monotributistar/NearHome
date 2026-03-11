@@ -132,6 +132,11 @@ Archivos: `e2e/tests/*.spec.ts`
   - verificación de realtime con tópico `notification` por defecto
   - creación de solicitud de suscripción con comprobante (`pending_review`)
 
+- NH-043 e2e comercial admin
+  - creación de solicitud `subscriptions/requests` vía cliente (API)
+  - revisión/aprobación en UI admin (`/commercial/subscriptions`)
+  - verificación de transición `pending_review -> approved`
+
 - NH-031 aislamiento fuerte de cámaras multi-tenant (10 cámaras)
   - alta de 3 tenants y siembra de 10 cámaras (mock + reales opcionales por env `E2E_REAL_CAM1_RTSP`/`E2E_REAL_CAM2_RTSP`)
   - validación API de aislamiento por tenant para `monitor` y `client_user`
