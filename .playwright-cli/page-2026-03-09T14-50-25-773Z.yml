@@ -1,0 +1,138 @@
+- generic [ref=e17]:
+  - generic [ref=e18]:
+    - generic [ref=e19]: NearHome Admin
+    - generic [ref=e20]:
+      - generic [ref=e21]: tenant_admin
+      - combobox [ref=e22] [cursor=pointer]:
+        - option "Acme Retail" [selected]
+        - option "Beta Logistics"
+        - option "Gamma Clinics"
+      - button "Logout" [ref=e23] [cursor=pointer]
+  - generic [ref=e24]:
+    - complementary [ref=e25]:
+      - list [ref=e26]:
+        - listitem [ref=e27]:
+          - link "Control" [ref=e28] [cursor=pointer]:
+            - /url: /control
+        - listitem [ref=e29]:
+          - link "Tenants" [ref=e30] [cursor=pointer]:
+            - /url: /tenants
+        - listitem [ref=e31]:
+          - link "Users" [ref=e32] [cursor=pointer]:
+            - /url: /users
+        - listitem [ref=e33]:
+          - link "Memberships" [ref=e34] [cursor=pointer]:
+            - /url: /memberships
+        - listitem [ref=e35]:
+          - link "Cameras" [ref=e36] [cursor=pointer]:
+            - /url: /cameras
+        - listitem [ref=e37]:
+          - link "Realtime" [ref=e38] [cursor=pointer]:
+            - /url: /realtime
+        - listitem [ref=e39]:
+          - link "Plans" [ref=e40] [cursor=pointer]:
+            - /url: /plans
+        - listitem [ref=e41]:
+          - link "Subscriptions" [ref=e42] [cursor=pointer]:
+            - /url: /subscriptions
+    - main [ref=e43]:
+      - generic [ref=e44]:
+        - generic [ref=e46]:
+          - heading "Control Panel" [level=2] [ref=e48]
+          - generic [ref=e49]:
+            - generic [ref=e50]: "overall: ok"
+            - generic [ref=e51]: "updated: 3/9/2026, 11:50:23 AM"
+            - button "Refresh" [ref=e52] [cursor=pointer]
+          - generic [ref=e53]:
+            - generic [ref=e54]:
+              - generic [ref=e55]: Services
+              - generic [ref=e56]: "4"
+            - generic [ref=e57]:
+              - generic [ref=e58]: Nodes online
+              - generic [ref=e59]: "0"
+            - generic [ref=e60]:
+              - generic [ref=e61]: Nodes degraded
+              - generic [ref=e62]: "0"
+            - generic [ref=e63]:
+              - generic [ref=e64]: Nodes offline
+              - generic [ref=e65]: "0"
+            - generic [ref=e66]:
+              - generic [ref=e67]: Drained
+              - generic [ref=e68]: "0"
+        - generic [ref=e70]:
+          - heading "Service Status" [level=2] [ref=e72]
+          - table [ref=e74]:
+            - rowgroup [ref=e75]:
+              - row "Service Target Status HTTP Latency Error" [ref=e76]:
+                - columnheader "Service" [ref=e77]
+                - columnheader "Target" [ref=e78]
+                - columnheader "Status" [ref=e79]
+                - columnheader "HTTP" [ref=e80]
+                - columnheader "Latency" [ref=e81]
+                - columnheader "Error" [ref=e82]
+            - rowgroup [ref=e83]:
+              - row "stream-gateway ok 200 1 -" [ref=e84]:
+                - cell "stream-gateway" [ref=e85]
+                - cell [ref=e86]
+                - cell "ok" [ref=e87]:
+                  - generic [ref=e88]: ok
+                - cell "200" [ref=e89]
+                - cell "1" [ref=e90]
+                - cell "-" [ref=e91]
+              - row "event-gateway ok 200 1 -" [ref=e92]:
+                - cell "event-gateway" [ref=e93]
+                - cell [ref=e94]
+                - cell "ok" [ref=e95]:
+                  - generic [ref=e96]: ok
+                - cell "200" [ref=e97]
+                - cell "1" [ref=e98]
+                - cell "-" [ref=e99]
+              - row "inference-bridge ok 200 2 -" [ref=e100]:
+                - cell "inference-bridge" [ref=e101]
+                - cell [ref=e102]
+                - cell "ok" [ref=e103]:
+                  - generic [ref=e104]: ok
+                - cell "200" [ref=e105]
+                - cell "2" [ref=e106]
+                - cell "-" [ref=e107]
+              - row "detection-dispatcher ok 200 1 -" [ref=e108]:
+                - cell "detection-dispatcher" [ref=e109]
+                - cell [ref=e110]
+                - cell "ok" [ref=e111]:
+                  - generic [ref=e112]: ok
+                - cell "200" [ref=e113]
+                - cell "1" [ref=e114]
+                - cell "-" [ref=e115]
+        - generic [ref=e117]:
+          - heading "Node Registry" [level=2] [ref=e119]
+          - generic [ref=e120]: "total: 0 | revoked estimate: 0"
+          - table [ref=e122]:
+            - rowgroup [ref=e123]:
+              - row "Node Status Tenant Queue Drained Capabilities Models" [ref=e124]:
+                - columnheader "Node" [ref=e125]
+                - columnheader "Status" [ref=e126]
+                - columnheader "Tenant" [ref=e127]
+                - columnheader "Queue" [ref=e128]
+                - columnheader "Drained" [ref=e129]
+                - columnheader "Capabilities" [ref=e130]
+                - columnheader "Models" [ref=e131]
+            - rowgroup
+        - generic [ref=e133]:
+          - heading "Architecture Hierarchy" [level=2] [ref=e135]
+          - generic [ref=e136]:
+            - generic [ref=e137]:
+              - generic [ref=e138]: Control Plane
+              - generic [ref=e139]: API
+              - generic [ref=e140]: Admin UI / Portal UI
+            - generic [ref=e141]:
+              - generic [ref=e142]: Data Plane
+              - generic [ref=e143]: Stream Gateway
+              - generic [ref=e144]: Vault local/remote
+            - generic [ref=e145]:
+              - generic [ref=e146]: Event Plane
+              - generic [ref=e147]: Event Gateway
+              - generic [ref=e148]: Realtime SSE/WS
+            - generic [ref=e149]:
+              - generic [ref=e150]: Detection Plane
+              - generic [ref=e151]: Inference Bridge
+              - generic [ref=e152]: Dispatcher + Temporal + Worker + Nodes
