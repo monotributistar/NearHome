@@ -25,6 +25,9 @@
   - RBAC actualizado para onboarding de cámaras: `client_user` puede `POST/PUT /cameras` y `POST /cameras/:id/validate`.
   - monitor de lifecycle/health reutiliza `GET /cameras/:id/lifecycle` para diagnóstico legible en portal.
   - `monitor` mantiene restricción de creación/edición de cámaras.
+- NH-042: reglas de notificación tenant/cámara operativas en runtime:
+  - `rulesProfile.notification` dispara entregas multicanal (`realtime`, `webhook`, `email`) al cierre de detecciones.
+  - historial consolidado en `GET /notifications/deliveries` con estado por entrega.
 
 ## 2026-02-24 - v1.2.0
 

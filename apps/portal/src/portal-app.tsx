@@ -683,7 +683,7 @@ function RealtimePage({ api, tenantId }: { api: ApiClient; tenantId: string | nu
   const [status, setStatus] = useState<"connecting" | "connected" | "degraded" | "disconnected">("disconnected");
   const [transport, setTransport] = useState<"ws" | "sse" | "none">("none");
   const [events, setEvents] = useState<RealtimeEvent[]>([]);
-  const [topics, setTopics] = useState("incident,detection,stream");
+  const [topics, setTopics] = useState("incident,detection,stream,notification");
   const wsRef = useRef<WebSocket | null>(null);
   const timerRef = useRef<number | null>(null);
   const stopRef = useRef(false);
@@ -820,7 +820,7 @@ function RealtimePage({ api, tenantId }: { api: ApiClient; tenantId: string | nu
         <TextInput
           value={topics}
           onChange={(event) => setTopics(event.target.value)}
-          placeholder="topics csv (incident,detection,stream)"
+          placeholder="topics csv (incident,detection,stream,notification)"
         />
         <Surface className="px-3 py-2 text-sm">transport: {transport}</Surface>
         <Surface className="px-3 py-2 text-sm">tenant: {tenantId ?? "-"}</Surface>

@@ -49,6 +49,10 @@ Cobertura incluida:
   - `client_user` puede crear/editar cámara (`POST/PUT /cameras`) y ejecutar validación inicial (`POST /cameras/:id/validate`)
   - `GET /cameras/:id/lifecycle` expone `healthSnapshot` legible para monitoreo en portal
   - `monitor` mantiene restricción de alta de cámaras (`403`)
+- NH-042 notificaciones por reglas tenant/cámara
+  - `rulesProfile.notification` dispara entregas por `realtime/webhook/email` al cerrar detecciones con incidente
+  - `GET /notifications/deliveries` expone historial tenant-scoped por cámara/canal/estado
+  - cobertura de publish realtime (`notification.sent`, `notification.email_queued`) + envío webhook mockeado
 - NH-025 camera internal profile
   - crear cámara activa genera `profile` interno automáticamente
   - `tenant_admin` puede configurar `PUT /cameras/:id/profile`

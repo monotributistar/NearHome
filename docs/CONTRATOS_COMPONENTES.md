@@ -106,6 +106,9 @@ Versionado:
 - `PUT /cameras/:id/profile` (tenant_admin)
   - status operativo soportado: `pending|ready|error`
   - fallback automático: si la config queda incompleta => `status=pending`
+  - `rulesProfile.notification` gobierna notificaciones por cámara:
+    - `enabled`, `minConfidence`, `labels`, `cooldownSeconds`
+    - `channels.realtime|webhook|email`
 - `GET /cameras/:id/lifecycle` (tenant roles)
   - out: `{ data: { cameraId, currentStatus, lastSeenAt?, lastTransitionAt?, healthSnapshot?, history[] } }`
 - `POST /cameras/:id/validate` (tenant_admin|client_user)

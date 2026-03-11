@@ -3193,3 +3193,207 @@ describe("NH-DP-15 temporal callback ingestion", () => {
     }
   });
 });
+
+describe("NH-042 notification rules and multi-channel deliveries", () => {
+  it("dispatches realtime, webhook and email deliveries from camera notification rules", async () => {
+    const previousBridge = process.env.DETECTION_BRIDGE_URL;
+    const previousMode = process.env.DETECTION_EXECUTION_MODE;
+    const previousCallbackSecret = process.env.DETECTION_CALLBACK_SECRET;
+    const previousEventGatewayUrl = process.env.EVENT_GATEWAY_URL;
+    const previousEventPublishSecret = process.env.EVENT_PUBLISH_SECRET;
+
+    process.env.DETECTION_BRIDGE_URL = "";
+    process.env.DETECTION_EXECUTION_MODE = "inline";
+    process.env.DETECTION_CALLBACK_SECRET = "test-callback-secret";
+    process.env.EVENT_GATEWAY_URL = "http://mock-event-gateway";
+    process.env.EVENT_PUBLISH_SECRET = "test-event-secret";
+
+    const fetchMock = vi.fn(async (input: any) => {
+      const url = String(input);
+      if (url.includes("http://mock-event-gateway/internal/events/publish")) {
+        return new globalThis.Response(JSON.stringify({ data: { accepted: true } }), {
+          status: 202,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      if (url.includes("http://mock-webhook.local/nearhome")) {
+        return new globalThis.Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      return new globalThis.Response("not found", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const appUnderTest = await buildApp();
+    await appUnderTest.ready();
+
+    try {
+      const loginResponse = await appUnderTest.inject({
+        method: "POST",
+        url: "/auth/login",
+        headers: { "x-forwarded-for": `test-nh042-${Date.now()}` },
+        payload: { email: "admin@nearhome.dev", password: "demo1234" }
+      });
+      expect(loginResponse.statusCode).toBe(200);
+      const token = loginResponse.json<{ accessToken: string }>().accessToken;
+
+      const meResponse = await appUnderTest.inject({
+        method: "GET",
+        url: "/auth/me",
+        headers: { authorization: `Bearer ${token}` }
+      });
+      expect(meResponse.statusCode).toBe(200);
+      const tenantId = meResponse.json<{ memberships: Array<{ tenantId: string }> }>().memberships[0]?.tenantId;
+      expect(tenantId).toBeTruthy();
+
+      const camerasResponse = await appUnderTest.inject({
+        method: "GET",
+        url: "/cameras?_start=0&_end=1",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "x-tenant-id": tenantId!
+        }
+      });
+      expect(camerasResponse.statusCode).toBe(200);
+      const cameraId = camerasResponse.json<{ data: Array<{ id: string }> }>().data[0]?.id;
+      expect(cameraId).toBeTruthy();
+
+      const upsertWebhookChannel = await appUnderTest.inject({
+        method: "POST",
+        url: "/notification-channels",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "x-tenant-id": tenantId!
+        },
+        payload: {
+          name: "NH042 webhook",
+          type: "webhook",
+          endpoint: "http://mock-webhook.local/nearhome",
+          isActive: true
+        }
+      });
+      expect(upsertWebhookChannel.statusCode).toBe(200);
+
+      const upsertEmailChannel = await appUnderTest.inject({
+        method: "POST",
+        url: "/notification-channels",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "x-tenant-id": tenantId!
+        },
+        payload: {
+          name: "NH042 email",
+          type: "email",
+          emailTo: "alerts+nh042@nearhome.dev",
+          isActive: true
+        }
+      });
+      expect(upsertEmailChannel.statusCode).toBe(200);
+
+      const profileUpdate = await appUnderTest.inject({
+        method: "PUT",
+        url: `/cameras/${cameraId}/profile`,
+        headers: {
+          authorization: `Bearer ${token}`,
+          "x-tenant-id": tenantId!
+        },
+        payload: {
+          rulesProfile: {
+            notification: {
+              enabled: true,
+              minConfidence: 0.6,
+              labels: "person",
+              cooldownSeconds: 0,
+              channels: {
+                realtime: true,
+                webhook: true,
+                email: true
+              }
+            }
+          }
+        }
+      });
+      expect(profileUpdate.statusCode).toBe(200);
+
+      const createJob = await appUnderTest.inject({
+        method: "POST",
+        url: "/v1/detections/jobs",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "x-tenant-id": tenantId!
+        },
+        payload: {
+          cameraId,
+          mode: "realtime",
+          source: "snapshot",
+          provider: "onprem_bento"
+        }
+      });
+      expect(createJob.statusCode).toBe(200);
+      const jobId = createJob.json<{ data: { id: string } }>().data.id;
+
+      const completeResponse = await appUnderTest.inject({
+        method: "POST",
+        url: `/internal/detections/jobs/${jobId}/complete`,
+        headers: {
+          "x-detection-callback-secret": "test-callback-secret"
+        },
+        payload: {
+          detections: [
+            {
+              label: "person",
+              confidence: 0.93,
+              bbox: { x: 0.11, y: 0.18, w: 0.22, h: 0.32 }
+            }
+          ]
+        }
+      });
+      expect(completeResponse.statusCode).toBe(200);
+
+      const deliveriesResponse = await appUnderTest.inject({
+        method: "GET",
+        url: `/notifications/deliveries?cameraId=${cameraId}&_start=0&_end=20`,
+        headers: {
+          authorization: `Bearer ${token}`,
+          "x-tenant-id": tenantId!
+        }
+      });
+      expect(deliveriesResponse.statusCode).toBe(200);
+      const deliveries = deliveriesResponse.json<{ data: Array<{ channelType: string; status: string }> }>().data;
+      expect(deliveries.some((delivery) => delivery.channelType === "realtime" && delivery.status === "sent")).toBe(true);
+      expect(deliveries.some((delivery) => delivery.channelType === "webhook" && delivery.status === "sent")).toBe(true);
+      expect(deliveries.some((delivery) => delivery.channelType === "email" && delivery.status === "queued")).toBe(true);
+
+      const publishBodies = fetchMock.mock.calls
+        .map((call) => {
+          const rawBody = call[1]?.body;
+          if (typeof rawBody !== "string") return null;
+          try {
+            return JSON.parse(rawBody);
+          } catch {
+            return null;
+          }
+        })
+        .filter(Boolean) as Array<{ eventType?: string; payload?: Record<string, unknown> }>;
+
+      expect(
+        publishBodies.some(
+          (payload) => payload.eventType === "notification.sent" && payload.payload?.["channel"] === "realtime"
+        )
+      ).toBe(true);
+      expect(publishBodies.some((payload) => payload.eventType === "notification.email_queued")).toBe(true);
+
+      expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("http://mock-webhook.local/nearhome"))).toBe(true);
+    } finally {
+      await appUnderTest.close();
+      vi.unstubAllGlobals();
+      process.env.DETECTION_BRIDGE_URL = previousBridge;
+      process.env.DETECTION_EXECUTION_MODE = previousMode;
+      process.env.DETECTION_CALLBACK_SECRET = previousCallbackSecret;
+      process.env.EVENT_GATEWAY_URL = previousEventGatewayUrl;
+      process.env.EVENT_PUBLISH_SECRET = previousEventPublishSecret;
+    }
+  });
+});

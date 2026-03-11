@@ -406,7 +406,7 @@ Fuente: `docs/HISTORIAS_USUARIO_RBAC_TENANTS_PANEL_APP.md`
 
 ### NH-042 (P1) - Notificaciones realtime por reglas de tenant/cámara
 
-- Estado: `todo`
+- Estado: `done`
 - Scope:
   - Motor de reglas para disparo de notificaciones en vivo.
   - Entrega por canal configurado (in-app/webhook/email).
