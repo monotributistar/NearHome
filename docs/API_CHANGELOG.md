@@ -14,6 +14,9 @@
   - `/auth/me` expone `context` con actor real/efectivo e indicadores de impersonación.
   - enforcement de permisos por rol impersonado en rutas tenant-scoped.
   - auditoría en `AuditLog.payload._auth` con actor real + contexto efectivo.
+- NH-036/NH-037: endurecimiento de identidad multi-tenant:
+  - cobertura explícita de memberships N:M para `operator/customer` y enforcement `403` fuera de membresía.
+  - cobertura explícita de gestión de roles: `super_admin` cambia rol por tenant y `tenant_admin` queda limitado a su tenant.
 
 ## 2026-02-24 - v1.2.0
 

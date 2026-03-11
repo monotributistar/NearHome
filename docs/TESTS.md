@@ -31,6 +31,13 @@ Cobertura incluida:
   - `super_admin` puede impersonar rol tenant-scoped vía `X-Impersonate-Role`
   - contexto impersonado restringe permisos (ej: `monitor` no crea cámaras)
   - auditoría registra actor real y contexto efectivo en `payload._auth`
+- NH-036 membresías N:M operador/customer
+  - `operator` puede pertenecer a múltiples tenants y operar en cada tenant asociado
+  - `customer` puede pertenecer a múltiples tenants (role alias `customer -> client_user`)
+  - acceso con `X-Tenant-Id` fuera de membresía devuelve `403`
+- NH-037 gestión de roles y memberships
+  - `super_admin` puede cambiar roles de un usuario en distintos tenants (vía contexto `X-Tenant-Id`)
+  - `tenant_admin` no puede editar usuarios fuera de su tenant (`403`)
 - NH-025 camera internal profile
   - crear cámara activa genera `profile` interno automáticamente
   - `tenant_admin` puede configurar `PUT /cameras/:id/profile`

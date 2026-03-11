@@ -357,9 +357,13 @@
 - `NH-035` validación impersonación superadmin:
   - `pnpm --filter @app/api test -- -t NH-035` en verde (context switch + auditoría)
   - `pnpm --filter @app/api typecheck` y `pnpm --filter @app/admin typecheck` en verde
+- `NH-036` validación memberships N:M:
+  - `pnpm --filter @app/api test -- -t NH-036` en verde (operator/customer multi-tenant + 403 fuera de membresía)
+- `NH-037` validación gestión de roles/memberships:
+  - `pnpm --filter @app/api test -- -t NH-037` en verde (`super_admin` global + `tenant_admin` tenant-scoped)
 
 ## Próximo bloque recomendado
 
-1. NH-036: membresías N:M operadores/customers por tenant.
-2. NH-037: gestión de roles y memberships desde panel.
+1. NH-038: UX de errores accionables en cámaras.
+2. NH-039: alcance operador global por defecto + zonificación.
 3. Endurecimiento e2e multi-tenant para concurrencia de playback (escenarios simultáneos por tenant).

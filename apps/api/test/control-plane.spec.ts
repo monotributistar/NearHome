@@ -603,6 +603,295 @@ describe("NH-035 superadmin context switch + impersonation audit", () => {
   });
 });
 
+describe("NH-036 memberships N:M operator/customer", () => {
+  it("allows operator membership across tenants and enforces tenant-scoped access", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const adminMe = await me(adminToken);
+    const acmeTenant = adminMe.memberships.find((m) => m.tenant.name === "Acme Retail");
+    const betaTenant = adminMe.memberships.find((m) => m.tenant.name === "Beta Logistics");
+    expect(acmeTenant).toBeTruthy();
+    expect(betaTenant).toBeTruthy();
+
+    const createForeignTenant = await app.inject({
+      method: "POST",
+      url: "/tenants",
+      headers: {
+        authorization: `Bearer ${adminToken}`
+      },
+      payload: { name: `Tenant NH036 Operator Foreign ${Date.now()}` }
+    });
+    expect(createForeignTenant.statusCode).toBe(200);
+    const foreignTenantId = createForeignTenant.json<{ data: { id: string } }>().data.id;
+
+    const usersResponse = await app.inject({
+      method: "GET",
+      url: "/users",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": acmeTenant!.tenantId
+      }
+    });
+    expect(usersResponse.statusCode).toBe(200);
+    const monitorUser = usersResponse
+      .json<{ data: Array<{ id: string; email: string }> }>()
+      .data.find((row) => row.email === "monitor@nearhome.dev");
+    expect(monitorUser).toBeTruthy();
+
+    const addBetaMembership = await app.inject({
+      method: "POST",
+      url: "/memberships",
+      headers: {
+        authorization: `Bearer ${adminToken}`
+      },
+      payload: {
+        tenantId: betaTenant!.tenantId,
+        userId: monitorUser!.id,
+        role: "operator"
+      }
+    });
+    expect(addBetaMembership.statusCode).toBe(200);
+
+    const monitorToken = await login("monitor@nearhome.dev");
+
+    const accessPrimaryTenant = await app.inject({
+      method: "GET",
+      url: "/cameras?_start=0&_end=10",
+      headers: {
+        authorization: `Bearer ${monitorToken}`,
+        "x-tenant-id": acmeTenant!.tenantId
+      }
+    });
+    expect(accessPrimaryTenant.statusCode).toBe(200);
+
+    const accessSecondaryTenant = await app.inject({
+      method: "GET",
+      url: "/cameras?_start=0&_end=10",
+      headers: {
+        authorization: `Bearer ${monitorToken}`,
+        "x-tenant-id": betaTenant!.tenantId
+      }
+    });
+    expect(accessSecondaryTenant.statusCode).toBe(200);
+
+    const accessForeignTenant = await app.inject({
+      method: "GET",
+      url: "/cameras?_start=0&_end=10",
+      headers: {
+        authorization: `Bearer ${monitorToken}`,
+        "x-tenant-id": foreignTenantId
+      }
+    });
+    expect(accessForeignTenant.statusCode).toBe(403);
+  });
+
+  it("allows customer membership across tenants and blocks access outside memberships", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const adminMe = await me(adminToken);
+    const acmeTenant = adminMe.memberships.find((m) => m.tenant.name === "Acme Retail");
+    const betaTenant = adminMe.memberships.find((m) => m.tenant.name === "Beta Logistics");
+    expect(acmeTenant).toBeTruthy();
+    expect(betaTenant).toBeTruthy();
+
+    const createForeignTenant = await app.inject({
+      method: "POST",
+      url: "/tenants",
+      headers: {
+        authorization: `Bearer ${adminToken}`
+      },
+      payload: { name: `Tenant NH036 Customer Foreign ${Date.now()}` }
+    });
+    expect(createForeignTenant.statusCode).toBe(200);
+    const foreignTenantId = createForeignTenant.json<{ data: { id: string } }>().data.id;
+
+    const usersResponse = await app.inject({
+      method: "GET",
+      url: "/users",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": acmeTenant!.tenantId
+      }
+    });
+    expect(usersResponse.statusCode).toBe(200);
+    const clientUser = usersResponse
+      .json<{ data: Array<{ id: string; email: string }> }>()
+      .data.find((row) => row.email === "client@nearhome.dev");
+    expect(clientUser).toBeTruthy();
+
+    const addBetaMembership = await app.inject({
+      method: "POST",
+      url: "/memberships",
+      headers: {
+        authorization: `Bearer ${adminToken}`
+      },
+      payload: {
+        tenantId: betaTenant!.tenantId,
+        userId: clientUser!.id,
+        role: "customer"
+      }
+    });
+    expect(addBetaMembership.statusCode).toBe(200);
+    expect(addBetaMembership.json()).toMatchObject({
+      data: {
+        tenantId: betaTenant!.tenantId,
+        userId: clientUser!.id,
+        role: "client_user"
+      }
+    });
+
+    const clientToken = await login("client@nearhome.dev");
+
+    const accessPrimaryTenant = await app.inject({
+      method: "GET",
+      url: "/cameras?_start=0&_end=10",
+      headers: {
+        authorization: `Bearer ${clientToken}`,
+        "x-tenant-id": acmeTenant!.tenantId
+      }
+    });
+    expect(accessPrimaryTenant.statusCode).toBe(200);
+
+    const accessSecondaryTenant = await app.inject({
+      method: "GET",
+      url: "/cameras?_start=0&_end=10",
+      headers: {
+        authorization: `Bearer ${clientToken}`,
+        "x-tenant-id": betaTenant!.tenantId
+      }
+    });
+    expect(accessSecondaryTenant.statusCode).toBe(200);
+
+    const accessForeignTenant = await app.inject({
+      method: "GET",
+      url: "/cameras?_start=0&_end=10",
+      headers: {
+        authorization: `Bearer ${clientToken}`,
+        "x-tenant-id": foreignTenantId
+      }
+    });
+    expect(accessForeignTenant.statusCode).toBe(403);
+  });
+});
+
+describe("NH-037 role and memberships management", () => {
+  it("allows super_admin to change user roles in different tenants", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const adminMe = await me(adminToken);
+    const acmeTenant = adminMe.memberships.find((m) => m.tenant.name === "Acme Retail");
+    const betaTenant = adminMe.memberships.find((m) => m.tenant.name === "Beta Logistics");
+    expect(acmeTenant).toBeTruthy();
+    expect(betaTenant).toBeTruthy();
+
+    const userEmail = `nh037-global-${Date.now()}@nearhome.dev`;
+    const createInAcme = await app.inject({
+      method: "POST",
+      url: "/users",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": acmeTenant!.tenantId
+      },
+      payload: {
+        email: userEmail,
+        name: "NH037 Global User",
+        password: "demo1234",
+        role: "customer"
+      }
+    });
+    expect(createInAcme.statusCode).toBe(200);
+    const userId = createInAcme.json<{ data: { id: string } }>().data.id;
+
+    const addMembershipInBeta = await app.inject({
+      method: "POST",
+      url: "/memberships",
+      headers: {
+        authorization: `Bearer ${adminToken}`
+      },
+      payload: {
+        tenantId: betaTenant!.tenantId,
+        userId,
+        role: "customer"
+      }
+    });
+    expect(addMembershipInBeta.statusCode).toBe(200);
+
+    const updateRoleInBeta = await app.inject({
+      method: "PUT",
+      url: `/users/${userId}`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": betaTenant!.tenantId
+      },
+      payload: {
+        role: "operator"
+      }
+    });
+    expect(updateRoleInBeta.statusCode).toBe(200);
+    expect(updateRoleInBeta.json()).toMatchObject({
+      data: {
+        id: userId,
+        role: "monitor"
+      }
+    });
+  });
+
+  it("restricts tenant_admin to manage users only inside own tenant", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const adminMe = await me(adminToken);
+    const acmeTenant = adminMe.memberships.find((m) => m.tenant.name === "Acme Retail");
+    const betaTenant = adminMe.memberships.find((m) => m.tenant.name === "Beta Logistics");
+    expect(acmeTenant).toBeTruthy();
+    expect(betaTenant).toBeTruthy();
+
+    const tenantAdminEmail = `nh037-tenant-admin-${Date.now()}@nearhome.dev`;
+    const createTenantAdmin = await app.inject({
+      method: "POST",
+      url: "/users",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": acmeTenant!.tenantId
+      },
+      payload: {
+        email: tenantAdminEmail,
+        name: "NH037 Tenant Admin",
+        password: "demo1234",
+        role: "tenant_admin"
+      }
+    });
+    expect(createTenantAdmin.statusCode).toBe(200);
+
+    const betaUserEmail = `nh037-beta-user-${Date.now()}@nearhome.dev`;
+    const createBetaUser = await app.inject({
+      method: "POST",
+      url: "/users",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": betaTenant!.tenantId
+      },
+      payload: {
+        email: betaUserEmail,
+        name: "NH037 Beta User",
+        password: "demo1234",
+        role: "client_user"
+      }
+    });
+    expect(createBetaUser.statusCode).toBe(200);
+    const betaUserId = createBetaUser.json<{ data: { id: string } }>().data.id;
+
+    const tenantAdminToken = await login(tenantAdminEmail);
+    const updateOutsideTenant = await app.inject({
+      method: "PUT",
+      url: `/users/${betaUserId}`,
+      headers: {
+        authorization: `Bearer ${tenantAdminToken}`,
+        "x-tenant-id": betaTenant!.tenantId
+      },
+      payload: {
+        role: "operator"
+      }
+    });
+    expect(updateOutsideTenant.statusCode).toBe(403);
+  });
+});
+
 describe("NH-015 client camera assignment subset", () => {
   it("applies allowlist to client_user only when assignments exist", async () => {
     const adminToken = await login("admin@nearhome.dev");

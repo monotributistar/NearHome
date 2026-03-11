@@ -346,7 +346,7 @@ Fuente: `docs/HISTORIAS_USUARIO_RBAC_TENANTS_PANEL_APP.md`
 
 ### NH-036 (P0) - Membresías N:M operadores/customers por tenant
 
-- Estado: `todo`
+- Estado: `done`
 - Scope:
   - Operadores y customers con asociación N:M a tenants.
   - Enforcement de permisos tenant-scoped en API y UI.
@@ -356,7 +356,7 @@ Fuente: `docs/HISTORIAS_USUARIO_RBAC_TENANTS_PANEL_APP.md`
 
 ### NH-037 (P0) - Gestión de roles y memberships desde panel
 
-- Estado: `todo`
+- Estado: `done`
 - Scope:
   - UI/Admin para crear/editar usuarios y memberships por rol.
   - Cambio de rol controlado por permisos.
