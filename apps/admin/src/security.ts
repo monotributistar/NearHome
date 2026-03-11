@@ -1,6 +1,6 @@
 import type { AccessControlProvider, AuthProvider } from "@refinedev/core";
 
-type Role = "tenant_admin" | "monitor" | "client_user";
+type Role = "super_admin" | "tenant_admin" | "monitor" | "client_user";
 
 export const authProvider: AuthProvider = {
   login: async ({ email, password }: any) => {
@@ -40,6 +40,7 @@ export const authProvider: AuthProvider = {
     const raw = localStorage.getItem("nearhome_me");
     if (!raw) return null;
     const me = JSON.parse(raw);
+    if (me?.user?.isSuperuser) return "super_admin";
     const tenantId = localStorage.getItem("nearhome_active_tenant");
     const role = me.memberships?.find((m: any) => m.tenantId === tenantId)?.role;
     return role ?? null;
@@ -48,6 +49,15 @@ export const authProvider: AuthProvider = {
 };
 
 const ACL: Record<Role, Record<string, string[]>> = {
+  super_admin: {
+    tenants: ["list", "create", "edit", "show", "delete"],
+    users: ["list", "create", "edit", "show"],
+    memberships: ["list", "create", "edit", "show"],
+    cameras: ["list", "create", "edit", "show", "delete"],
+    notifications: ["list", "create", "edit", "show", "delete"],
+    plans: ["list", "show"],
+    subscriptions: ["list", "create", "edit", "show"]
+  },
   tenant_admin: {
     tenants: ["list", "create", "edit", "show", "delete"],
     users: ["list", "create", "edit", "show"],
@@ -82,9 +92,13 @@ export const accessControlProvider: AccessControlProvider = {
     const raw = localStorage.getItem("nearhome_me");
     const tenantId = localStorage.getItem("nearhome_active_tenant");
 
-    if (!raw || !tenantId || !resource) return { can: false };
+    if (!raw || !resource) return { can: false };
 
     const me = JSON.parse(raw);
+    if (me?.user?.isSuperuser) {
+      return { can: ACL.super_admin[resource]?.includes(action) ?? false };
+    }
+    if (!tenantId) return { can: false };
     const role = me.memberships?.find((m: any) => m.tenantId === tenantId)?.role as Role | undefined;
 
     if (!role) return { can: false };

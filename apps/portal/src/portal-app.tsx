@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiClient, loadSessionState, saveSessionState } from "@app/api-client";
-import { AppShell, PageCard, PrimaryButton, SelectInput, TextInput, Badge } from "@app/ui";
+import { AppShell, PageCard, PrimaryButton, SelectInput, TextInput, Badge, WorkspaceShell, type WorkspaceNavGroup } from "@app/ui";
 import { Link, Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
+import { Camera, Internet, UserCircle, ViewGrid, WarningSquare } from "iconoir-react";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3001";
 const EVENT_GATEWAY_URL = import.meta.env.VITE_EVENT_GATEWAY_URL ?? "http://localhost:3011";
@@ -122,63 +123,54 @@ function ProtectedLayout() {
 
   if (!state.accessToken) return <Navigate to="/login" replace />;
   if (!me) return <div className="p-6">Loading...</div>;
+  const navigation: WorkspaceNavGroup[] = [
+    {
+      title: "Operaciones",
+      items: [
+        { to: "/cameras", label: "Cámaras", icon: <Camera width={16} height={16} /> },
+        { to: "/events", label: "Eventos", icon: <WarningSquare width={16} height={16} /> },
+        { to: "/realtime", label: "Realtime", icon: <Internet width={16} height={16} /> }
+      ]
+    },
+    {
+      title: "Cuenta",
+      items: [
+        { to: "/select-tenant", label: "Tenant activo", icon: <ViewGrid width={16} height={16} /> },
+        { to: "/account", label: "Perfil", icon: <UserCircle width={16} height={16} /> }
+      ]
+    }
+  ];
 
   return (
-    <AppShell>
-      <div className="navbar bg-base-100 shadow">
-        <div className="flex-1 px-4 font-bold">NearHome Portal</div>
-        <div className="flex items-center gap-2 px-4">
-          <SelectInput
-            className="select-sm"
-            value={state.activeTenantId ?? ""}
-            onChange={(e) => setSession({ activeTenantId: e.target.value })}
-          >
-            {me.memberships?.map((m: any) => (
-              <option key={m.tenantId} value={m.tenantId}>
-                {m.tenant.name}
-              </option>
-            ))}
-          </SelectInput>
-          <button className="btn btn-sm" onClick={() => setSession({ accessToken: null, activeTenantId: null })}>
-            Logout
-          </button>
-        </div>
-      </div>
-
-      <div className="mx-auto grid max-w-7xl grid-cols-12 gap-4 p-4">
-        <aside className="col-span-12 rounded-box bg-base-100 p-3 shadow md:col-span-3 lg:col-span-2">
-          <ul className="menu gap-1">
-            <li>
-              <Link to="/select-tenant">Select tenant</Link>
-            </li>
-            <li>
-              <Link to="/cameras">Cameras</Link>
-            </li>
-            <li>
-              <Link to="/events">Events</Link>
-            </li>
-            <li>
-              <Link to="/realtime">Realtime</Link>
-            </li>
-            <li>
-              <Link to="/account">Account</Link>
-            </li>
-          </ul>
-        </aside>
-
-        <main className="col-span-12 md:col-span-9 lg:col-span-10">
-          <Routes>
-            <Route path="/" element={<Navigate to="/cameras" replace />} />
-            <Route path="/select-tenant" element={<SelectTenantPage me={me} />} />
-            <Route path="/cameras" element={<CamerasPage api={api} />} />
-            <Route path="/cameras/:id" element={<CameraDetailPage api={api} />} />
-            <Route path="/events" element={<EventsPage api={api} />} />
-            <Route path="/realtime" element={<RealtimePage api={api} tenantId={state.activeTenantId} />} />
-            <Route path="/account" element={<AccountPage me={me} />} />
-          </Routes>
-        </main>
-      </div>
-    </AppShell>
+    <WorkspaceShell
+      product="NearHome App"
+      subtitle="Vista operativa para usuarios finales"
+      tenantSwitcher={
+        <SelectInput
+          className="w-[220px]"
+          value={state.activeTenantId ?? ""}
+          onChange={(e) => setSession({ activeTenantId: e.target.value })}
+        >
+          {me.memberships?.map((m: any) => (
+            <option key={m.tenantId} value={m.tenantId}>
+              {m.tenant.name}
+            </option>
+          ))}
+        </SelectInput>
+      }
+      onLogout={() => setSession({ accessToken: null, activeTenantId: null })}
+      navigation={navigation}
+    >
+      <Routes>
+        <Route path="/" element={<Navigate to="/cameras" replace />} />
+        <Route path="/select-tenant" element={<SelectTenantPage me={me} />} />
+        <Route path="/cameras" element={<CamerasPage api={api} />} />
+        <Route path="/cameras/:id" element={<CameraDetailPage api={api} />} />
+        <Route path="/events" element={<EventsPage api={api} />} />
+        <Route path="/realtime" element={<RealtimePage api={api} tenantId={state.activeTenantId} />} />
+        <Route path="/account" element={<AccountPage me={me} />} />
+      </Routes>
+    </WorkspaceShell>
   );
 }
 

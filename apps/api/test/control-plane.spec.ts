@@ -354,6 +354,108 @@ describe("NH-030 monitor tenant-scoped camera visibility", () => {
 });
 
 describe("NH-021 user administration", () => {
+  it("accepts role aliases operator/customer and stores canonical roles", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const adminMe = await me(adminToken);
+    const tenantId = adminMe.memberships[0].tenantId;
+    const userEmail = `user-alias-${Date.now()}@nearhome.dev`;
+
+    const createResponse = await app.inject({
+      method: "POST",
+      url: "/users",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        email: userEmail,
+        name: "User Alias Test",
+        password: "demo1234",
+        role: "customer"
+      }
+    });
+
+    expect(createResponse.statusCode).toBe(200);
+    const created = createResponse.json<{ data: { id: string } }>().data;
+
+    const updateResponse = await app.inject({
+      method: "PUT",
+      url: `/users/${created.id}`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        role: "operator"
+      }
+    });
+
+    expect(updateResponse.statusCode).toBe(200);
+    expect(updateResponse.json()).toMatchObject({
+      data: {
+        id: created.id,
+        role: "monitor"
+      }
+    });
+  });
+
+  it("allows super_admin to create memberships for any tenant without tenant header", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const adminMe = await me(adminToken);
+    const acmeTenant = adminMe.memberships.find((m) => m.tenant.name === "Acme Retail");
+    const betaTenant = adminMe.memberships.find((m) => m.tenant.name === "Beta Logistics");
+    expect(acmeTenant).toBeTruthy();
+    expect(betaTenant).toBeTruthy();
+
+    const usersResponse = await app.inject({
+      method: "GET",
+      url: "/users",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": acmeTenant!.tenantId
+      }
+    });
+    expect(usersResponse.statusCode).toBe(200);
+    const monitorUser = usersResponse
+      .json<{ data: Array<{ id: string; email: string }> }>()
+      .data.find((row) => row.email === "monitor@nearhome.dev");
+    expect(monitorUser).toBeTruthy();
+
+    const createMembershipResponse = await app.inject({
+      method: "POST",
+      url: "/memberships",
+      headers: {
+        authorization: `Bearer ${adminToken}`
+      },
+      payload: {
+        tenantId: betaTenant!.tenantId,
+        userId: monitorUser!.id,
+        role: "operator"
+      }
+    });
+    expect(createMembershipResponse.statusCode).toBe(200);
+    expect(createMembershipResponse.json()).toMatchObject({
+      data: {
+        tenantId: betaTenant!.tenantId,
+        userId: monitorUser!.id,
+        role: "monitor"
+      }
+    });
+
+    const listMembershipsResponse = await app.inject({
+      method: "GET",
+      url: `/memberships?tenantId=${encodeURIComponent(betaTenant!.tenantId)}&userId=${encodeURIComponent(monitorUser!.id)}`,
+      headers: {
+        authorization: `Bearer ${adminToken}`
+      }
+    });
+    expect(listMembershipsResponse.statusCode).toBe(200);
+    const rows = listMembershipsResponse.json<{ data: Array<{ tenantId: string; userId: string; role: string }> }>().data;
+    expect(rows.some((row) => row.tenantId === betaTenant!.tenantId && row.userId === monitorUser!.id && row.role === "monitor")).toBe(
+      true
+    );
+  });
+
   it("allows tenant_admin to create users and assign tenant role", async () => {
     const adminToken = await login("admin@nearhome.dev");
     const adminMe = await me(adminToken);

@@ -329,3 +329,266 @@ Notas de alineación:
   - typecheck + tests API + e2e smoke.
 - Aceptación:
   - Workflow bloquea merge en fallos.
+
+## Nuevas historias (RBAC + Panel + App Cliente)
+
+Fuente: `docs/HISTORIAS_USUARIO_RBAC_TENANTS_PANEL_APP.md`
+
+### NH-035 (P0) - Superadmin global + switch de contexto
+
+- Estado: `todo`
+- Scope:
+  - `super_admin` con visibilidad total de tenants.
+  - Impersonación/switch de contexto con auditoría completa.
+- Aceptación:
+  - Superadmin puede operar sobre cualquier tenant.
+  - Auditoría registra actor real + contexto impersonado.
+
+### NH-036 (P0) - Membresías N:M operadores/customers por tenant
+
+- Estado: `todo`
+- Scope:
+  - Operadores y customers con asociación N:M a tenants.
+  - Enforcement de permisos tenant-scoped en API y UI.
+- Aceptación:
+  - Un usuario puede pertenecer a múltiples tenants.
+  - Acceso fuera de membresía devuelve 403.
+
+### NH-037 (P0) - Gestión de roles y memberships desde panel
+
+- Estado: `todo`
+- Scope:
+  - UI/Admin para crear/editar usuarios y memberships por rol.
+  - Cambio de rol controlado por permisos.
+- Aceptación:
+  - `tenant_admin` gestiona usuarios solo de su tenant.
+  - `super_admin` puede cambiar roles globalmente.
+
+### NH-038 (P0) - UX de errores accionables en cámaras
+
+- Estado: `todo`
+- Scope:
+  - Mostrar `code`, `message` y `details` de errores backend en panel.
+  - Diferenciar errores de autorización/entitlement/validación.
+- Aceptación:
+  - La UI no muestra solo 404 genérico.
+  - Errores incluyen detalle técnico utilizable.
+
+### NH-039 (P1) - Alcance operador global por defecto + zonificación
+
+- Estado: `todo`
+- Scope:
+  - Política default de visibilidad amplia para operadores.
+  - Configuración de zonificación por tenant/sede/cámara.
+- Aceptación:
+  - Sin zonificación: ve todo lo permitido por membresías.
+  - Con zonificación: ve solo subset configurado.
+
+### NH-040 (P1) - App cliente: domicilios y miembros
+
+- Estado: `todo`
+- Scope:
+  - CRUD de domicilios/casas.
+  - Gestión de miembros (familia/empleados) y permisos base.
+- Aceptación:
+  - Customer puede asociar miembros a domicilios.
+  - Permisos mínimos aplican en vistas/notificaciones.
+
+### NH-041 (P1) - App cliente: alta de cámara RTSP y monitor realtime
+
+- Estado: `todo`
+- Scope:
+  - Alta/edición de cámara RTSP desde app cliente.
+  - Validación inicial y estado health visible en monitor.
+- Aceptación:
+  - Cámara válida queda operativa y visible.
+  - Diagnóstico de health legible ante fallas.
+
+### NH-042 (P1) - Notificaciones realtime por reglas de tenant/cámara
+
+- Estado: `todo`
+- Scope:
+  - Motor de reglas para disparo de notificaciones en vivo.
+  - Entrega por canal configurado (in-app/webhook/email).
+- Aceptación:
+  - Evento detectado genera notificación trazable.
+  - Historial de entregas visible para admin.
+
+### NH-043 (P1) - Suscripción cliente + carga de comprobante
+
+- Estado: `todo`
+- Scope:
+  - Flujo de solicitud de plan en app cliente.
+  - Carga de imagen de comprobante con metadata.
+- Aceptación:
+  - Solicitud queda en `pending_review`.
+  - Admin puede revisar y actualizar estado.
+
+## Backlog ejecutable - Migración UI Foundation (Backoffice + Frontend)
+
+Fuente: plan de migración UI (marzo 2026).  
+Convención de ejecución: cada item debe salir en PR chica (1 feature principal), con screenshot antes/después y smoke e2e del flujo tocado.
+
+### NH-044 (P0) - Auditoría de pantallas y matriz de prioridad
+
+- Estado: `todo`
+- Estimación: `1d`
+- Dependencias: ninguna.
+- Scope:
+  - Inventariar rutas/pantallas de `apps/admin` y `apps/portal`.
+  - Marcar criticidad (`alta|media|baja`) y frecuencia de uso.
+  - Identificar pantallas con solapamiento de campos o densidad insuficiente.
+- Aceptación:
+  - Documento en `docs/GUI_AUDIT.md` actualizado con severidad por pantalla.
+  - Lista ordenada de migración publicada (top 10 pantallas).
+
+### NH-045 (P0) - Contrato de UI base en @app/ui
+
+- Estado: `todo`
+- Estimación: `2d`
+- Dependencias: `NH-044`.
+- Scope:
+  - Formalizar tokens y componentes base (`WorkspaceShell`, `PageCard`, `FormGrid`, `DataTable`, inputs, buttons, badges).
+  - Definir reglas responsive mínimas (`sm/md/lg`) para formularios y tablas.
+  - Documentar composición permitida y anti-patrones.
+- Aceptación:
+  - `docs/CONTRATOS_COMPONENTES.md` incluye sección UI Foundation.
+  - `pnpm --filter @app/ui typecheck` en verde.
+
+### NH-046 (P0) - IA/Navegación backoffice por casos de uso
+
+- Estado: `todo`
+- Estimación: `1d`
+- Dependencias: `NH-045`.
+- Scope:
+  - Estructurar menú admin por dominios: `Operaciones`, `Recursos`, `Identidad`, `Comercial`.
+  - Normalizar labels y rutas canónicas.
+  - Definir redirects para rutas legacy.
+- Aceptación:
+  - Menú lateral único sin items duplicados.
+  - Rutas principales navegables sin 404.
+
+### NH-047 (P0) - IA/Navegación app cliente por casos de uso
+
+- Estado: `todo`
+- Estimación: `1d`
+- Dependencias: `NH-045`.
+- Scope:
+  - Estructurar menú portal por dominios: `Operaciones`, `Cuenta`.
+  - Homologar nomenclatura de navegación y breadcrumbs.
+- Aceptación:
+  - Navegación consistente en todas las pantallas del portal.
+  - Logout/switch tenant conservan comportamiento actual.
+
+### NH-048 (P0) - Migración vertical Admin Operaciones (control/monitor/realtime/nodes)
+
+- Estado: `todo`
+- Estimación: `3d`
+- Dependencias: `NH-046`.
+- Scope:
+  - Migrar páginas operativas a layout y componentes `@app/ui`.
+  - Corregir densidad visual de tablas y cards de estado.
+  - Eliminar clases DaisyUI ad hoc en esas vistas.
+- Aceptación:
+  - No hay solapamiento de campos en `1280px`, `1024px`, `768px`.
+  - `pnpm --filter @app/admin typecheck` en verde.
+
+### NH-049 (P0) - Migración vertical Admin Recursos (cameras/notifications)
+
+- Estado: `todo`
+- Estimación: `3d`
+- Dependencias: `NH-048`.
+- Scope:
+  - Rehacer listas y detalles con `FormGrid`/`DataTable`.
+  - Uniformar estados de error/empty/loading.
+  - Conservar comportamiento funcional existente.
+- Aceptación:
+  - Flujo CRUD cámara operativo sin regresión.
+  - Smoke e2e admin relevante en verde.
+
+### NH-050 (P0) - Migración vertical Admin Identidad (tenants/users/memberships)
+
+- Estado: `todo`
+- Estimación: `3d`
+- Dependencias: `NH-049`.
+- Scope:
+  - Migrar pantallas de identidad/acceso a foundation UI.
+  - Estandarizar formularios largos para evitar campos pisados.
+  - Mejorar legibilidad de tablas de memberships.
+- Aceptación:
+  - Formularios de alta/edición legibles en mobile/desktop.
+  - No se rompe enforcement RBAC existente.
+
+### NH-051 (P1) - Migración vertical Admin Comercial (plans/subscriptions)
+
+- Estado: `todo`
+- Estimación: `2d`
+- Dependencias: `NH-050`.
+- Scope:
+  - Migrar pantallas comerciales a componentes base.
+  - Homologar badges de estado de suscripción.
+- Aceptación:
+  - Estados de suscripción visualmente consistentes con resto del panel.
+  - `pnpm --filter @app/admin typecheck` en verde.
+
+### NH-052 (P0) - Migración vertical Portal Operaciones (cameras/events/realtime)
+
+- Estado: `todo`
+- Estimación: `3d`
+- Dependencias: `NH-047`.
+- Scope:
+  - Migrar vistas operativas del usuario final al foundation UI.
+  - Normalizar cards, acciones primarias y feedback de error.
+- Aceptación:
+  - Navegación entre cámaras/eventos/realtime consistente.
+  - `pnpm --filter @app/portal typecheck` en verde.
+
+### NH-053 (P1) - Migración vertical Portal Cuenta (tenant/account)
+
+- Estado: `todo`
+- Estimación: `2d`
+- Dependencias: `NH-052`.
+- Scope:
+  - Ajustar vistas de cuenta/tenant a layout unificado.
+  - Unificar copy de acciones de sesión.
+- Aceptación:
+  - Cambio de tenant y perfil sin regresiones.
+  - UI consistente con resto del portal.
+
+### NH-054 (P0) - QA responsive y accesibilidad mínima
+
+- Estado: `todo`
+- Estimación: `2d`
+- Dependencias: `NH-051`, `NH-053`.
+- Scope:
+  - QA visual en breakpoints `375`, `768`, `1024`, `1280`.
+  - Revisar foco visible, contraste y navegación por teclado en componentes base.
+- Aceptación:
+  - Checklist QA en `docs/GUI_AUDIT.md` completado.
+  - No existen bloqueantes de uso por teclado en flujos críticos.
+
+### NH-055 (P0) - Suite de no-regresión UI (smoke)
+
+- Estado: `todo`
+- Estimación: `2d`
+- Dependencias: `NH-054`.
+- Scope:
+  - Extender smoke e2e admin/portal para cubrir navegación nueva y pantallas críticas migradas.
+  - Agregar casos de viewport (desktop + mobile básico).
+- Aceptación:
+  - `pnpm test:e2e:admin` y `pnpm test:e2e:portal` en verde con nuevo layout.
+  - Evidencia de ejecución en `docs/E2E.md`.
+
+## Orden sugerido de ejecución por sprint
+
+### Sprint UI-1 (P0)
+
+- `NH-044`, `NH-045`, `NH-046`, `NH-047`, `NH-048`.
+
+### Sprint UI-2 (P0)
+
+- `NH-049`, `NH-050`, `NH-052`.
+
+### Sprint UI-3 (P0/P1)
+
+- `NH-051`, `NH-053`, `NH-054`, `NH-055`.

@@ -10,6 +10,8 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { createHmac } from "node:crypto";
 
 type Role = z.infer<typeof RoleSchema>;
+const RoleInputSchema = z.enum(["tenant_admin", "monitor", "client_user", "operator", "customer"]);
+type RoleInput = z.infer<typeof RoleInputSchema>;
 
 type RequestContext = {
   userId: string;
@@ -66,6 +68,12 @@ function statusToCode(statusCode: number): string {
 
 function parseJson<T>(value: string): T {
   return JSON.parse(value) as T;
+}
+
+function normalizeRoleInput(role: RoleInput): Role {
+  if (role === "operator") return "monitor";
+  if (role === "customer") return "client_user";
+  return role;
 }
 
 function signStreamToken(payload: Record<string, unknown>, secret: string) {
@@ -2413,8 +2421,9 @@ export async function buildApp() {
     const ctx = getTenantContext(request);
     assertRole(request, ["tenant_admin"]);
     const body = z
-      .object({ email: z.string().email(), name: z.string(), password: z.string().min(4), role: RoleSchema })
+      .object({ email: z.string().email(), name: z.string(), password: z.string().min(4), role: RoleInputSchema })
       .parse(request.body);
+    const normalizedRole = normalizeRoleInput(body.role);
 
     const hash = await bcrypt.hash(body.password, 10);
     const existing = await prisma.user.findUnique({ where: { email: body.email } });
@@ -2424,8 +2433,8 @@ export async function buildApp() {
 
     await prisma.membership.upsert({
       where: { tenantId_userId: { tenantId: ctx.tenantId, userId: user.id } },
-      update: { role: body.role },
-      create: { tenantId: ctx.tenantId, userId: user.id, role: body.role }
+      update: { role: normalizedRole },
+      create: { tenantId: ctx.tenantId, userId: user.id, role: normalizedRole }
     });
 
     return {
@@ -2447,7 +2456,7 @@ export async function buildApp() {
       .object({
         name: z.string().min(1).optional(),
         isActive: z.boolean().optional(),
-        role: RoleSchema.optional()
+        role: RoleInputSchema.optional()
       })
       .refine((value) => value.name !== undefined || value.isActive !== undefined || value.role !== undefined, {
         message: "At least one field must be provided"
@@ -2471,7 +2480,7 @@ export async function buildApp() {
     if (body.role) {
       await prisma.membership.update({
         where: { tenantId_userId: { tenantId: ctx.tenantId, userId: id } },
-        data: { role: body.role }
+        data: { role: normalizeRoleInput(body.role) }
       });
     }
 
@@ -2491,40 +2500,73 @@ export async function buildApp() {
     };
   });
 
-  app.get(
-    "/memberships",
-    { preHandler: tenantScopedPreHandler },
-    async (request: FastifyRequest, reply: FastifyReply) => {
-      const ctx = getTenantContext(request);
-      assertRole(request, ["tenant_admin", "monitor"]);
-      const rows = await prisma.membership.findMany({ where: { tenantId: ctx.tenantId }, include: { user: true } });
-      const data = rows.map((m: any) => ({
-        id: m.id,
-        tenantId: m.tenantId,
-        userId: m.userId,
-        role: m.role,
-        createdAt: toISO(m.createdAt),
-        user: {
-          id: m.user.id,
-          email: m.user.email,
-          name: m.user.name,
-          createdAt: toISO(m.user.createdAt),
-          isActive: m.user.isActive
-        }
-      }));
-      reply.header("x-total-count", String(data.length));
-      return { data, total: data.length };
-    }
-  );
+  app.get("/memberships", { preHandler: authPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const query = request.query as Record<string, unknown>;
+    const queryTenantId = typeof query.tenantId === "string" ? query.tenantId : undefined;
+    const queryUserId = typeof query.userId === "string" ? query.userId : undefined;
 
-  app.post("/memberships", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
-    const ctx = getTenantContext(request);
-    assertRole(request, ["tenant_admin"]);
-    const body = z.object({ userId: z.string(), role: RoleSchema }).parse(request.body);
+    const where =
+      request.ctx?.isSuperuser && !request.ctx?.tenantId
+        ? {
+            ...(queryTenantId ? { tenantId: queryTenantId } : {}),
+            ...(queryUserId ? { userId: queryUserId } : {}),
+            tenant: { deletedAt: null }
+          }
+        : { tenantId: getTenantContext(request).tenantId };
+
+    assertRole(request, ["tenant_admin", "monitor"]);
+    const rows = await prisma.membership.findMany({
+      where,
+      include: { user: true, tenant: true },
+      orderBy: [{ tenantId: "asc" }, { createdAt: "asc" }]
+    });
+    const data = rows.map((m: any) => ({
+      id: m.id,
+      tenantId: m.tenantId,
+      userId: m.userId,
+      role: m.role,
+      createdAt: toISO(m.createdAt),
+      user: {
+        id: m.user.id,
+        email: m.user.email,
+        name: m.user.name,
+        createdAt: toISO(m.user.createdAt),
+        isActive: m.user.isActive
+      },
+      tenant: {
+        id: m.tenant.id,
+        name: m.tenant.name,
+        createdAt: toISO(m.tenant.createdAt)
+      }
+    }));
+    reply.header("x-total-count", String(data.length));
+    return { data, total: data.length };
+  });
+
+  app.post("/memberships", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
+    const body = z.object({ userId: z.string(), role: RoleInputSchema, tenantId: z.string().optional() }).parse(request.body);
+    const normalizedRole = normalizeRoleInput(body.role);
+
+    const tenantId = (() => {
+      if (request.ctx?.isSuperuser) {
+        return body.tenantId ?? request.ctx.tenantId;
+      }
+      const ctx = getTenantContext(request);
+      assertRole(request, ["tenant_admin"]);
+      return ctx.tenantId;
+    })();
+    if (!tenantId) {
+      throw app.httpErrors.badRequest("tenantId required");
+    }
+    const tenant = await prisma.tenant.findFirst({ where: { id: tenantId, deletedAt: null }, select: { id: true } });
+    if (!tenant) {
+      throw app.httpErrors.notFound("Tenant not found");
+    }
+
     const membership = await prisma.membership.upsert({
-      where: { tenantId_userId: { tenantId: ctx.tenantId, userId: body.userId } },
-      update: { role: body.role },
-      create: { tenantId: ctx.tenantId, userId: body.userId, role: body.role }
+      where: { tenantId_userId: { tenantId, userId: body.userId } },
+      update: { role: normalizedRole },
+      create: { tenantId, userId: body.userId, role: normalizedRole }
     });
     return {
       data: {

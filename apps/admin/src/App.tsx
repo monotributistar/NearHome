@@ -1,7 +1,28 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
+import { Link, Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import { useCan, useDelete, useList, useUpdate, useCreate } from "@refinedev/core";
-import { AppShell, PageCard, PrimaryButton, TextInput, SelectInput, DangerButton, Badge } from "@app/ui";
+import {
+  AppShell,
+  PageCard,
+  PrimaryButton,
+  TextInput,
+  SelectInput,
+  DangerButton,
+  Badge,
+  WorkspaceShell,
+  type WorkspaceNavGroup
+} from "@app/ui";
+import {
+  BellNotification,
+  Camera,
+  Group,
+  HomeAlt,
+  Internet,
+  MediaImageList,
+  Planimetry,
+  Settings,
+  User
+} from "iconoir-react";
 import Hls from "hls.js";
 
 type AppProps = { apiUrl: string };
@@ -172,10 +193,10 @@ function summarizeApiError(error: unknown, fallback: string) {
     const code = typeof payload.code === "string" ? payload.code : null;
     const message = typeof payload.message === "string" ? payload.message : null;
     const details =
-      payload.details && typeof payload.details === "object"
-        ? Object.entries(payload.details as Record<string, unknown>)
-            .map(([key, value]) => `${key}=${String(value)}`)
-            .join(", ")
+      payload.details !== undefined
+        ? typeof payload.details === "string"
+          ? payload.details
+          : JSON.stringify(payload.details)
         : null;
     const parts = [code, message, details].filter(Boolean) as string[];
     if (parts.length > 0) return status ? `[${status}] ${parts.join(" | ")}` : parts.join(" | ");
@@ -294,92 +315,91 @@ function LoginPage({ apiUrl }: { apiUrl: string }) {
 
 function Layout({ apiUrl }: { apiUrl: string }) {
   const { loading, me, refresh } = useSession(apiUrl);
-  const location = useLocation();
   const navigate = useNavigate();
 
   if (loading) return <div className="p-6">Loading...</div>;
   if (!me) return <Navigate to="/login" replace />;
 
   const activeTenant = getTenantId();
-  const role = me.memberships?.find((m: any) => m.tenantId === activeTenant)?.role;
+  const role = me?.user?.isSuperuser ? "super_admin" : me.memberships?.find((m: any) => m.tenantId === activeTenant)?.role;
+  const navigation: WorkspaceNavGroup[] = [
+    {
+      title: "Operaciones",
+      items: [
+        { to: "/control", label: "Control", icon: <HomeAlt width={16} height={16} /> },
+        { to: "/monitor", label: "Monitor", icon: <MediaImageList width={16} height={16} /> },
+        { to: "/realtime", label: "Realtime", icon: <Internet width={16} height={16} /> },
+        { to: "/nodes", label: "Nodos", icon: <Settings width={16} height={16} /> }
+      ]
+    },
+    {
+      title: "Recursos",
+      items: [
+        { to: "/cameras", label: "Cámaras", icon: <Camera width={16} height={16} /> },
+        { to: "/notifications", label: "Notificaciones", icon: <BellNotification width={16} height={16} /> }
+      ]
+    },
+    {
+      title: "Identidad y Acceso",
+      items: [
+        { to: "/tenants", label: "Tenants", icon: <Group width={16} height={16} /> },
+        { to: "/users", label: "Usuarios", icon: <User width={16} height={16} /> },
+        { to: "/memberships", label: "Membresías", icon: <Group width={16} height={16} /> }
+      ]
+    },
+    {
+      title: "Comercial",
+      items: [
+        { to: "/plans", label: "Planes", icon: <Planimetry width={16} height={16} /> },
+        { to: "/subscriptions", label: "Suscripciones", icon: <Planimetry width={16} height={16} /> }
+      ]
+    }
+  ];
 
   return (
-    <AppShell>
-      <div className="navbar bg-base-100 shadow-md">
-        <div className="flex-1 px-4 font-bold">NearHome Admin</div>
-        <div className="flex items-center gap-2 px-4">
-          <Badge data-testid="current-role">{role ?? "no-role"}</Badge>
-          <SelectInput
-            className="select-sm"
-            value={activeTenant ?? ""}
-            onChange={(e) => {
-              localStorage.setItem("nearhome_active_tenant", e.target.value);
-              refresh();
-            }}
-          >
-            {me.memberships?.map((m: any) => (
-              <option key={m.tenantId} value={m.tenantId}>
-                {m.tenant.name}
-              </option>
-            ))}
-          </SelectInput>
-          <button
-            className="btn btn-sm"
-            onClick={() => {
-              localStorage.removeItem("nearhome_access_token");
-              localStorage.removeItem("nearhome_active_tenant");
-              navigate("/login");
-            }}
-          >
-            Logout
-          </button>
-        </div>
-      </div>
-
-      <div className="mx-auto grid max-w-7xl grid-cols-12 gap-4 p-4">
-        <aside className="col-span-12 rounded-box bg-base-100 p-3 shadow md:col-span-3 lg:col-span-2">
-          <ul className="menu gap-1">
-            {[
-              ["/control", "Control"],
-              ["/tenants", "Tenants"],
-              ["/users", "Users"],
-              ["/memberships", "Memberships"],
-              ["/cameras", "Cameras"],
-              ["/monitor", "Monitor"],
-              ["/nodes", "Nodes"],
-              ["/notifications", "Notifications"],
-              ["/realtime", "Realtime"],
-              ["/plans", "Plans"],
-              ["/subscriptions", "Subscriptions"]
-            ].map(([to, label]) => (
-              <li key={to}>
-                <Link className={location.pathname.startsWith(to) ? "active" : ""} to={to}>
-                  {label}
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </aside>
-
-        <main className="col-span-12 space-y-4 md:col-span-9 lg:col-span-10">
-          <Routes>
-            <Route path="/" element={<Navigate to="/control" replace />} />
-            <Route path="/control" element={<ControlPanelPage apiUrl={apiUrl} />} />
-            <Route path="/tenants" element={<TenantsPage />} />
-            <Route path="/users" element={<UsersPage />} />
-            <Route path="/memberships" element={<MembershipsPage />} />
-            <Route path="/cameras" element={<CamerasPage />} />
-            <Route path="/cameras/:id" element={<CameraShow />} />
-            <Route path="/monitor" element={<MonitorPage apiUrl={apiUrl} />} />
-            <Route path="/nodes" element={<DetectionNodesPage apiUrl={apiUrl} />} />
-            <Route path="/notifications" element={<NotificationsPage apiUrl={apiUrl} />} />
-            <Route path="/realtime" element={<RealtimePage apiUrl={apiUrl} />} />
-            <Route path="/plans" element={<PlansPage />} />
-            <Route path="/subscriptions" element={<SubscriptionPage apiUrl={apiUrl} onChanged={refresh} />} />
-          </Routes>
-        </main>
-      </div>
-    </AppShell>
+    <WorkspaceShell
+      product="NearHome Backoffice"
+      subtitle="Panel operativo para administradores y operadores"
+      role={<Badge data-testid="current-role">{role ?? "no-role"}</Badge>}
+      tenantSwitcher={
+        <SelectInput
+          className="w-[220px]"
+          value={activeTenant ?? ""}
+          onChange={(e) => {
+            localStorage.setItem("nearhome_active_tenant", e.target.value);
+            refresh();
+          }}
+        >
+          {me.memberships?.map((m: any) => (
+            <option key={m.tenantId} value={m.tenantId}>
+              {m.tenant.name}
+            </option>
+          ))}
+        </SelectInput>
+      }
+      onLogout={() => {
+        localStorage.removeItem("nearhome_access_token");
+        localStorage.removeItem("nearhome_active_tenant");
+        navigate("/login");
+      }}
+      navigation={navigation}
+    >
+      <Routes>
+        <Route path="/" element={<Navigate to="/control" replace />} />
+        <Route path="/control" element={<ControlPanelPage apiUrl={apiUrl} />} />
+        <Route path="/tenants" element={<TenantsPage />} />
+        <Route path="/users" element={<UsersPage />} />
+        <Route path="/memberships" element={<MembershipsPage />} />
+        <Route path="/cameras" element={<CamerasPage />} />
+        <Route path="/cameras/:id" element={<CameraShow />} />
+        <Route path="/monitor" element={<MonitorPage apiUrl={apiUrl} />} />
+        <Route path="/nodes" element={<DetectionNodesPage apiUrl={apiUrl} />} />
+        <Route path="/notifications" element={<NotificationsPage apiUrl={apiUrl} />} />
+        <Route path="/realtime" element={<RealtimePage apiUrl={apiUrl} />} />
+        <Route path="/plans" element={<PlansPage />} />
+        <Route path="/subscriptions" element={<SubscriptionPage apiUrl={apiUrl} onChanged={refresh} />} />
+      </Routes>
+    </WorkspaceShell>
   );
 }
 
@@ -777,7 +797,7 @@ function UsersPage() {
           />
           <SelectInput value={form.role} onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}>
             <option value="tenant_admin">tenant_admin</option>
-            <option value="monitor">monitor</option>
+            <option value="monitor">operator</option>
             <option value="client_user">customer</option>
           </SelectInput>
           <PrimaryButton type="submit">Create</PrimaryButton>
@@ -827,7 +847,7 @@ function UsersPage() {
                     }
                   >
                     <option value="tenant_admin">tenant_admin</option>
-                    <option value="monitor">monitor</option>
+                    <option value="monitor">operator</option>
                     <option value="client_user">customer</option>
                   </SelectInput>
                 ) : (
@@ -902,31 +922,53 @@ function MembershipsPage() {
   const { result } = useList({ resource: "memberships" } as any);
   const { mutate } = useCreate();
   const canCreate = useCan({ resource: "memberships", action: "create" }).data?.can;
+  const meRaw = localStorage.getItem("nearhome_me");
+  const me = meRaw ? JSON.parse(meRaw) : null;
+  const isSuperuser = Boolean(me?.user?.isSuperuser);
+  const tenantOptions = me?.memberships ?? [];
   const [userId, setUserId] = useState("");
   const [role, setRole] = useState("client_user");
+  const [tenantId, setTenantId] = useState<string>(tenantOptions[0]?.tenantId ?? "");
+
+  useEffect(() => {
+    if (!tenantId && tenantOptions[0]?.tenantId) {
+      setTenantId(tenantOptions[0].tenantId);
+    }
+  }, [tenantId, tenantOptions]);
+
   return (
     <PageCard title="Memberships">
       {canCreate && (
         <form
-          className="mb-4 grid grid-cols-1 gap-2 md:grid-cols-3"
+          className="mb-4 grid grid-cols-1 gap-2 md:grid-cols-4"
           onSubmit={(e) => {
             e.preventDefault();
-            mutate({ resource: "memberships", values: { userId, role } });
+            mutate({ resource: "memberships", values: { userId, role, ...(isSuperuser ? { tenantId } : {}) } });
             setUserId("");
           }}
         >
           <TextInput placeholder="userId" value={userId} onChange={(e) => setUserId(e.target.value)} />
           <SelectInput value={role} onChange={(e) => setRole(e.target.value)}>
             <option value="tenant_admin">tenant_admin</option>
-            <option value="monitor">monitor</option>
+            <option value="monitor">operator</option>
             <option value="client_user">customer</option>
           </SelectInput>
+          {isSuperuser && (
+            <SelectInput value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
+              {tenantOptions.map((membership: any) => (
+                <option key={membership.tenantId} value={membership.tenantId}>
+                  {membership.tenant?.name ?? membership.tenantId}
+                </option>
+              ))}
+            </SelectInput>
+          )}
           <PrimaryButton type="submit">Assign role</PrimaryButton>
         </form>
       )}
       <table className="table table-zebra">
         <thead>
           <tr>
+            <th>Tenant</th>
             <th>User</th>
             <th>Role</th>
           </tr>
@@ -934,6 +976,7 @@ function MembershipsPage() {
         <tbody>
           {(result?.data ?? []).map((m: any) => (
             <tr key={m.id}>
+              <td>{m.tenant?.name ?? m.tenantId}</td>
               <td>{m.user?.email ?? m.userId}</td>
               <td>{m.role}</td>
             </tr>
