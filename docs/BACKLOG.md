@@ -316,7 +316,7 @@ Notas de alineación:
 
 ### NH-019 (P2) - Migración a Postgres (staging/prod)
 
-- Estado: `todo`
+- Estado: `done`
 - Scope:
   - Configuración datasource y plan de migración.
 - Aceptación:

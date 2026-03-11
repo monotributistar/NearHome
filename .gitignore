@@ -9,5 +9,6 @@ build
 infra/.env.pilot.cameras
 apps/api/prisma/dev.db
 apps/api/prisma/dev.db-journal
+apps/api/prisma/schema.postgres.prisma
 test-results
 playwright-report

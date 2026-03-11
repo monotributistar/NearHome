@@ -1,0 +1,31 @@
+services:
+  api:
+    environment:
+      DATABASE_URL: postgresql://nearhome:nearhome@postgres:5432/nearhome?schema=public
+    command:
+      [
+        "sh",
+        "-lc",
+        "pnpm --filter @app/api prisma:generate:postgres && pnpm --filter @app/api db:push:postgres && pnpm --filter @app/api build && PORT=3001 pnpm --filter @app/api start"
+      ]
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: nearhome
+      POSTGRES_PASSWORD: nearhome
+      POSTGRES_DB: nearhome
+    ports:
+      - "5432:5432"
+    volumes:
+      - nearhome_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nearhome -d nearhome"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+    networks:
+      - nearhome_net
+
+volumes:
+  nearhome_pg:

@@ -1,5 +1,15 @@
 # API Changelog
 
+## 2026-03-11 - v1.2.1
+
+### Added
+
+- NH-019: soporte operativo para staging con PostgreSQL sin romper desarrollo local en SQLite:
+  - script de render Prisma para provider Postgres (`prisma:render:postgres`).
+  - comandos `prisma:generate:postgres` y `db:push:postgres` en `@app/api`.
+  - override de infraestructura `infra/docker-compose.postgres-staging.yml` para levantar API + Postgres en staging.
+  - guía de ejecución en `docs/POSTGRES_STAGING.md`.
+
 ## 2026-02-24 - v1.2.0
 
 ### Added

@@ -2,7 +2,7 @@
 
 Monorepo PNPM + Turborepo con:
 
-- `apps/api`: Fastify + Prisma (SQLite) control-plane POC
+- `apps/api`: Fastify + Prisma (SQLite local / PostgreSQL staging) control-plane POC
 - `apps/stream-gateway`: data-plane MVP para playback (provision + playback tokenizado)
 - `apps/event-gateway`: event-plane WS/SSE (token short-lived + tenant scoped)
 - `apps/inference-bridge`: FastAPI bridge para seleccionar nodos/proveedores de inferencia
@@ -90,6 +90,7 @@ Diagrama completo y extendido: `/Users/monotributistar/SOURCES/NearHome/docs/SIS
 - Sprint actual: `/Users/monotributistar/SOURCES/NearHome/docs/SPRINT_01.md`
 - Orden de ejecución recomendado: `/Users/monotributistar/SOURCES/NearHome/docs/EXECUTION_ORDER.md`
 - Progreso + cambios + problemas por etapa: `/Users/monotributistar/SOURCES/NearHome/docs/PROGRESO.md`
+- Staging PostgreSQL (NH-019): `/Users/monotributistar/SOURCES/NearHome/docs/POSTGRES_STAGING.md`
 
 ### Calidad y validación
 
@@ -204,6 +205,8 @@ Notas operativas:
 - `pnpm test:stream:soak:record`
 - `pnpm dev:stack:up`
 - `pnpm dev:stack:down`
+- `pnpm staging:stack:up:postgres`
+- `pnpm staging:stack:down:postgres`
 - `pnpm pilot:stack:up:local`
 - `pnpm pilot:stack:up:onprem`
 - `pnpm pilot:stack:up:onprem:tunnel`

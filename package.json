@@ -15,6 +15,8 @@
     "dev:inference-bridge": "uvicorn apps/inference-bridge/app:app --host 0.0.0.0 --port 8090",
     "dev:stack:up": "docker compose -f infra/docker-compose.yml up -d",
     "dev:stack:down": "docker compose -f infra/docker-compose.yml down",
+    "staging:stack:up:postgres": "docker compose -f infra/docker-compose.yml -f infra/docker-compose.postgres-staging.yml up -d",
+    "staging:stack:down:postgres": "docker compose -f infra/docker-compose.yml -f infra/docker-compose.postgres-staging.yml down",
     "pilot:stack:up:local": "bash scripts/pilot/stack-up.sh local",
     "pilot:stack:down:local": "bash scripts/pilot/stack-down.sh local",
     "pilot:stack:up:onprem": "bash scripts/pilot/stack-up.sh onprem",

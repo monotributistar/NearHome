@@ -10,6 +10,9 @@
     "start": "node dist/apps/api/src/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "db:reset": "rm -f dev.db dev.db-journal prisma/dev.db prisma/dev.db-journal && prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script > /tmp/nearhome_init.sql && prisma db execute --schema prisma/schema.prisma --file /tmp/nearhome_init.sql && prisma generate && tsc -p tsconfig.json && node dist/apps/api/prisma/seed.js",
+    "prisma:render:postgres": "bash prisma/scripts/render-postgres-schema.sh",
+    "prisma:generate:postgres": "pnpm run prisma:render:postgres && prisma generate --schema prisma/schema.postgres.prisma",
+    "db:push:postgres": "pnpm run prisma:render:postgres && prisma db push --schema prisma/schema.postgres.prisma",
     "test": "vitest run",
     "lint": "eslint ."
   },

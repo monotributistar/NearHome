@@ -350,9 +350,13 @@
 - `pnpm --filter @app/api test`: `44 passed` (incluye NH-DP-15 callback Temporal->API)
 - `pnpm --filter @app/api test`: `44 passed` (incluye NH-DP-16 publish realtime)
 - `pnpm --filter @app/event-gateway test`: `2 passed` (publish secret + replay SSE)
+- `NH-019` validación staging Postgres:
+  - `pnpm --filter @app/api prisma:generate:postgres`
+  - `DATABASE_URL=postgresql://... pnpm --filter @app/api db:push:postgres`
+  - API `health/readiness` en verde con Postgres (`2026-03-11`)
 
 ## Próximo bloque recomendado
 
-1. NH-015: asignación de cámaras por `client_user` (subset real y enforcement integral).
-2. Endurecimiento e2e multi-tenant para concurrencia de playback (escenarios simultáneos por tenant).
-3. NH-019: estrategia/migración a Postgres para staging/prod.
+1. NH-035: superadmin global + switch de contexto (impersonación auditada).
+2. NH-036: membresías N:M operadores/customers por tenant.
+3. Endurecimiento e2e multi-tenant para concurrencia de playback (escenarios simultáneos por tenant).
