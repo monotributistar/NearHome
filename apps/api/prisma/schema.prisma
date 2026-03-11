@@ -33,6 +33,13 @@ model Tenant {
   households               Household[]
   householdMembers         HouseholdMember[]
   subscriptionRequests     SubscriptionRequest[]
+  faceDetections          FaceDetection[]
+  faceEmbeddings          FaceEmbedding[]
+  faceClusters            FaceCluster[]
+  faceClusterMembers      FaceClusterMember[]
+  faceIdentities          FaceIdentity[]
+  faceIdentityMembers     FaceIdentityMember[]
+  faceIdentityMergeLogs   FaceIdentityMergeLog[]
 }
 
 model User {
@@ -49,6 +56,7 @@ model User {
   householdMembersCreated HouseholdMember[]
   subscriptionRequestsCreated SubscriptionRequest[] @relation("SubscriptionRequestCreatedBy")
   subscriptionRequestsReviewed SubscriptionRequest[] @relation("SubscriptionRequestReviewedBy")
+  faceIdentityMergeLogs       FaceIdentityMergeLog[]
 }
 
 model Membership {
@@ -90,6 +98,7 @@ model Camera {
   incidentEvents        IncidentEvent[]
   notificationDeliveries NotificationDelivery[]
   assignments           CameraAssignment[]
+  faceDetections        FaceDetection[]
 }
 
 model CameraAssignment {
@@ -345,9 +354,143 @@ model DetectionObservation {
   tenant          Tenant   @relation(fields: [tenantId], references: [id])
   camera          Camera   @relation(fields: [cameraId], references: [id])
   evidence        IncidentEvidence[]
+  faceDetection   FaceDetection?
 
   @@index([tenantId, cameraId, frameTs])
   @@index([jobId])
+}
+
+model FaceDetection {
+  id                  String                @id @default(cuid())
+  tenantId            String
+  cameraId            String
+  observationId       String                @unique
+  detectorProvider    String
+  detectorTaskType    String
+  cropStorageKey      String?
+  qualityScore        Float?
+  bbox                String
+  frameTs             DateTime
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  tenant              Tenant                @relation(fields: [tenantId], references: [id])
+  camera              Camera                @relation(fields: [cameraId], references: [id])
+  observation         DetectionObservation  @relation(fields: [observationId], references: [id])
+  embedding           FaceEmbedding?
+  clusterMembership   FaceClusterMember?
+  identityMembership  FaceIdentityMember?
+
+  @@index([tenantId, cameraId, frameTs])
+  @@index([tenantId, createdAt])
+}
+
+model FaceEmbedding {
+  id                 String          @id @default(cuid())
+  tenantId           String
+  faceDetectionId    String          @unique
+  embeddingVector    String?
+  embeddingRef       String?
+  embeddingModelRef  String?
+  embeddingVersion   String?
+  qualityScore       Float?
+  vectorNorm         Float?
+  dimensions         Int?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  tenant             Tenant          @relation(fields: [tenantId], references: [id])
+  faceDetection      FaceDetection   @relation(fields: [faceDetectionId], references: [id])
+  clusterMembership  FaceClusterMember?
+  identityMembership FaceIdentityMember?
+
+  @@index([tenantId, createdAt])
+}
+
+model FaceCluster {
+  id                  String              @id @default(cuid())
+  tenantId            String
+  status              String              @default("open")
+  displayName         String?
+  centroidEmbedding   String?
+  memberCount         Int                 @default(0)
+  confirmedIdentityId String?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  tenant              Tenant              @relation(fields: [tenantId], references: [id])
+  confirmedIdentity   FaceIdentity?       @relation("FaceClusterConfirmedIdentity", fields: [confirmedIdentityId], references: [id])
+  members             FaceClusterMember[]
+  identityMembers     FaceIdentityMember[]
+
+  @@index([tenantId, status, updatedAt])
+}
+
+model FaceClusterMember {
+  id               String         @id @default(cuid())
+  tenantId         String
+  clusterId        String
+  faceDetectionId  String         @unique
+  faceEmbeddingId  String?        @unique
+  similarityScore  Float?
+  createdAt        DateTime       @default(now())
+  tenant           Tenant         @relation(fields: [tenantId], references: [id])
+  cluster          FaceCluster    @relation(fields: [clusterId], references: [id])
+  faceDetection    FaceDetection  @relation(fields: [faceDetectionId], references: [id])
+  faceEmbedding    FaceEmbedding? @relation(fields: [faceEmbeddingId], references: [id])
+
+  @@index([tenantId, clusterId, createdAt])
+}
+
+model FaceIdentity {
+  id                    String                @id @default(cuid())
+  tenantId              String
+  displayName           String?
+  status                String                @default("unresolved")
+  mergedIntoIdentityId  String?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  tenant                Tenant                @relation(fields: [tenantId], references: [id])
+  mergedIntoIdentity    FaceIdentity?         @relation("FaceIdentityMergeChain", fields: [mergedIntoIdentityId], references: [id])
+  mergedIdentities      FaceIdentity[]        @relation("FaceIdentityMergeChain")
+  members               FaceIdentityMember[]
+  confirmedClusters     FaceCluster[]         @relation("FaceClusterConfirmedIdentity")
+  sourceMergeLogs       FaceIdentityMergeLog[] @relation("FaceIdentityMergeSource")
+  targetMergeLogs       FaceIdentityMergeLog[] @relation("FaceIdentityMergeTarget")
+
+  @@index([tenantId, status, updatedAt])
+}
+
+model FaceIdentityMember {
+  id               String         @id @default(cuid())
+  tenantId         String
+  identityId       String
+  faceDetectionId  String         @unique
+  faceEmbeddingId  String?        @unique
+  sourceClusterId  String?
+  createdAt        DateTime       @default(now())
+  tenant           Tenant         @relation(fields: [tenantId], references: [id])
+  identity         FaceIdentity   @relation(fields: [identityId], references: [id])
+  faceDetection    FaceDetection  @relation(fields: [faceDetectionId], references: [id])
+  faceEmbedding    FaceEmbedding? @relation(fields: [faceEmbeddingId], references: [id])
+  sourceCluster    FaceCluster?   @relation(fields: [sourceClusterId], references: [id])
+
+  @@index([tenantId, identityId, createdAt])
+}
+
+model FaceIdentityMergeLog {
+  id                String       @id @default(cuid())
+  tenantId          String
+  sourceIdentityId  String
+  targetIdentityId  String
+  actorUserId       String?
+  reason            String?
+  createdAt         DateTime     @default(now())
+  tenant            Tenant       @relation(fields: [tenantId], references: [id])
+  sourceIdentity    FaceIdentity @relation("FaceIdentityMergeSource", fields: [sourceIdentityId], references: [id])
+  targetIdentity    FaceIdentity @relation("FaceIdentityMergeTarget", fields: [targetIdentityId], references: [id])
+  actorUser         User?        @relation(fields: [actorUserId], references: [id])
+
+  @@index([tenantId, createdAt])
+  @@index([sourceIdentityId])
+  @@index([targetIdentityId])
 }
 
 model Track {

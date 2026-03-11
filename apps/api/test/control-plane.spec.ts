@@ -12,6 +12,10 @@ type MeResult = {
   memberships: Array<{ tenantId: string; role: string; tenant: { name: string } }>;
 };
 
+type UserListResult = {
+  data: Array<{ id: string; email: string }>;
+};
+
 async function login(email: string, password = "demo1234"): Promise<string> {
   const response = await app.inject({
     method: "POST",
@@ -32,6 +36,63 @@ async function me(token: string): Promise<MeResult> {
   });
   expect(response.statusCode).toBe(200);
   return response.json<MeResult>();
+}
+
+async function createTenant(adminToken: string, name: string): Promise<string> {
+  const response = await app.inject({
+    method: "POST",
+    url: "/tenants",
+    headers: { authorization: `Bearer ${adminToken}` },
+    payload: { name }
+  });
+  expect(response.statusCode).toBe(200);
+  return response.json<{ data: { id: string } }>().data.id;
+}
+
+async function listUsers(adminToken: string, tenantId: string): Promise<UserListResult["data"]> {
+  const response = await app.inject({
+    method: "GET",
+    url: "/users",
+    headers: {
+      authorization: `Bearer ${adminToken}`,
+      "x-tenant-id": tenantId
+    }
+  });
+  expect(response.statusCode).toBe(200);
+  return response.json<UserListResult>().data;
+}
+
+async function addMembership(adminToken: string, tenantId: string, userId: string, role: string) {
+  const response = await app.inject({
+    method: "POST",
+    url: "/memberships",
+    headers: { authorization: `Bearer ${adminToken}` },
+    payload: { tenantId, userId, role }
+  });
+  expect(response.statusCode).toBe(200);
+}
+
+async function createTenantFixture(
+  adminToken: string,
+  name: string,
+  memberships: Array<{ email: string; role: string }> = []
+): Promise<{ tenantId: string }> {
+  const tenantId = await createTenant(adminToken, name);
+  if (memberships.length === 0) {
+    return { tenantId };
+  }
+
+  const adminMe = await me(adminToken);
+  const lookupTenantId = adminMe.memberships[0]!.tenantId;
+  const users = await listUsers(adminToken, lookupTenantId);
+
+  for (const membership of memberships) {
+    const user = users.find((entry) => entry.email === membership.email);
+    expect(user).toBeTruthy();
+    await addMembership(adminToken, tenantId, user!.id, membership.role);
+  }
+
+  return { tenantId };
 }
 
 beforeAll(async () => {
@@ -124,8 +185,7 @@ describe("NH-004 multi-tenant isolation", () => {
 describe("NH-005 rbac policy", () => {
   it("allows tenant_admin to create cameras", async () => {
     const adminToken = await login("admin@nearhome.dev");
-    const adminMe = await me(adminToken);
-    const tenantId = adminMe.memberships[0].tenantId;
+    const { tenantId } = await createTenantFixture(adminToken, `NH005 Admin ${Date.now()}`);
 
     const response = await app.inject({
       method: "POST",
@@ -148,9 +208,11 @@ describe("NH-005 rbac policy", () => {
   });
 
   it("allows client_user camera creation", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const { tenantId } = await createTenantFixture(adminToken, `NH005 Client ${Date.now()}`, [
+      { email: "client@nearhome.dev", role: "customer" }
+    ]);
     const clientToken = await login("client@nearhome.dev");
-    const clientMe = await me(clientToken);
-    const tenantId = clientMe.memberships[0].tenantId;
 
     const response = await app.inject({
       method: "POST",
@@ -379,9 +441,10 @@ describe("NH-030 monitor tenant-scoped camera visibility", () => {
 describe("NH-039 operator camera zoning", () => {
   it("keeps default full visibility and applies camera allowlist when assignments exist", async () => {
     const adminToken = await login("admin@nearhome.dev");
+    const { tenantId } = await createTenantFixture(adminToken, `NH039 ${Date.now()}`, [
+      { email: "monitor@nearhome.dev", role: "monitor" }
+    ]);
     const monitorToken = await login("monitor@nearhome.dev");
-    const monitorMe = await me(monitorToken);
-    const tenantId = monitorMe.memberships[0].tenantId;
 
     const usersResponse = await app.inject({
       method: "GET",
@@ -1028,9 +1091,11 @@ describe("NH-040 customer households and members", () => {
 
 describe("NH-041 customer camera onboarding and health monitor", () => {
   it("allows client_user to create, edit and validate an RTSP camera", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const { tenantId } = await createTenantFixture(adminToken, `NH041 Client ${Date.now()}`, [
+      { email: "client@nearhome.dev", role: "customer" }
+    ]);
     const clientToken = await login("client@nearhome.dev");
-    const clientMe = await me(clientToken);
-    const tenantId = clientMe.memberships[0].tenantId;
 
     const createCamera = await app.inject({
       method: "POST",
@@ -1133,9 +1198,10 @@ describe("NH-041 customer camera onboarding and health monitor", () => {
 describe("NH-015 client camera assignment subset", () => {
   it("applies allowlist to client_user only when assignments exist", async () => {
     const adminToken = await login("admin@nearhome.dev");
+    const { tenantId } = await createTenantFixture(adminToken, `NH015 ${Date.now()}`, [
+      { email: "client@nearhome.dev", role: "customer" }
+    ]);
     const clientToken = await login("client@nearhome.dev");
-    const clientMe = await me(clientToken);
-    const tenantId = clientMe.memberships[0].tenantId;
 
     const usersResponse = await app.inject({
       method: "GET",
@@ -1522,8 +1588,7 @@ describe("NH-021 user administration", () => {
 describe("NH-025 camera internal profile", () => {
   it("creates internal profile automatically for active cameras", async () => {
     const adminToken = await login("admin@nearhome.dev");
-    const adminMe = await me(adminToken);
-    const tenantId = adminMe.memberships[0].tenantId;
+    const { tenantId } = await createTenantFixture(adminToken, `NH025 Auto ${Date.now()}`);
 
     const createResponse = await app.inject({
       method: "POST",
@@ -1550,20 +1615,23 @@ describe("NH-025 camera internal profile", () => {
 
   it("allows tenant_admin to configure camera internal profile", async () => {
     const adminToken = await login("admin@nearhome.dev");
-    const adminMe = await me(adminToken);
-    const tenantId = adminMe.memberships[0].tenantId;
+    const { tenantId } = await createTenantFixture(adminToken, `NH025 Config ${Date.now()}`);
 
-    const listResponse = await app.inject({
-      method: "GET",
+    const createCameraResponse = await app.inject({
+      method: "POST",
       url: "/cameras",
       headers: {
         authorization: `Bearer ${adminToken}`,
         "x-tenant-id": tenantId
+      },
+      payload: {
+        name: `NH025 Config Cam ${Date.now()}`,
+        rtspUrl: "rtsp://demo/nh025-config",
+        isActive: true
       }
     });
-    expect(listResponse.statusCode).toBe(200);
-    const cameraId = listResponse.json<{ data: Array<{ id: string }> }>().data[0]?.id;
-    expect(cameraId).toBeTruthy();
+    expect(createCameraResponse.statusCode).toBe(200);
+    const cameraId = createCameraResponse.json<{ data: { id: string } }>().data.id;
 
     const updateResponse = await app.inject({
       method: "PUT",
@@ -1593,21 +1661,26 @@ describe("NH-025 camera internal profile", () => {
   });
 
   it("denies monitor camera profile updates", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const { tenantId } = await createTenantFixture(adminToken, `NH025 Monitor ${Date.now()}`, [
+      { email: "monitor@nearhome.dev", role: "monitor" }
+    ]);
     const monitorToken = await login("monitor@nearhome.dev");
-    const monitorMe = await me(monitorToken);
-    const tenantId = monitorMe.memberships[0].tenantId;
-
-    const listResponse = await app.inject({
-      method: "GET",
+    const createCameraResponse = await app.inject({
+      method: "POST",
       url: "/cameras",
       headers: {
-        authorization: `Bearer ${monitorToken}`,
+        authorization: `Bearer ${adminToken}`,
         "x-tenant-id": tenantId
+      },
+      payload: {
+        name: `NH025 Monitor Cam ${Date.now()}`,
+        rtspUrl: "rtsp://demo/nh025-monitor",
+        isActive: true
       }
     });
-    expect(listResponse.statusCode).toBe(200);
-    const cameraId = listResponse.json<{ data: Array<{ id: string }> }>().data[0]?.id;
-    expect(cameraId).toBeTruthy();
+    expect(createCameraResponse.statusCode).toBe(200);
+    const cameraId = createCameraResponse.json<{ data: { id: string } }>().data.id;
 
     const updateResponse = await app.inject({
       method: "PUT",
@@ -1627,20 +1700,23 @@ describe("NH-025 camera internal profile", () => {
 
   it("marks profile as pending when configuration becomes incomplete", async () => {
     const adminToken = await login("admin@nearhome.dev");
-    const adminMe = await me(adminToken);
-    const tenantId = adminMe.memberships[0].tenantId;
+    const { tenantId } = await createTenantFixture(adminToken, `NH025 Pending ${Date.now()}`);
 
-    const listResponse = await app.inject({
-      method: "GET",
+    const createCameraResponse = await app.inject({
+      method: "POST",
       url: "/cameras",
       headers: {
         authorization: `Bearer ${adminToken}`,
         "x-tenant-id": tenantId
+      },
+      payload: {
+        name: `NH025 Pending Cam ${Date.now()}`,
+        rtspUrl: "rtsp://demo/nh025-pending",
+        isActive: true
       }
     });
-    expect(listResponse.statusCode).toBe(200);
-    const cameraId = listResponse.json<{ data: Array<{ id: string }> }>().data[0]?.id;
-    expect(cameraId).toBeTruthy();
+    expect(createCameraResponse.statusCode).toBe(200);
+    const cameraId = createCameraResponse.json<{ data: { id: string } }>().data.id;
 
     const updateResponse = await app.inject({
       method: "PUT",
@@ -1670,8 +1746,7 @@ describe("NH-025 camera internal profile", () => {
 describe("NH-027 camera lifecycle", () => {
   it("transitions draft camera to ready through validate endpoint", async () => {
     const adminToken = await login("admin@nearhome.dev");
-    const adminMe = await me(adminToken);
-    const tenantId = adminMe.memberships[0].tenantId;
+    const { tenantId } = await createTenantFixture(adminToken, `NH027 Validate ${Date.now()}`);
 
     const createResponse = await app.inject({
       method: "POST",
@@ -1722,21 +1797,25 @@ describe("NH-027 camera lifecycle", () => {
 
   it("allows retire/reactivate transitions for tenant_admin and denies monitor", async () => {
     const adminToken = await login("admin@nearhome.dev");
+    const { tenantId } = await createTenantFixture(adminToken, `NH027 Retire ${Date.now()}`, [
+      { email: "monitor@nearhome.dev", role: "monitor" }
+    ]);
     const monitorToken = await login("monitor@nearhome.dev");
-    const adminMe = await me(adminToken);
-    const tenantId = adminMe.memberships[0].tenantId;
-
-    const listResponse = await app.inject({
-      method: "GET",
+    const createCameraResponse = await app.inject({
+      method: "POST",
       url: "/cameras",
       headers: {
         authorization: `Bearer ${adminToken}`,
         "x-tenant-id": tenantId
+      },
+      payload: {
+        name: `NH027 Retire Cam ${Date.now()}`,
+        rtspUrl: "rtsp://demo/nh027-retire",
+        isActive: true
       }
     });
-    expect(listResponse.statusCode).toBe(200);
-    const cameraId = listResponse.json<{ data: Array<{ id: string }> }>().data[0]?.id;
-    expect(cameraId).toBeTruthy();
+    expect(createCameraResponse.statusCode).toBe(200);
+    const cameraId = createCameraResponse.json<{ data: { id: string } }>().data.id;
 
     const monitorRetire = await app.inject({
       method: "POST",
@@ -1777,21 +1856,26 @@ describe("NH-027 camera lifecycle", () => {
 
 describe("NH-028 stream sessions lifecycle", () => {
   it("issues, activates and ends stream session with tenant tracking", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const { tenantId } = await createTenantFixture(adminToken, `NH028 Flow ${Date.now()}`, [
+      { email: "monitor@nearhome.dev", role: "monitor" }
+    ]);
     const monitorToken = await login("monitor@nearhome.dev");
-    const monitorMe = await me(monitorToken);
-    const tenantId = monitorMe.memberships[0].tenantId;
-
-    const camerasResponse = await app.inject({
-      method: "GET",
+    const createCameraResponse = await app.inject({
+      method: "POST",
       url: "/cameras",
       headers: {
-        authorization: `Bearer ${monitorToken}`,
+        authorization: `Bearer ${adminToken}`,
         "x-tenant-id": tenantId
+      },
+      payload: {
+        name: `NH028 Flow Cam ${Date.now()}`,
+        rtspUrl: "rtsp://demo/nh028-flow",
+        isActive: true
       }
     });
-    expect(camerasResponse.statusCode).toBe(200);
-    const cameraId = camerasResponse.json<{ data: Array<{ id: string }> }>().data[0]?.id;
-    expect(cameraId).toBeTruthy();
+    expect(createCameraResponse.statusCode).toBe(200);
+    const cameraId = createCameraResponse.json<{ data: { id: string } }>().data.id;
 
     const tokenResponse = await app.inject({
       method: "POST",
@@ -1861,22 +1945,29 @@ describe("NH-028 stream sessions lifecycle", () => {
   });
 
   it("enforces ownership for client_user and allows tenant_admin override", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const { tenantId } = await createTenantFixture(adminToken, `NH028 Ownership ${Date.now()}`, [
+      { email: "monitor@nearhome.dev", role: "monitor" },
+      { email: "client@nearhome.dev", role: "customer" }
+    ]);
     const monitorToken = await login("monitor@nearhome.dev");
     const clientToken = await login("client@nearhome.dev");
-    const adminToken = await login("admin@nearhome.dev");
-    const monitorMe = await me(monitorToken);
-    const tenantId = monitorMe.memberships[0].tenantId;
 
-    const camerasResponse = await app.inject({
-      method: "GET",
+    const createCameraResponse = await app.inject({
+      method: "POST",
       url: "/cameras",
       headers: {
-        authorization: `Bearer ${monitorToken}`,
+        authorization: `Bearer ${adminToken}`,
         "x-tenant-id": tenantId
+      },
+      payload: {
+        name: `NH028 Ownership Cam ${Date.now()}`,
+        rtspUrl: "rtsp://demo/nh028-ownership",
+        isActive: true
       }
     });
-    const cameraId = camerasResponse.json<{ data: Array<{ id: string }> }>().data[0]?.id;
-    expect(cameraId).toBeTruthy();
+    expect(createCameraResponse.statusCode).toBe(200);
+    const cameraId = createCameraResponse.json<{ data: { id: string } }>().data.id;
 
     const tokenResponse = await app.inject({
       method: "POST",
@@ -2224,8 +2315,7 @@ describe("NH-033 data-plane health sync", () => {
 describe("NH-016 audit logs", () => {
   it("stores critical actions and returns them for tenant_admin", async () => {
     const adminToken = await login("admin@nearhome.dev");
-    const adminMe = await me(adminToken);
-    const tenantId = adminMe.memberships[0].tenantId;
+    const { tenantId } = await createTenantFixture(adminToken, `NH016 Audit ${Date.now()}`);
 
     const cameraCreate = await app.inject({
       method: "POST",
@@ -2298,9 +2388,11 @@ describe("NH-016 audit logs", () => {
   });
 
   it("denies audit log access for monitor role", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const { tenantId } = await createTenantFixture(adminToken, `NH016 Monitor ${Date.now()}`, [
+      { email: "monitor@nearhome.dev", role: "monitor" }
+    ]);
     const monitorToken = await login("monitor@nearhome.dev");
-    const monitorMe = await me(monitorToken);
-    const tenantId = monitorMe.memberships[0].tenantId;
 
     const response = await app.inject({
       method: "GET",
@@ -3790,5 +3882,197 @@ describe("NH-DP-18 model catalog operations", () => {
       }
     });
     expect(response.statusCode).toBe(403);
+  });
+});
+
+describe("NH-DP-19 face clustering and identity management", () => {
+  it("stores face detections, auto-clusters similar faces and allows identity confirmation and merge", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    await me(adminToken);
+    const createTenantResponse = await app.inject({
+      method: "POST",
+      url: "/tenants",
+      headers: {
+        authorization: `Bearer ${adminToken}`
+      },
+      payload: {
+        name: `Faces Tenant ${Date.now()}`
+      }
+    });
+    expect(createTenantResponse.statusCode).toBe(200);
+    const tenantId = createTenantResponse.json<{ data: { id: string } }>().data.id;
+
+    const createCameraResponse = await app.inject({
+      method: "POST",
+      url: "/cameras",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        name: `Faces Cam ${Date.now()}`,
+        rtspUrl: `rtsp://demo/faces-${Date.now()}`,
+        isActive: true
+      }
+    });
+    expect(createCameraResponse.statusCode).toBe(200);
+    const cameraId = createCameraResponse.json<{ data: { id: string } }>().data.id;
+
+    const createJobResponse = await app.inject({
+      method: "POST",
+      url: "/detections/jobs",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        cameraId,
+        mode: "realtime",
+        source: "snapshot",
+        provider: "onprem_bento",
+        options: {
+          taskType: "face_detection"
+        }
+      }
+    });
+    expect(createJobResponse.statusCode).toBe(200);
+    const jobId = createJobResponse.json<{ data: { id: string } }>().data.id;
+
+    const completeResponse = await app.inject({
+      method: "POST",
+      url: `/internal/detections/jobs/${jobId}/complete`,
+      headers: {
+        "x-detection-callback-secret": "dev-detection-callback-secret"
+      },
+      payload: {
+        detections: [
+          {
+            label: "face",
+            confidence: 0.98,
+            bbox: { x: 0.1, y: 0.1, w: 0.15, h: 0.15 },
+            attributes: {
+              embedding: [0.9, 0.1, 0.0, 0.0],
+              cropStorageKey: "s3://nearhome/faces/a-1.jpg"
+            }
+          },
+          {
+            label: "face",
+            confidence: 0.96,
+            bbox: { x: 0.12, y: 0.11, w: 0.15, h: 0.15 },
+            attributes: {
+              embedding: [0.89, 0.11, 0.0, 0.0],
+              cropStorageKey: "s3://nearhome/faces/a-2.jpg"
+            }
+          },
+          {
+            label: "face",
+            confidence: 0.95,
+            bbox: { x: 0.5, y: 0.2, w: 0.15, h: 0.15 },
+            attributes: {
+              embedding: [0.0, 0.0, 0.95, 0.05],
+              cropStorageKey: "s3://nearhome/faces/b-1.jpg"
+            }
+          }
+        ],
+        providerMeta: { taskType: "face_detection", nodeId: "node-yolo-face" }
+      }
+    });
+    expect(completeResponse.statusCode).toBe(200);
+
+    const facesResponse = await app.inject({
+      method: "GET",
+      url: `/cameras/${cameraId}/faces`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+    expect(facesResponse.statusCode).toBe(200);
+    const facesBody = facesResponse.json<{
+      total: number;
+      data: Array<{ id: string; cluster?: { id: string }; embedding?: { dimensions: number | null } }>;
+    }>();
+    expect(facesBody.total).toBe(3);
+    expect(facesBody.data.every((face) => face.embedding?.dimensions === 4)).toBe(true);
+
+    const clustersResponse = await app.inject({
+      method: "GET",
+      url: "/faces/clusters",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+    expect(clustersResponse.statusCode).toBe(200);
+    const clusters = clustersResponse.json<{
+      total: number;
+      data: Array<{ id: string; memberCount: number }>;
+    }>().data;
+    expect(clusters).toHaveLength(2);
+    const primaryCluster = clusters.find((cluster) => cluster.memberCount === 2);
+    const secondaryCluster = clusters.find((cluster) => cluster.memberCount === 1);
+    expect(primaryCluster).toBeTruthy();
+    expect(secondaryCluster).toBeTruthy();
+
+    const confirmPrimary = await app.inject({
+      method: "POST",
+      url: `/faces/clusters/${primaryCluster!.id}/confirm-identity`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        displayName: "Persona A"
+      }
+    });
+    expect(confirmPrimary.statusCode).toBe(200);
+    const primaryIdentityId = confirmPrimary.json<{ data: { id: string; memberCount: number } }>().data.id;
+    expect(confirmPrimary.json<{ data: { memberCount: number } }>().data.memberCount).toBe(2);
+
+    const confirmSecondary = await app.inject({
+      method: "POST",
+      url: `/faces/clusters/${secondaryCluster!.id}/confirm-identity`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        displayName: "Persona B"
+      }
+    });
+    expect(confirmSecondary.statusCode).toBe(200);
+    const secondaryIdentityId = confirmSecondary.json<{ data: { id: string } }>().data.id;
+
+    const mergeResponse = await app.inject({
+      method: "POST",
+      url: `/faces/identities/${primaryIdentityId}/merge`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        sourceIdentityId: secondaryIdentityId,
+        reason: "confirmed same visitor"
+      }
+    });
+    expect(mergeResponse.statusCode).toBe(200);
+    expect(mergeResponse.json<{ data: { memberCount: number } }>().data.memberCount).toBe(3);
+
+    const identityResponse = await app.inject({
+      method: "GET",
+      url: `/faces/identities/${primaryIdentityId}`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+    expect(identityResponse.statusCode).toBe(200);
+    expect(identityResponse.json()).toMatchObject({
+      data: {
+        id: primaryIdentityId,
+        displayName: "Persona A",
+        memberCount: 3
+      }
+    });
   });
 });

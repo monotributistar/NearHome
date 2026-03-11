@@ -2,6 +2,7 @@ import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
+const prismaUnsafe = prisma as any;
 
 async function main() {
   await prisma.incidentEvidence.deleteMany();
@@ -9,10 +10,19 @@ async function main() {
   await prisma.scenePrimitiveEvent.deleteMany();
   await prisma.trackPoint.deleteMany();
   await prisma.track.deleteMany();
+  await prismaUnsafe.faceIdentityMergeLog.deleteMany();
+  await prismaUnsafe.faceIdentityMember.deleteMany();
+  await prismaUnsafe.faceClusterMember.deleteMany();
+  await prismaUnsafe.faceEmbedding.deleteMany();
+  await prismaUnsafe.faceDetection.deleteMany();
+  await prismaUnsafe.faceCluster.deleteMany();
+  await prismaUnsafe.faceIdentity.deleteMany();
   await prisma.detectionObservation.deleteMany();
   await prisma.detectionJob.deleteMany();
+  await prisma.inferenceNodeDesiredConfig.deleteMany();
   await prisma.inferenceNodeSnapshot.deleteMany();
   await prisma.inferenceProviderConfig.deleteMany();
+  await prisma.modelCatalogEntry.deleteMany();
   await prisma.event.deleteMany();
   await prisma.auditLog.deleteMany();
   await prisma.streamSessionTransition.deleteMany();
@@ -27,11 +37,9 @@ async function main() {
   await prisma.user.deleteMany();
   await prisma.tenant.deleteMany();
 
-  const [tenantA, tenantB, tenantC] = await Promise.all([
-    prisma.tenant.create({ data: { name: "Acme Retail" } }),
-    prisma.tenant.create({ data: { name: "Beta Logistics" } }),
-    prisma.tenant.create({ data: { name: "Gamma Clinics" } })
-  ]);
+  const tenantA = await prisma.tenant.create({ data: { name: "Acme Retail" } });
+  const tenantB = await prisma.tenant.create({ data: { name: "Beta Logistics" } });
+  const tenantC = await prisma.tenant.create({ data: { name: "Gamma Clinics" } });
 
   const passwordHash = await bcrypt.hash("demo1234", 10);
 
@@ -51,7 +59,7 @@ async function main() {
     ]
   });
 
-  const [camA1, camA2, camA3, camA4, camA5, camB1, camB2] = await Promise.all([
+  const [camA1, camA2, camA3, camA4, camA5, camB1, camB2, camC1] = await Promise.all([
     prisma.camera.create({
       data: {
         tenantId: tenantA.id,
@@ -149,10 +157,24 @@ async function main() {
         lastSeenAt: new Date(),
         lastTransitionAt: new Date()
       }
+    }),
+    prisma.camera.create({
+      data: {
+        tenantId: tenantC.id,
+        name: "Lobby",
+        description: "Reception and waiting area",
+        rtspUrl: "rtsp://demo/c1",
+        location: "Lobby",
+        tags: JSON.stringify(["reception"]),
+        isActive: true,
+        lifecycleStatus: "ready",
+        lastSeenAt: new Date(),
+        lastTransitionAt: new Date()
+      }
     })
   ]);
 
-  const allCameras = [camA1, camA2, camA3, camA4, camA5, camB1, camB2];
+  const allCameras = [camA1, camA2, camA3, camA4, camA5, camB1, camB2, camC1];
   await Promise.all(
     allCameras.map((camera) =>
       prisma.cameraProfile.create({
@@ -226,7 +248,7 @@ async function main() {
       data: {
         code: "pro",
         name: "Pro",
-        limits: JSON.stringify({ maxCameras: 50, retentionDays: 30, maxConcurrentStreams: 10 }),
+        limits: JSON.stringify({ maxCameras: 500, retentionDays: 30, maxConcurrentStreams: 10 }),
         features: JSON.stringify({ mediapipe: true, yolo: true, lpr: true })
       }
     })

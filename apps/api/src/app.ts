@@ -52,6 +52,7 @@ declare module "fastify" {
 }
 
 const prisma = new PrismaClient();
+const prismaUnsafe = prisma as any;
 
 type LoginBucket = {
   count: number;
@@ -127,6 +128,41 @@ type CameraDetectionProfile = {
   pipelines: CameraDetectionPipeline[];
   configVersion: number;
   updatedAt: string;
+};
+
+type FaceDetectionResponse = {
+  id: string;
+  tenantId: string;
+  cameraId: string;
+  observationId: string;
+  detectorProvider: string;
+  detectorTaskType: string;
+  cropStorageKey: string | null;
+  qualityScore: number | null;
+  bbox: { x: number; y: number; w: number; h: number };
+  frameTs: string;
+  createdAt: string;
+  updatedAt: string;
+  embedding?: {
+    id: string;
+    embeddingRef: string | null;
+    embeddingModelRef: string | null;
+    embeddingVersion: string | null;
+    qualityScore: number | null;
+    vectorNorm: number | null;
+    dimensions: number | null;
+  };
+  cluster?: {
+    id: string;
+    status: string;
+    displayName: string | null;
+    similarityScore: number | null;
+  };
+  identity?: {
+    id: string;
+    displayName: string | null;
+    status: string;
+  };
 };
 
 type DesiredNodeCapability = {
@@ -810,6 +846,86 @@ function detectionObservationResponse(observation: {
   };
 }
 
+function faceDetectionResponse(face: {
+  id: string;
+  tenantId: string;
+  cameraId: string;
+  observationId: string;
+  detectorProvider: string;
+  detectorTaskType: string;
+  cropStorageKey: string | null;
+  qualityScore: number | null;
+  bbox: string;
+  frameTs: Date;
+  createdAt: Date;
+  updatedAt: Date;
+  embedding?: {
+    id: string;
+    embeddingRef: string | null;
+    embeddingModelRef: string | null;
+    embeddingVersion: string | null;
+    qualityScore: number | null;
+    vectorNorm: number | null;
+    dimensions: number | null;
+  } | null;
+  clusterMembership?: {
+    similarityScore: number | null;
+    cluster: {
+      id: string;
+      status: string;
+      displayName: string | null;
+    };
+  } | null;
+  identityMembership?: {
+    identity: {
+      id: string;
+      displayName: string | null;
+      status: string;
+    };
+  } | null;
+}): FaceDetectionResponse {
+  return {
+    id: face.id,
+    tenantId: face.tenantId,
+    cameraId: face.cameraId,
+    observationId: face.observationId,
+    detectorProvider: face.detectorProvider,
+    detectorTaskType: face.detectorTaskType,
+    cropStorageKey: face.cropStorageKey,
+    qualityScore: face.qualityScore,
+    bbox: parseJson<{ x: number; y: number; w: number; h: number }>(face.bbox),
+    frameTs: toISO(face.frameTs),
+    createdAt: toISO(face.createdAt),
+    updatedAt: toISO(face.updatedAt),
+    embedding: face.embedding
+      ? {
+          id: face.embedding.id,
+          embeddingRef: face.embedding.embeddingRef,
+          embeddingModelRef: face.embedding.embeddingModelRef,
+          embeddingVersion: face.embedding.embeddingVersion,
+          qualityScore: face.embedding.qualityScore,
+          vectorNorm: face.embedding.vectorNorm,
+          dimensions: face.embedding.dimensions
+        }
+      : undefined,
+    cluster: face.clusterMembership
+      ? {
+          id: face.clusterMembership.cluster.id,
+          status: face.clusterMembership.cluster.status,
+          displayName: face.clusterMembership.cluster.displayName,
+          similarityScore: face.clusterMembership.similarityScore
+        }
+      : undefined,
+    identity: face.identityMembership
+      ? {
+          id: face.identityMembership.identity.id,
+          displayName: face.identityMembership.identity.displayName,
+          status: face.identityMembership.identity.status
+        }
+      : undefined
+  };
+}
+
 function incidentEventResponse(incident: {
   id: string;
   tenantId: string;
@@ -1028,6 +1144,280 @@ function deriveIncidentFromDetection(args: { label: string; zoneId: string | nul
     type: `object_detected_${label.replace(/[^a-z0-9]+/g, "_")}`,
     summary: `${args.label} detected${args.zoneId ? ` in zone ${args.zoneId}` : ""}${args.location ? ` at ${args.location}` : ""}`
   };
+}
+
+function parseEmbeddingCandidate(value: unknown): number[] | null {
+  if (!Array.isArray(value) || !value.length) return null;
+  const vector = value
+    .map((entry) => (typeof entry === "number" && Number.isFinite(entry) ? entry : Number.NaN))
+    .filter((entry) => Number.isFinite(entry));
+  return vector.length === value.length ? vector : null;
+}
+
+function extractFaceEmbedding(det: {
+  attributes?: Record<string, unknown>;
+  providerMeta?: Record<string, unknown>;
+}): number[] | null {
+  return (
+    parseEmbeddingCandidate(det.attributes?.embedding) ??
+    parseEmbeddingCandidate(det.attributes?.faceEmbedding) ??
+    parseEmbeddingCandidate(det.attributes?.embeddingVector) ??
+    parseEmbeddingCandidate(det.providerMeta?.embedding) ??
+    parseEmbeddingCandidate(det.providerMeta?.faceEmbedding) ??
+    parseEmbeddingCandidate(det.providerMeta?.embeddingVector) ??
+    null
+  );
+}
+
+function extractFaceCropStorageKey(det: {
+  attributes?: Record<string, unknown>;
+  providerMeta?: Record<string, unknown>;
+}): string | null {
+  const candidate =
+    det.attributes?.cropStorageKey ??
+    det.attributes?.cropRef ??
+    det.providerMeta?.cropStorageKey ??
+    det.providerMeta?.cropRef;
+  return typeof candidate === "string" && candidate.length > 0 ? candidate : null;
+}
+
+function extractFaceQualityScore(det: {
+  confidence?: number;
+  attributes?: Record<string, unknown>;
+  providerMeta?: Record<string, unknown>;
+}) {
+  const candidate = det.attributes?.qualityScore ?? det.providerMeta?.qualityScore ?? det.confidence ?? null;
+  return typeof candidate === "number" && Number.isFinite(candidate) ? candidate : null;
+}
+
+function extractEmbeddingRef(det: {
+  attributes?: Record<string, unknown>;
+  providerMeta?: Record<string, unknown>;
+}) {
+  const candidate = det.attributes?.embeddingRef ?? det.providerMeta?.embeddingRef;
+  return typeof candidate === "string" && candidate.length > 0 ? candidate : null;
+}
+
+function extractEmbeddingModelRef(det: {
+  attributes?: Record<string, unknown>;
+  providerMeta?: Record<string, unknown>;
+}) {
+  const candidate = det.attributes?.embeddingModelRef ?? det.providerMeta?.embeddingModelRef;
+  return typeof candidate === "string" && candidate.length > 0 ? candidate : null;
+}
+
+function extractEmbeddingVersion(det: {
+  attributes?: Record<string, unknown>;
+  providerMeta?: Record<string, unknown>;
+}) {
+  const candidate = det.attributes?.embeddingVersion ?? det.providerMeta?.embeddingVersion;
+  return typeof candidate === "string" && candidate.length > 0 ? candidate : null;
+}
+
+function vectorNorm(vector: number[]) {
+  return Math.sqrt(vector.reduce((acc, value) => acc + value * value, 0));
+}
+
+function cosineSimilarity(left: number[], right: number[]) {
+  if (!left.length || left.length !== right.length) return -1;
+  const leftNorm = vectorNorm(left);
+  const rightNorm = vectorNorm(right);
+  if (leftNorm === 0 || rightNorm === 0) return -1;
+  let dot = 0;
+  for (let i = 0; i < left.length; i += 1) {
+    dot += left[i] * right[i];
+  }
+  return dot / (leftNorm * rightNorm);
+}
+
+function averageEmbeddings(vectors: number[][]): number[] | null {
+  if (!vectors.length) return null;
+  const dimensions = vectors[0]?.length ?? 0;
+  if (!dimensions) return null;
+  const accumulator = new Array<number>(dimensions).fill(0);
+  let validCount = 0;
+  for (const vector of vectors) {
+    if (vector.length !== dimensions) continue;
+    validCount += 1;
+    for (let i = 0; i < dimensions; i += 1) {
+      accumulator[i] += vector[i];
+    }
+  }
+  if (!validCount) return null;
+  return accumulator.map((value) => value / validCount);
+}
+
+function isFaceDetection(args: {
+  label?: string;
+  providerMeta?: Record<string, unknown>;
+  jobOptions?: Record<string, unknown> | null;
+}) {
+  const label = args.label?.toLowerCase() ?? "";
+  if (label.includes("face")) return true;
+  const providerTaskType = args.providerMeta?.taskType;
+  if (providerTaskType === "face_detection") return true;
+  const optionTaskType = args.jobOptions?.taskType;
+  return optionTaskType === "face_detection";
+}
+
+async function attachFaceArtifacts(args: {
+  tx: any;
+  job: {
+    id: string;
+    tenantId: string;
+    cameraId: string;
+    provider: string;
+    options: string | null;
+  };
+  observation: { id: string; frameTs: Date };
+  detection: {
+    label?: string;
+    confidence?: number;
+    bbox?: { x?: number; y?: number; w?: number; h?: number };
+    attributes?: Record<string, unknown>;
+    providerMeta?: Record<string, unknown>;
+  };
+  bbox: { x: number; y: number; w: number; h: number };
+}) {
+  const jobOptions = args.job.options ? parseJson<Record<string, unknown>>(args.job.options) : null;
+  if (
+    !isFaceDetection({
+      label: args.detection.label,
+      providerMeta: args.detection.providerMeta,
+      jobOptions
+    })
+  ) {
+    return;
+  }
+
+  const faceDetection = await args.tx.faceDetection.create({
+    data: {
+      tenantId: args.job.tenantId,
+      cameraId: args.job.cameraId,
+      observationId: args.observation.id,
+      detectorProvider: args.job.provider,
+      detectorTaskType:
+        typeof args.detection.providerMeta?.taskType === "string"
+          ? args.detection.providerMeta.taskType
+          : typeof jobOptions?.taskType === "string"
+            ? jobOptions.taskType
+            : "face_detection",
+      cropStorageKey: extractFaceCropStorageKey(args.detection),
+      qualityScore: extractFaceQualityScore(args.detection),
+      bbox: JSON.stringify(args.bbox),
+      frameTs: args.observation.frameTs
+    }
+  });
+
+  const embeddingVector = extractFaceEmbedding(args.detection);
+  if (!embeddingVector && !extractEmbeddingRef(args.detection)) {
+    return;
+  }
+
+  const embedding = await args.tx.faceEmbedding.create({
+    data: {
+      tenantId: args.job.tenantId,
+      faceDetectionId: faceDetection.id,
+      embeddingVector: embeddingVector ? JSON.stringify(embeddingVector) : null,
+      embeddingRef: extractEmbeddingRef(args.detection),
+      embeddingModelRef: extractEmbeddingModelRef(args.detection),
+      embeddingVersion: extractEmbeddingVersion(args.detection),
+      qualityScore: extractFaceQualityScore(args.detection),
+      vectorNorm: embeddingVector ? vectorNorm(embeddingVector) : null,
+      dimensions: embeddingVector?.length ?? null
+    }
+  });
+
+  if (!embeddingVector) return;
+
+  const clusters = await args.tx.faceCluster.findMany({
+    where: {
+      tenantId: args.job.tenantId,
+      status: { in: ["open", "confirmed"] }
+    }
+  });
+
+  let bestCluster:
+    | {
+        id: string;
+        centroidEmbedding: string | null;
+        similarity: number;
+      }
+    | undefined;
+  for (const cluster of clusters) {
+    if (!cluster.centroidEmbedding) continue;
+    const centroid = parseEmbeddingCandidate(parseJson<unknown>(cluster.centroidEmbedding));
+    if (!centroid) continue;
+    const similarity = cosineSimilarity(embeddingVector, centroid);
+    if (similarity >= 0.92 && (!bestCluster || similarity > bestCluster.similarity)) {
+      bestCluster = {
+        id: cluster.id,
+        centroidEmbedding: cluster.centroidEmbedding,
+        similarity
+      };
+    }
+  }
+
+  const cluster =
+    bestCluster
+      ? await args.tx.faceCluster.findUniqueOrThrow({ where: { id: bestCluster.id } })
+      : await args.tx.faceCluster.create({
+          data: {
+            tenantId: args.job.tenantId,
+            status: "open",
+            centroidEmbedding: JSON.stringify(embeddingVector),
+            memberCount: 0
+          }
+        });
+
+  await args.tx.faceClusterMember.create({
+    data: {
+      tenantId: args.job.tenantId,
+      clusterId: cluster.id,
+      faceDetectionId: faceDetection.id,
+      faceEmbeddingId: embedding.id,
+      similarityScore: bestCluster?.similarity ?? null
+    }
+  });
+
+  const clusterMembers = await args.tx.faceClusterMember.findMany({
+    where: { clusterId: cluster.id },
+    include: { faceEmbedding: true }
+  });
+  const centroid = averageEmbeddings(
+    clusterMembers.flatMap((member: { faceEmbedding: { embeddingVector: string | null } | null }) => {
+      if (!member.faceEmbedding?.embeddingVector) return [];
+      const parsed = parseEmbeddingCandidate(parseJson<unknown>(member.faceEmbedding.embeddingVector));
+      return parsed ? [parsed] : [];
+    })
+  );
+
+  await args.tx.faceCluster.update({
+    where: { id: cluster.id },
+    data: {
+      memberCount: clusterMembers.length,
+      centroidEmbedding: centroid ? JSON.stringify(centroid) : cluster.centroidEmbedding
+    }
+  });
+
+  const refreshedCluster = await args.tx.faceCluster.findUniqueOrThrow({ where: { id: cluster.id } });
+  if (!refreshedCluster.confirmedIdentityId) return;
+
+  await args.tx.faceIdentityMember.upsert({
+    where: { faceDetectionId: faceDetection.id },
+    update: {
+      identityId: refreshedCluster.confirmedIdentityId,
+      faceEmbeddingId: embedding.id,
+      sourceClusterId: refreshedCluster.id
+    },
+    create: {
+      tenantId: args.job.tenantId,
+      identityId: refreshedCluster.confirmedIdentityId,
+      faceDetectionId: faceDetection.id,
+      faceEmbeddingId: embedding.id,
+      sourceClusterId: refreshedCluster.id
+    }
+  });
 }
 
 async function computeEntitlements(tenantId: string) {
@@ -1794,6 +2184,14 @@ export async function buildApp() {
                 ? JSON.stringify(args.providerMeta)
                 : null
           }
+        });
+
+        await attachFaceArtifacts({
+          tx,
+          job,
+          observation: { id: observation.id, frameTs },
+          detection: det,
+          bbox
         });
 
         const track = await tx.track.create({
@@ -2737,7 +3135,7 @@ export async function buildApp() {
           tenant: { deletedAt: null }
         },
         include: { tenant: true },
-        orderBy: { createdAt: "asc" }
+        orderBy: [{ tenant: { createdAt: "asc" } }, { createdAt: "asc" }]
       });
     }
 
@@ -5107,6 +5505,381 @@ export async function buildApp() {
 
     reply.header("x-total-count", String(total));
     return { data: rows.map(detectionObservationResponse), total };
+  });
+
+  app.get("/cameras/:id/faces", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+    const cameraId = (request.params as { id: string }).id;
+    await assertCameraAccess({ ...ctx, cameraId });
+    const camera = await prisma.camera.findFirst({
+      where: { id: cameraId, tenantId: ctx.tenantId, deletedAt: null }
+    });
+    if (!camera) throw app.httpErrors.notFound();
+
+    const query = request.query as Record<string, unknown>;
+    const { skip, take } = parseListQuery(query);
+    const clusterId = typeof query.clusterId === "string" ? query.clusterId : undefined;
+    const identityId = typeof query.identityId === "string" ? query.identityId : undefined;
+
+    const where = {
+      tenantId: ctx.tenantId,
+      cameraId,
+      ...(clusterId ? { clusterMembership: { clusterId } } : {}),
+      ...(identityId ? { identityMembership: { identityId } } : {})
+    };
+
+    const [rows, total] = await Promise.all([
+      prismaUnsafe.faceDetection.findMany({
+        where,
+        include: {
+          embedding: true,
+          clusterMembership: { include: { cluster: true } },
+          identityMembership: { include: { identity: true } }
+        },
+        orderBy: { frameTs: "desc" },
+        skip,
+        take
+      }),
+      prismaUnsafe.faceDetection.count({ where })
+    ]);
+
+    reply.header("x-total-count", String(total));
+    return { data: rows.map(faceDetectionResponse), total };
+  });
+
+  app.get("/faces/clusters", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+    const query = request.query as Record<string, unknown>;
+    const { skip, take } = parseListQuery(query);
+    const status = typeof query.status === "string" ? query.status : undefined;
+
+    const where = {
+      tenantId: ctx.tenantId,
+      ...(status ? { status } : {})
+    };
+
+    const [rows, total] = await Promise.all([
+      prismaUnsafe.faceCluster.findMany({
+        where,
+        include: {
+          members: {
+            orderBy: { createdAt: "desc" },
+            take: 6,
+            include: {
+              faceDetection: {
+                include: {
+                  embedding: true,
+                  clusterMembership: { include: { cluster: true } },
+                  identityMembership: { include: { identity: true } }
+                }
+              }
+            }
+          }
+        },
+        orderBy: { updatedAt: "desc" },
+        skip,
+        take
+      }),
+      prismaUnsafe.faceCluster.count({ where })
+    ]);
+
+    reply.header("x-total-count", String(total));
+    return {
+      data: rows.map((cluster: any) => ({
+        id: cluster.id,
+        tenantId: cluster.tenantId,
+        status: cluster.status,
+        displayName: cluster.displayName,
+        memberCount: cluster.memberCount,
+        confirmedIdentityId: cluster.confirmedIdentityId,
+        createdAt: toISO(cluster.createdAt),
+        updatedAt: toISO(cluster.updatedAt),
+        faces: cluster.members.map((member: any) => faceDetectionResponse(member.faceDetection))
+      })),
+      total
+    };
+  });
+
+  app.post("/faces/clusters/:id/confirm-identity", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin", "monitor"]);
+    const id = (request.params as { id: string }).id;
+    const body = z
+      .object({
+        identityId: z.string().optional(),
+        displayName: z.string().min(1).max(120).optional()
+      })
+      .parse(request.body);
+
+    const cluster = await prismaUnsafe.faceCluster.findFirst({
+      where: { id, tenantId: ctx.tenantId },
+      include: {
+        members: {
+          include: {
+            faceDetection: true,
+            faceEmbedding: true
+          }
+        }
+      }
+    });
+    if (!cluster) throw app.httpErrors.notFound();
+
+    const identity =
+      body.identityId
+        ? await prismaUnsafe.faceIdentity.findFirst({
+            where: { id: body.identityId, tenantId: ctx.tenantId, mergedIntoIdentityId: null }
+          })
+        : null;
+    if (body.identityId && !identity) throw app.httpErrors.notFound("identity not found");
+
+    const resolvedIdentity =
+      identity ??
+      (await prismaUnsafe.faceIdentity.create({
+        data: {
+          tenantId: ctx.tenantId,
+          displayName: body.displayName ?? cluster.displayName ?? `Identity ${cluster.id.slice(-6)}`,
+          status: "confirmed"
+        }
+      }));
+
+    await prisma.$transaction(async (tx) => {
+      const faceTx = tx as any;
+      await faceTx.faceCluster.update({
+        where: { id: cluster.id },
+        data: {
+          confirmedIdentityId: resolvedIdentity.id,
+          status: "confirmed",
+          displayName: body.displayName ?? cluster.displayName
+        }
+      });
+
+      await faceTx.faceIdentity.update({
+        where: { id: resolvedIdentity.id },
+        data: {
+          status: "confirmed",
+          displayName: body.displayName ?? resolvedIdentity.displayName
+        }
+      });
+
+      for (const member of cluster.members) {
+        await faceTx.faceIdentityMember.upsert({
+          where: { faceDetectionId: member.faceDetectionId },
+          update: {
+            identityId: resolvedIdentity.id,
+            faceEmbeddingId: member.faceEmbeddingId,
+            sourceClusterId: cluster.id
+          },
+          create: {
+            tenantId: ctx.tenantId,
+            identityId: resolvedIdentity.id,
+            faceDetectionId: member.faceDetectionId,
+            faceEmbeddingId: member.faceEmbeddingId,
+            sourceClusterId: cluster.id
+          }
+        });
+      }
+    });
+
+    await appendAuditLog({
+      tenantId: ctx.tenantId,
+      actorUserId: ctx.userId,
+      resource: "face_cluster",
+      action: "confirm_identity",
+      resourceId: cluster.id,
+      payload: {
+        identityId: resolvedIdentity.id,
+        memberCount: cluster.members.length
+      },
+      context: request.ctx
+    });
+
+    const updated = await prismaUnsafe.faceIdentity.findUniqueOrThrow({
+      where: { id: resolvedIdentity.id },
+      include: {
+        members: {
+          include: {
+            faceDetection: {
+              include: {
+                embedding: true,
+                clusterMembership: { include: { cluster: true } },
+                identityMembership: { include: { identity: true } }
+              }
+            }
+          }
+        }
+      }
+    });
+
+    return {
+      data: {
+        id: updated.id,
+        tenantId: updated.tenantId,
+        displayName: updated.displayName,
+        status: updated.status,
+        mergedIntoIdentityId: updated.mergedIntoIdentityId,
+        createdAt: toISO(updated.createdAt),
+        updatedAt: toISO(updated.updatedAt),
+        memberCount: updated.members.length,
+        faces: updated.members.map((member: any) => faceDetectionResponse(member.faceDetection))
+      }
+    };
+  });
+
+  app.get("/faces/identities/:id", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+    const id = (request.params as { id: string }).id;
+    const identity = await prismaUnsafe.faceIdentity.findFirst({
+      where: { id, tenantId: ctx.tenantId },
+      include: {
+        members: {
+          include: {
+            faceDetection: {
+              include: {
+                embedding: true,
+                clusterMembership: { include: { cluster: true } },
+                identityMembership: { include: { identity: true } }
+              }
+            }
+          }
+        }
+      }
+    });
+    if (!identity) throw app.httpErrors.notFound();
+
+    return {
+      data: {
+        id: identity.id,
+        tenantId: identity.tenantId,
+        displayName: identity.displayName,
+        status: identity.status,
+        mergedIntoIdentityId: identity.mergedIntoIdentityId,
+        createdAt: toISO(identity.createdAt),
+        updatedAt: toISO(identity.updatedAt),
+        memberCount: identity.members.length,
+        faces: identity.members.map((member: any) => faceDetectionResponse(member.faceDetection))
+      }
+    };
+  });
+
+  app.post("/faces/identities/:id/merge", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin", "monitor"]);
+    const targetIdentityId = (request.params as { id: string }).id;
+    const body = z
+      .object({
+        sourceIdentityId: z.string(),
+        reason: z.string().max(500).optional()
+      })
+      .parse(request.body);
+
+    if (body.sourceIdentityId === targetIdentityId) {
+      throw app.httpErrors.badRequest("source and target must differ");
+    }
+
+    const [targetIdentity, sourceIdentity] = await Promise.all([
+      prismaUnsafe.faceIdentity.findFirst({
+        where: { id: targetIdentityId, tenantId: ctx.tenantId, mergedIntoIdentityId: null }
+      }),
+      prismaUnsafe.faceIdentity.findFirst({
+        where: { id: body.sourceIdentityId, tenantId: ctx.tenantId, mergedIntoIdentityId: null },
+        include: { members: true }
+      })
+    ]);
+    if (!targetIdentity || !sourceIdentity) throw app.httpErrors.notFound();
+
+    await prisma.$transaction(async (tx) => {
+      const faceTx = tx as any;
+      for (const member of sourceIdentity.members) {
+        await faceTx.faceIdentityMember.update({
+          where: { faceDetectionId: member.faceDetectionId },
+          data: {
+            identityId: targetIdentity.id
+          }
+        });
+      }
+
+      await faceTx.faceCluster.updateMany({
+        where: {
+          tenantId: ctx.tenantId,
+          confirmedIdentityId: sourceIdentity.id
+        },
+        data: {
+          confirmedIdentityId: targetIdentity.id
+        }
+      });
+
+      await faceTx.faceIdentity.update({
+        where: { id: sourceIdentity.id },
+        data: {
+          status: "merged",
+          mergedIntoIdentityId: targetIdentity.id
+        }
+      });
+
+      await faceTx.faceIdentity.update({
+        where: { id: targetIdentity.id },
+        data: {
+          status: "confirmed"
+        }
+      });
+
+      await faceTx.faceIdentityMergeLog.create({
+        data: {
+          tenantId: ctx.tenantId,
+          sourceIdentityId: sourceIdentity.id,
+          targetIdentityId: targetIdentity.id,
+          actorUserId: ctx.userId,
+          reason: body.reason ?? null
+        }
+      });
+    });
+
+    await appendAuditLog({
+      tenantId: ctx.tenantId,
+      actorUserId: ctx.userId,
+      resource: "face_identity",
+      action: "merge",
+      resourceId: targetIdentity.id,
+      payload: {
+        sourceIdentityId: sourceIdentity.id,
+        targetIdentityId: targetIdentity.id
+      },
+      context: request.ctx
+    });
+
+    const merged = await prismaUnsafe.faceIdentity.findUniqueOrThrow({
+      where: { id: targetIdentity.id },
+      include: {
+        members: {
+          include: {
+            faceDetection: {
+              include: {
+                embedding: true,
+                clusterMembership: { include: { cluster: true } },
+                identityMembership: { include: { identity: true } }
+              }
+            }
+          }
+        }
+      }
+    });
+
+    return {
+      data: {
+        id: merged.id,
+        tenantId: merged.tenantId,
+        displayName: merged.displayName,
+        status: merged.status,
+        mergedIntoIdentityId: merged.mergedIntoIdentityId,
+        createdAt: toISO(merged.createdAt),
+        updatedAt: toISO(merged.updatedAt),
+        memberCount: merged.members.length,
+        faces: merged.members.map((member: any) => faceDetectionResponse(member.faceDetection))
+      }
+    };
   });
 
   app.get("/incidents", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {

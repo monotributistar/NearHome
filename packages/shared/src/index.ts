@@ -207,6 +207,76 @@ export const DetectionObservationSchema = z.object({
   createdAt: z.string()
 });
 
+export const FaceDetectionSchema = z.object({
+  id: z.string(),
+  tenantId: z.string(),
+  cameraId: z.string(),
+  observationId: z.string(),
+  detectorProvider: z.string(),
+  detectorTaskType: z.string(),
+  cropStorageKey: z.string().nullable().optional(),
+  qualityScore: z.number().nullable().optional(),
+  bbox: z.object({
+    x: z.number(),
+    y: z.number(),
+    w: z.number(),
+    h: z.number()
+  }),
+  frameTs: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  embedding: z
+    .object({
+      id: z.string(),
+      embeddingRef: z.string().nullable().optional(),
+      embeddingModelRef: z.string().nullable().optional(),
+      embeddingVersion: z.string().nullable().optional(),
+      qualityScore: z.number().nullable().optional(),
+      vectorNorm: z.number().nullable().optional(),
+      dimensions: z.number().nullable().optional()
+    })
+    .optional(),
+  cluster: z
+    .object({
+      id: z.string(),
+      status: z.string(),
+      displayName: z.string().nullable().optional(),
+      similarityScore: z.number().nullable().optional()
+    })
+    .optional(),
+  identity: z
+    .object({
+      id: z.string(),
+      displayName: z.string().nullable().optional(),
+      status: z.string()
+    })
+    .optional()
+});
+
+export const FaceClusterSchema = z.object({
+  id: z.string(),
+  tenantId: z.string(),
+  status: z.string(),
+  displayName: z.string().nullable().optional(),
+  memberCount: z.number(),
+  confirmedIdentityId: z.string().nullable().optional(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  faces: z.array(FaceDetectionSchema).optional()
+});
+
+export const FaceIdentitySchema = z.object({
+  id: z.string(),
+  tenantId: z.string(),
+  displayName: z.string().nullable().optional(),
+  status: z.string(),
+  mergedIntoIdentityId: z.string().nullable().optional(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  memberCount: z.number(),
+  faces: z.array(FaceDetectionSchema).optional()
+});
+
 export const TrackSchema = z.object({
   id: z.string(),
   jobId: z.string().nullable().optional(),
@@ -409,6 +479,9 @@ export type Event = z.infer<typeof EventSchema>;
 export type StreamSession = z.infer<typeof StreamSessionSchema>;
 export type DetectionJob = z.infer<typeof DetectionJobSchema>;
 export type DetectionObservation = z.infer<typeof DetectionObservationSchema>;
+export type FaceDetection = z.infer<typeof FaceDetectionSchema>;
+export type FaceCluster = z.infer<typeof FaceClusterSchema>;
+export type FaceIdentity = z.infer<typeof FaceIdentitySchema>;
 export type Track = z.infer<typeof TrackSchema>;
 export type TrackPoint = z.infer<typeof TrackPointSchema>;
 export type ScenePrimitiveEvent = z.infer<typeof ScenePrimitiveEventSchema>;

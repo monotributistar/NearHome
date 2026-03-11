@@ -13,7 +13,7 @@ const originalEnv = {
 
 type LoginResult = { accessToken: string };
 type MeResult = { memberships: Array<{ tenantId: string }> };
-type TenantListResult = { data: Array<{ id: string; name: string }> };
+type TenantCreateResult = { data: { id: string; name: string } };
 
 async function login(email: string, password = "demo1234"): Promise<string> {
   const response = await app.inject({
@@ -106,16 +106,16 @@ describe("stream health scheduler", () => {
   it("syncs active camera health automatically and updates lifecycle snapshot", async () => {
     const adminToken = await login("admin@nearhome.dev");
     await me(adminToken);
-    const tenantsResponse = await app.inject({
-      method: "GET",
+    const createdTenantResponse = await app.inject({
+      method: "POST",
       url: "/tenants",
-      headers: { authorization: `Bearer ${adminToken}` }
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: {
+        name: `Scheduler Tenant ${Date.now()}`
+      }
     });
-    expect(tenantsResponse.statusCode).toBe(200);
-    const tenantId = tenantsResponse
-      .json<TenantListResult>()
-      .data.find((tenant) => tenant.name === "Acme Retail")?.id;
-    expect(tenantId).toBeTruthy();
+    expect(createdTenantResponse.statusCode).toBe(200);
+    const tenantId = createdTenantResponse.json<TenantCreateResult>().data.id;
 
     const created = await app.inject({
       method: "POST",
@@ -126,7 +126,7 @@ describe("stream health scheduler", () => {
       },
       payload: {
         name: `Scheduler Cam ${Date.now()}`,
-        rtspUrl: "rtsp://demo/scheduler",
+        rtspUrl: `rtsp://demo/scheduler-${Date.now()}`,
         isActive: true
       }
     });
