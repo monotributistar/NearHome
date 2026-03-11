@@ -387,6 +387,9 @@
 - Endurecimiento e2e portal:
   - nuevo smoke integrado `NH-056` para flujo cliente completo (onboarding cámara + realtime + solicitud de suscripción con comprobante).
   - validación: `pnpm test:e2e -- e2e/tests/portal.smoke.spec.ts` en verde.
+- Endurecimiento multi-tenant playback:
+  - nueva cobertura en API para aislamiento de `maxConcurrentStreams` entre tenants (saturación en tenant A no bloquea tenant B).
+  - validación: `pnpm --filter @app/api test -- -t \"NH-035 entitlement enforcement\"` en verde.
 
 ## Próximo bloque recomendado
 

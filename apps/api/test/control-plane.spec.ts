@@ -2054,6 +2054,112 @@ describe("NH-035 entitlement enforcement", () => {
     });
   });
 
+  it("keeps concurrent stream limits isolated across tenants", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const adminMe = await me(adminToken);
+    const tenantB = adminMe.memberships.find((m) => m.tenant.name === "Beta Logistics");
+    const tenantC = adminMe.memberships.find((m) => m.tenant.name === "Gamma Clinics");
+    expect(tenantB).toBeTruthy();
+    expect(tenantC).toBeTruthy();
+
+    for (const tenantId of [tenantB!.tenantId, tenantC!.tenantId]) {
+      const sessionsResponse = await app.inject({
+        method: "GET",
+        url: "/stream-sessions",
+        headers: {
+          authorization: `Bearer ${adminToken}`,
+          "x-tenant-id": tenantId
+        }
+      });
+      expect(sessionsResponse.statusCode).toBe(200);
+      const sessions = sessionsResponse.json<{ data: Array<{ id: string; status: string }> }>().data;
+      for (const session of sessions.filter((entry) => ["requested", "issued", "active"].includes(entry.status))) {
+        const endResponse = await app.inject({
+          method: "POST",
+          url: `/stream-sessions/${session.id}/end`,
+          headers: {
+            authorization: `Bearer ${adminToken}`,
+            "x-tenant-id": tenantId
+          },
+          payload: { reason: "cross-tenant cleanup" }
+        });
+        expect(endResponse.statusCode).toBe(200);
+      }
+    }
+
+    const camerasTenantB = await app.inject({
+      method: "GET",
+      url: "/cameras",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantB!.tenantId
+      }
+    });
+    const cameraBTenantId = camerasTenantB.json<{ data: Array<{ id: string }> }>().data[0]?.id;
+    expect(cameraBTenantId).toBeTruthy();
+
+    const camerasTenantC = await app.inject({
+      method: "GET",
+      url: "/cameras",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantC!.tenantId
+      }
+    });
+    let cameraCTenantId = camerasTenantC.json<{ data: Array<{ id: string }> }>().data[0]?.id;
+    if (!cameraCTenantId) {
+      const createCameraTenantC = await app.inject({
+        method: "POST",
+        url: "/cameras",
+        headers: {
+          authorization: `Bearer ${adminToken}`,
+          "x-tenant-id": tenantC!.tenantId
+        },
+        payload: {
+          name: `Tenant C Stream Cam ${Date.now()}`,
+          rtspUrl: "rtsp://demo/tenant-c-stream",
+          isActive: true
+        }
+      });
+      expect(createCameraTenantC.statusCode).toBe(200);
+      cameraCTenantId = createCameraTenantC.json<{ data: { id: string } }>().data.id;
+    }
+    expect(cameraCTenantId).toBeTruthy();
+
+    const tenantBFirst = await app.inject({
+      method: "POST",
+      url: `/cameras/${cameraBTenantId}/stream-token`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantB!.tenantId
+      },
+      payload: {}
+    });
+    expect(tenantBFirst.statusCode).toBe(200);
+
+    const tenantBSecond = await app.inject({
+      method: "POST",
+      url: `/cameras/${cameraBTenantId}/stream-token`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantB!.tenantId
+      },
+      payload: {}
+    });
+    expect(tenantBSecond.statusCode).toBe(409);
+
+    const tenantCFirst = await app.inject({
+      method: "POST",
+      url: `/cameras/${cameraCTenantId}/stream-token`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantC!.tenantId
+      },
+      payload: {}
+    });
+    expect(tenantCFirst.statusCode).toBe(200);
+  });
+
   it("enforces retentionDays in events queries", async () => {
     const adminToken = await login("admin@nearhome.dev");
     const adminMe = await me(adminToken);

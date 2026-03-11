@@ -74,6 +74,7 @@ Cobertura incluida:
   - `/tenants/:id/entitlements` devuelve límites por plan real de cada tenant
   - `POST /cameras` bloquea cuando excede `maxCameras` (`409 ENTITLEMENT_LIMIT_EXCEEDED`)
   - `POST /cameras/:id/stream-token` bloquea cuando excede `maxConcurrentStreams` (`409 ENTITLEMENT_LIMIT_EXCEEDED`)
+  - límite de concurrencia de tenant A no impacta tenant B (aislamiento cross-tenant)
   - `GET /events` bloquea `from` fuera de `retentionDays` (`422 ENTITLEMENT_RETENTION_EXCEEDED`)
 - NH-016 auditoría básica
   - `tenant_admin` obtiene logs en `GET /audit-logs`
