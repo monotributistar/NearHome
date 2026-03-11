@@ -474,6 +474,127 @@ describe("NH-039 operator camera zoning", () => {
   });
 });
 
+describe("NH-015 client camera assignment subset", () => {
+  it("applies allowlist to client_user only when assignments exist", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const clientToken = await login("client@nearhome.dev");
+    const clientMe = await me(clientToken);
+    const tenantId = clientMe.memberships[0].tenantId;
+
+    const usersResponse = await app.inject({
+      method: "GET",
+      url: "/users",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+    expect(usersResponse.statusCode).toBe(200);
+    const clientUser = usersResponse
+      .json<{ data: Array<{ id: string; email: string }> }>()
+      .data.find((user) => user.email === "client@nearhome.dev");
+    expect(clientUser).toBeTruthy();
+
+    const cameraAResponse = await app.inject({
+      method: "POST",
+      url: "/cameras",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        name: `Client Scope Cam A ${Date.now()}`,
+        rtspUrl: "rtsp://demo/client-scope-a",
+        location: "Client Zone A",
+        tags: ["client-scope"],
+        isActive: false
+      }
+    });
+    expect(cameraAResponse.statusCode).toBe(200);
+    const cameraAId = cameraAResponse.json<{ data: { id: string } }>().data.id;
+
+    const cameraBResponse = await app.inject({
+      method: "POST",
+      url: "/cameras",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        name: `Client Scope Cam B ${Date.now()}`,
+        rtspUrl: "rtsp://demo/client-scope-b",
+        location: "Client Zone B",
+        tags: ["client-scope"],
+        isActive: false
+      }
+    });
+    expect(cameraBResponse.statusCode).toBe(200);
+    const cameraBId = cameraBResponse.json<{ data: { id: string } }>().data.id;
+
+    const clearScopeResponse = await app.inject({
+      method: "PUT",
+      url: `/camera-assignments/${clientUser!.id}`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        cameraIds: []
+      }
+    });
+    expect(clearScopeResponse.statusCode).toBe(200);
+
+    const listBeforeScope = await app.inject({
+      method: "GET",
+      url: "/cameras?_start=0&_end=100",
+      headers: {
+        authorization: `Bearer ${clientToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+    expect(listBeforeScope.statusCode).toBe(200);
+    const beforeIds = new Set(listBeforeScope.json<{ data: Array<{ id: string }> }>().data.map((camera) => camera.id));
+    expect(beforeIds.has(cameraAId)).toBe(true);
+    expect(beforeIds.has(cameraBId)).toBe(true);
+
+    const scopeResponse = await app.inject({
+      method: "PUT",
+      url: `/camera-assignments/${clientUser!.id}`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        cameraIds: [cameraAId]
+      }
+    });
+    expect(scopeResponse.statusCode).toBe(200);
+
+    const listAfterScope = await app.inject({
+      method: "GET",
+      url: "/cameras?_start=0&_end=100",
+      headers: {
+        authorization: `Bearer ${clientToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+    expect(listAfterScope.statusCode).toBe(200);
+    const afterIds = new Set(listAfterScope.json<{ data: Array<{ id: string }> }>().data.map((camera) => camera.id));
+    expect(afterIds.has(cameraAId)).toBe(true);
+    expect(afterIds.has(cameraBId)).toBe(false);
+
+    const hiddenCamera = await app.inject({
+      method: "GET",
+      url: `/cameras/${cameraBId}`,
+      headers: {
+        authorization: `Bearer ${clientToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+    expect(hiddenCamera.statusCode).toBe(404);
+  });
+});
+
 describe("NH-021 user administration", () => {
   it("accepts role aliases operator/customer and stores canonical roles", async () => {
     const adminToken = await login("admin@nearhome.dev");

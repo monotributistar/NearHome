@@ -14,6 +14,10 @@ Cobertura incluida:
   - `tenant_admin` puede crear cámara
   - `client_user` no puede crear cámara
   - `monitor` no puede cambiar suscripción
+- NH-015 asignación cámara a usuario (subset)
+  - `client_user` mantiene visibilidad completa cuando no tiene asignaciones activas
+  - con asignaciones activas, `client_user` ve solo cámaras permitidas
+  - acceso a detalle de cámara no asignada devuelve `404`
 - NH-021 user administration
   - `tenant_admin` puede crear usuario y asignar rol en tenant activo
   - `monitor` no puede crear usuarios

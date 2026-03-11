@@ -131,7 +131,7 @@ Notas de alineación:
 
 ### NH-010 (P0) - PR checklist
 
-- Estado: `todo`
+- Estado: `done`
 - Scope:
   - Plantilla PR con checks de RBAC/tenant/contracts/tests.
 - Aceptación:
@@ -271,7 +271,7 @@ Notas de alineación:
 
 ### NH-015 (P1) - Asignación cámara a usuario (subset)
 
-- Estado: `todo`
+- Estado: `done`
 - Scope:
   - Modelo simple de asignación para `client_user`.
 - Aceptación:
@@ -324,7 +324,7 @@ Notas de alineación:
 
 ### NH-020 (P2) - CI pipeline
 
-- Estado: `todo`
+- Estado: `done`
 - Scope:
   - typecheck + tests API + e2e smoke.
 - Aceptación:
