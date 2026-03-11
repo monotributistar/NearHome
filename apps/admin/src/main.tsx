@@ -61,7 +61,8 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           { name: "notification-channels" },
           { name: "notifications/deliveries" },
           { name: "plans" },
-          { name: "subscriptions" }
+          { name: "subscriptions" },
+          { name: "subscriptions/requests" }
         ]}
       >
         <App apiUrl={API_URL} />

@@ -416,7 +416,7 @@ Fuente: `docs/HISTORIAS_USUARIO_RBAC_TENANTS_PANEL_APP.md`
 
 ### NH-043 (P1) - Suscripción cliente + carga de comprobante
 
-- Estado: `todo`
+- Estado: `done`
 - Scope:
   - Flujo de solicitud de plan en app cliente.
   - Carga de imagen de comprobante con metadata.

@@ -20,6 +20,7 @@ Archivo fuente: `packages/shared/src/index.ts`
 - `AuditLog { id, tenantId, actorUserId?, resource, action, resourceId?, payload?, createdAt }`
 - `Plan { id, code, name, limits, features }`
 - `Subscription { id, tenantId, planId, status, currentPeriodStart, currentPeriodEnd }`
+- `SubscriptionRequest { id, tenantId, planId, requestedByUserId, status, proofImageUrl, proofFileName, proofMimeType, proofSizeBytes, proofMetadata?, notes?, reviewedByUserId?, reviewNotes?, reviewedAt?, createdAt, updatedAt }`
 - `Entitlements { planCode, limits, features }`
 - `Event { id, tenantId, cameraId, type, severity, timestamp, payload? }`
 - `Household { id, tenantId, name, address?, notes?, isActive, createdByUserId?, createdAt, updatedAt }`
@@ -125,6 +126,14 @@ Versionado:
 - `GET /plans`
 - `GET /subscriptions` (tenant activo)
 - `POST /tenants/:id/subscription` (tenant_admin)
+- `GET /subscriptions/requests` (`tenant_admin|monitor|client_user`)
+  - filtros soportados: `status`, `_start`, `_end`, `_sort`, `_order`
+- `POST /subscriptions/requests` (`tenant_admin|client_user`)
+  - in: `{ planId, notes?, proof: { imageUrl, fileName, mimeType, sizeBytes, metadata? } }`
+  - out: estado inicial `pending_review`
+- `PUT /subscriptions/requests/:id/review` (`tenant_admin`)
+  - in: `{ status: "approved" | "rejected", reviewNotes? }`
+  - si `approved`, activa plan en `subscriptions`
 - `GET /tenants/:id/entitlements`
   - contrato detallado en `docs/ENTITLEMENTS_CONTRACT.md`
 
@@ -216,6 +225,9 @@ Matriz mínima:
 - `stream.sessions.list|get`: `tenant_admin|monitor`; `client_user` solo propias.
 - `stream.sessions.activate|end`: `tenant_admin|monitor`; `client_user` solo propias.
 - `subscription.activate`: solo `tenant_admin`.
+- `subscriptionRequests.list`: `tenant_admin|monitor|client_user`.
+- `subscriptionRequests.create`: `tenant_admin|client_user`.
+- `subscriptionRequests.review`: solo `tenant_admin`.
 - `audit.logs.list`: solo `tenant_admin`.
 - `plans.list`: `tenant_admin` y `monitor`.
 - `events.list`: todos los roles del tenant.

@@ -706,6 +706,56 @@ function notificationDeliveryResponse(delivery: {
   };
 }
 
+function subscriptionRequestResponse(row: {
+  id: string;
+  tenantId: string;
+  planId: string;
+  requestedByUserId: string;
+  status: string;
+  proofImageUrl: string;
+  proofFileName: string;
+  proofMimeType: string;
+  proofSizeBytes: number;
+  proofMetadata: string | null;
+  notes: string | null;
+  reviewedByUserId: string | null;
+  reviewNotes: string | null;
+  reviewedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  plan?: {
+    id: string;
+    code: string;
+    name: string;
+  } | null;
+}) {
+  return {
+    id: row.id,
+    tenantId: row.tenantId,
+    planId: row.planId,
+    requestedByUserId: row.requestedByUserId,
+    status: row.status,
+    proofImageUrl: row.proofImageUrl,
+    proofFileName: row.proofFileName,
+    proofMimeType: row.proofMimeType,
+    proofSizeBytes: row.proofSizeBytes,
+    proofMetadata: row.proofMetadata ? parseJson<Record<string, unknown>>(row.proofMetadata) : undefined,
+    notes: row.notes,
+    reviewedByUserId: row.reviewedByUserId,
+    reviewNotes: row.reviewNotes,
+    reviewedAt: row.reviewedAt ? toISO(row.reviewedAt) : null,
+    createdAt: toISO(row.createdAt),
+    updatedAt: toISO(row.updatedAt),
+    plan: row.plan
+      ? {
+          id: row.plan.id,
+          code: row.plan.code,
+          name: row.plan.name
+        }
+      : undefined
+  };
+}
+
 function toNumber(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
@@ -4334,6 +4384,149 @@ export async function buildApp() {
       return { data, total: data.length };
     }
   );
+
+  app.get("/subscriptions/requests", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+    const query = request.query as Record<string, unknown>;
+    const { skip, take } = parseListQuery(query);
+    const status = typeof query.status === "string" && query.status.length > 0 ? query.status : undefined;
+    const where = {
+      tenantId: ctx.tenantId,
+      ...(status ? { status } : {})
+    };
+    const [rows, total] = await Promise.all([
+      prisma.subscriptionRequest.findMany({
+        where,
+        skip,
+        take,
+        include: { plan: true },
+        orderBy: { createdAt: "desc" }
+      }),
+      prisma.subscriptionRequest.count({ where })
+    ]);
+    reply.header("x-total-count", String(total));
+    return { data: rows.map(subscriptionRequestResponse), total };
+  });
+
+  app.post("/subscriptions/requests", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin", "client_user"]);
+    const body = z
+      .object({
+        planId: z.string(),
+        notes: z.string().max(2000).optional().nullable(),
+        proof: z.object({
+          imageUrl: z.string().min(6),
+          fileName: z.string().min(1),
+          mimeType: z.string().min(3),
+          sizeBytes: z.number().int().positive(),
+          metadata: z.record(z.any()).optional()
+        })
+      })
+      .parse(request.body);
+
+    const plan = await prisma.plan.findUniqueOrThrow({ where: { id: body.planId } });
+    const created = await prisma.subscriptionRequest.create({
+      data: {
+        tenantId: ctx.tenantId,
+        planId: plan.id,
+        requestedByUserId: ctx.userId,
+        status: "pending_review",
+        proofImageUrl: body.proof.imageUrl,
+        proofFileName: body.proof.fileName,
+        proofMimeType: body.proof.mimeType,
+        proofSizeBytes: body.proof.sizeBytes,
+        proofMetadata: body.proof.metadata ? JSON.stringify(body.proof.metadata) : null,
+        notes: body.notes ?? null
+      },
+      include: { plan: true }
+    });
+
+    await appendAuditLog({
+      tenantId: ctx.tenantId,
+      actorUserId: ctx.userId,
+      resource: "subscription_request",
+      action: "create",
+      resourceId: created.id,
+      payload: {
+        planId: created.planId,
+        status: created.status,
+        proofFileName: created.proofFileName,
+        proofMimeType: created.proofMimeType,
+        proofSizeBytes: created.proofSizeBytes
+      },
+      context: request.ctx
+    });
+
+    return { data: subscriptionRequestResponse(created) };
+  });
+
+  app.put("/subscriptions/requests/:id/review", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin"]);
+    const id = (request.params as { id: string }).id;
+    const body = z
+      .object({
+        status: z.enum(["approved", "rejected"]),
+        reviewNotes: z.string().max(2000).optional().nullable()
+      })
+      .parse(request.body);
+
+    const current = await prisma.subscriptionRequest.findFirst({
+      where: { id, tenantId: ctx.tenantId },
+      include: { plan: true }
+    });
+    if (!current) throw app.httpErrors.notFound();
+    if (current.status !== "pending_review") {
+      throw app.httpErrors.conflict("Subscription request is not pending review");
+    }
+
+    const reviewed = await prisma.subscriptionRequest.update({
+      where: { id },
+      data: {
+        status: body.status,
+        reviewedByUserId: ctx.userId,
+        reviewNotes: body.reviewNotes ?? null,
+        reviewedAt: new Date()
+      },
+      include: { plan: true }
+    });
+
+    if (body.status === "approved") {
+      await prisma.subscription.upsert({
+        where: { tenantId: ctx.tenantId },
+        update: {
+          planId: reviewed.planId,
+          status: "active",
+          currentPeriodStart: new Date(),
+          currentPeriodEnd: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30)
+        },
+        create: {
+          tenantId: ctx.tenantId,
+          planId: reviewed.planId,
+          status: "active",
+          currentPeriodStart: new Date(),
+          currentPeriodEnd: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30)
+        }
+      });
+    }
+
+    await appendAuditLog({
+      tenantId: ctx.tenantId,
+      actorUserId: ctx.userId,
+      resource: "subscription_request",
+      action: "review",
+      resourceId: reviewed.id,
+      payload: {
+        status: reviewed.status,
+        planId: reviewed.planId
+      },
+      context: request.ctx
+    });
+
+    return { data: subscriptionRequestResponse(reviewed) };
+  });
 
   app.post("/internal/detections/jobs/:id/complete", async (request: FastifyRequest, reply: FastifyReply) => {
     const providedSecret = request.headers["x-detection-callback-secret"];

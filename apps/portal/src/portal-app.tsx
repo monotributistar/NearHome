@@ -26,6 +26,7 @@ const PORTAL_ROUTES = {
   },
   account: {
     households: "/account/households",
+    subscriptions: "/account/subscriptions",
     tenant: "/account/tenant",
     profile: "/account/profile"
   }
@@ -160,6 +161,7 @@ function ProtectedLayout() {
       title: "Cuenta",
       items: [
         { to: PORTAL_ROUTES.account.households, label: "Domicilios", icon: <HomeAlt width={16} height={16} /> },
+        { to: PORTAL_ROUTES.account.subscriptions, label: "Suscripción" },
         { to: PORTAL_ROUTES.account.tenant, label: "Tenant Activo", icon: <ViewGrid width={16} height={16} /> },
         { to: PORTAL_ROUTES.account.profile, label: "Perfil", icon: <UserCircle width={16} height={16} /> }
       ]
@@ -195,6 +197,7 @@ function ProtectedLayout() {
         <Route path={PORTAL_ROUTES.operations.realtime} element={<RealtimePage api={api} tenantId={state.activeTenantId} />} />
 
         <Route path={PORTAL_ROUTES.account.households} element={<HouseholdsPage api={api} />} />
+        <Route path={PORTAL_ROUTES.account.subscriptions} element={<SubscriptionRequestPage api={api} />} />
         <Route path={PORTAL_ROUTES.account.tenant} element={<SelectTenantPage me={me} />} />
         <Route path={PORTAL_ROUTES.account.profile} element={<AccountPage me={me} />} />
 
@@ -203,6 +206,7 @@ function ProtectedLayout() {
         <Route path="/events" element={<Navigate to={PORTAL_ROUTES.operations.events} replace />} />
         <Route path="/realtime" element={<Navigate to={PORTAL_ROUTES.operations.realtime} replace />} />
         <Route path="/households" element={<Navigate to={PORTAL_ROUTES.account.households} replace />} />
+        <Route path="/subscriptions" element={<Navigate to={PORTAL_ROUTES.account.subscriptions} replace />} />
         <Route path="/select-tenant" element={<Navigate to={PORTAL_ROUTES.account.tenant} replace />} />
         <Route path="/account" element={<Navigate to={PORTAL_ROUTES.account.profile} replace />} />
       </Routes>
@@ -1084,6 +1088,145 @@ function HouseholdsPage({ api }: { api: ApiClient }) {
           </DataTable>
         </>
       )}
+    </PageCard>
+  );
+}
+
+function SubscriptionRequestPage({ api }: { api: ApiClient }) {
+  const [plans, setPlans] = useState<any[]>([]);
+  const [requests, setRequests] = useState<any[]>([]);
+  const [activeSubscription, setActiveSubscription] = useState<any>(null);
+  const [planId, setPlanId] = useState("");
+  const [proofImageUrl, setProofImageUrl] = useState("");
+  const [proofFileName, setProofFileName] = useState("");
+  const [proofMimeType, setProofMimeType] = useState("image/jpeg");
+  const [proofSizeBytes, setProofSizeBytes] = useState("0");
+  const [notes, setNotes] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [ok, setOk] = useState<string | null>(null);
+
+  async function loadData() {
+    try {
+      const [plansRes, requestsRes, subscriptionsRes] = await Promise.all([
+        api.get<any>("/plans"),
+        api.get<any>("/subscriptions/requests", { _start: 0, _end: 20 }),
+        api.get<any>("/subscriptions")
+      ]);
+      const plansRows = plansRes.data ?? plansRes;
+      setPlans(plansRows);
+      if (!planId && plansRows[0]?.id) setPlanId(plansRows[0].id);
+      setRequests(requestsRes.data ?? requestsRes);
+      setActiveSubscription((subscriptionsRes.data ?? subscriptionsRes)?.[0] ?? null);
+      setError(null);
+    } catch (cause) {
+      setError(formatApiError(cause, "No se pudo cargar información de suscripción"));
+    }
+  }
+
+  useEffect(() => {
+    void loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <PageCard title="Suscripción y comprobantes">
+      {error && <div className="mb-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
+      {ok && <div className="mb-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{ok}</div>}
+
+      <Surface className="mb-4 p-3 text-sm">
+        <div>Plan activo: {activeSubscription?.plan?.name ?? "Sin plan activo"}</div>
+        <div>Estado: {activeSubscription?.status ?? "-"}</div>
+      </Surface>
+
+      <div className="mb-4 grid grid-cols-1 gap-2 md:grid-cols-6">
+        <SelectInput value={planId} onChange={(event) => setPlanId(event.target.value)}>
+          <option value="">Seleccionar plan</option>
+          {plans.map((plan) => (
+            <option key={plan.id} value={plan.id}>
+              {plan.name}
+            </option>
+          ))}
+        </SelectInput>
+        <TextInput placeholder="URL comprobante" value={proofImageUrl} onChange={(event) => setProofImageUrl(event.target.value)} />
+        <TextInput placeholder="Nombre archivo" value={proofFileName} onChange={(event) => setProofFileName(event.target.value)} />
+        <TextInput placeholder="MIME type" value={proofMimeType} onChange={(event) => setProofMimeType(event.target.value)} />
+        <TextInput placeholder="Tamaño bytes" value={proofSizeBytes} onChange={(event) => setProofSizeBytes(event.target.value)} />
+        <TextInput placeholder="Notas" value={notes} onChange={(event) => setNotes(event.target.value)} />
+      </div>
+
+      <PrimaryButton
+        className="mb-4"
+        onClick={async () => {
+          if (!planId || !proofImageUrl.trim() || !proofFileName.trim()) {
+            setError("Plan, URL de comprobante y nombre de archivo son obligatorios.");
+            return;
+          }
+          const size = Number(proofSizeBytes);
+          if (!Number.isFinite(size) || size <= 0) {
+            setError("Tamaño de comprobante inválido.");
+            return;
+          }
+          try {
+            await api.post("/subscriptions/requests", {
+              planId,
+              notes: notes.trim() || null,
+              proof: {
+                imageUrl: proofImageUrl.trim(),
+                fileName: proofFileName.trim(),
+                mimeType: proofMimeType.trim() || "image/jpeg",
+                sizeBytes: Math.trunc(size)
+              }
+            });
+            setProofImageUrl("");
+            setProofFileName("");
+            setProofMimeType("image/jpeg");
+            setProofSizeBytes("0");
+            setNotes("");
+            setOk("Solicitud enviada para revisión");
+            await loadData();
+          } catch (cause) {
+            setError(formatApiError(cause, "No se pudo crear la solicitud"));
+          }
+        }}
+      >
+        Enviar solicitud
+      </PrimaryButton>
+
+      <DataTable>
+        <thead className="bg-slate-50 text-slate-600">
+          <tr>
+            <th className="px-3 py-2">Fecha</th>
+            <th className="px-3 py-2">Plan</th>
+            <th className="px-3 py-2">Estado</th>
+            <th className="px-3 py-2">Comprobante</th>
+            <th className="px-3 py-2">Notas</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {requests.map((request) => (
+            <tr key={request.id}>
+              <td className="px-3 py-2 text-sm">{new Date(request.createdAt).toLocaleString()}</td>
+              <td className="px-3 py-2">{request.plan?.name ?? request.planId}</td>
+              <td className="px-3 py-2">
+                <Badge>{request.status}</Badge>
+              </td>
+              <td className="px-3 py-2 text-xs">
+                <a className="text-slate-700 underline underline-offset-2" href={request.proofImageUrl} target="_blank" rel="noreferrer">
+                  {request.proofFileName}
+                </a>
+              </td>
+              <td className="px-3 py-2 text-xs">{request.reviewNotes ?? request.notes ?? "-"}</td>
+            </tr>
+          ))}
+          {!requests.length && (
+            <tr>
+              <td colSpan={5} className="px-3 py-4 text-center text-sm text-slate-500">
+                No hay solicitudes cargadas.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </DataTable>
     </PageCard>
   );
 }

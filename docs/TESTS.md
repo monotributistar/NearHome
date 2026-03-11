@@ -53,6 +53,11 @@ Cobertura incluida:
   - `rulesProfile.notification` dispara entregas por `realtime/webhook/email` al cerrar detecciones con incidente
   - `GET /notifications/deliveries` expone historial tenant-scoped por cámara/canal/estado
   - cobertura de publish realtime (`notification.sent`, `notification.email_queued`) + envío webhook mockeado
+- NH-043 suscripción cliente con comprobante
+  - `client_user` puede crear `POST /subscriptions/requests` con metadata de comprobante y estado `pending_review`
+  - `tenant_admin` puede revisar `PUT /subscriptions/requests/:id/review` (`approved|rejected`)
+  - aprobación materializa plan activo en `GET /subscriptions`
+  - `monitor` no puede revisar solicitudes (`403`)
 - NH-025 camera internal profile
   - crear cámara activa genera `profile` interno automáticamente
   - `tenant_admin` puede configurar `PUT /cameras/:id/profile`

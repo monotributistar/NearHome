@@ -3397,3 +3397,137 @@ describe("NH-042 notification rules and multi-channel deliveries", () => {
     }
   });
 });
+
+describe("NH-043 subscription request with payment proof", () => {
+  it("allows client_user to request a plan with proof metadata and tenant_admin to approve", async () => {
+    const clientToken = await login("client@nearhome.dev");
+    const clientMe = await me(clientToken);
+    const tenantId = clientMe.memberships[0].tenantId;
+
+    const plansResponse = await app.inject({
+      method: "GET",
+      url: "/plans",
+      headers: { authorization: `Bearer ${clientToken}` }
+    });
+    expect(plansResponse.statusCode).toBe(200);
+    const planId = plansResponse.json<{ data: Array<{ id: string }> }>().data[0]?.id;
+    expect(planId).toBeTruthy();
+
+    const createRequest = await app.inject({
+      method: "POST",
+      url: "/subscriptions/requests",
+      headers: {
+        authorization: `Bearer ${clientToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        planId,
+        notes: "Pago por transferencia del 10/03",
+        proof: {
+          imageUrl: "https://cdn.nearhome.dev/proofs/nh043-proof.jpg",
+          fileName: "nh043-proof.jpg",
+          mimeType: "image/jpeg",
+          sizeBytes: 248300,
+          metadata: { bank: "DemoBank", operationId: "OP-12345" }
+        }
+      }
+    });
+    expect(createRequest.statusCode).toBe(200);
+    const requestId = createRequest.json<{ data: { id: string; status: string } }>().data.id;
+    expect(createRequest.json<{ data: { status: string } }>().data.status).toBe("pending_review");
+
+    const listRequests = await app.inject({
+      method: "GET",
+      url: "/subscriptions/requests?_start=0&_end=20",
+      headers: {
+        authorization: `Bearer ${clientToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+    expect(listRequests.statusCode).toBe(200);
+    expect(listRequests.json<{ data: Array<{ id: string; status: string }> }>().data.some((row) => row.id === requestId)).toBe(true);
+
+    const adminToken = await login("admin@nearhome.dev");
+    const approveRequest = await app.inject({
+      method: "PUT",
+      url: `/subscriptions/requests/${requestId}/review`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        status: "approved",
+        reviewNotes: "Comprobante válido"
+      }
+    });
+    expect(approveRequest.statusCode).toBe(200);
+    expect(approveRequest.json()).toMatchObject({
+      data: {
+        id: requestId,
+        status: "approved"
+      }
+    });
+
+    const subscriptions = await app.inject({
+      method: "GET",
+      url: "/subscriptions",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+    expect(subscriptions.statusCode).toBe(200);
+    expect(subscriptions.json<{ data: Array<{ status: string; planId: string }> }>().data[0]).toMatchObject({
+      status: "active",
+      planId
+    });
+  });
+
+  it("denies monitor from reviewing subscription requests", async () => {
+    const clientToken = await login("client@nearhome.dev");
+    const clientMe = await me(clientToken);
+    const tenantId = clientMe.memberships[0].tenantId;
+
+    const plansResponse = await app.inject({
+      method: "GET",
+      url: "/plans",
+      headers: { authorization: `Bearer ${clientToken}` }
+    });
+    const planId = plansResponse.json<{ data: Array<{ id: string }> }>().data[0]?.id;
+    expect(planId).toBeTruthy();
+
+    const createRequest = await app.inject({
+      method: "POST",
+      url: "/subscriptions/requests",
+      headers: {
+        authorization: `Bearer ${clientToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        planId,
+        proof: {
+          imageUrl: "https://cdn.nearhome.dev/proofs/nh043-proof-2.jpg",
+          fileName: "nh043-proof-2.jpg",
+          mimeType: "image/jpeg",
+          sizeBytes: 128000
+        }
+      }
+    });
+    expect(createRequest.statusCode).toBe(200);
+    const requestId = createRequest.json<{ data: { id: string } }>().data.id;
+
+    const monitorToken = await login("monitor@nearhome.dev");
+    const reviewAsMonitor = await app.inject({
+      method: "PUT",
+      url: `/subscriptions/requests/${requestId}/review`,
+      headers: {
+        authorization: `Bearer ${monitorToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        status: "rejected"
+      }
+    });
+    expect(reviewAsMonitor.statusCode).toBe(403);
+  });
+});

@@ -379,9 +379,14 @@
   - historial verificable en `GET /notifications/deliveries` con estados por canal (`sent|queued|failed`).
   - portal realtime ahora incluye tópico `notification` por defecto.
   - validación: `pnpm --filter @app/api test -- -t NH-042` en verde.
+- `NH-043` suscripción cliente + comprobante:
+  - nuevo flujo tenant-scoped `subscriptions/requests` con estado inicial `pending_review`.
+  - API guarda metadata de comprobante (url, nombre, mime, tamaño, metadata opcional) y permite revisión `approved|rejected` por `tenant_admin`.
+  - aprobación activa plan en `subscriptions`; portal agrega pantalla de solicitud y admin comercial agrega bandeja de revisión.
+  - validación: `pnpm --filter @app/api test -- -t NH-043` + typechecks `api/admin/portal` en verde.
 
 ## Próximo bloque recomendado
 
-1. NH-043: suscripción cliente + carga de comprobante.
-2. Endurecimiento e2e multi-tenant para concurrencia de playback (escenarios simultáneos por tenant).
-3. Consolidar smoke e2e portal para onboarding cámara + notificaciones.
+1. Endurecimiento e2e multi-tenant para concurrencia de playback (escenarios simultáneos por tenant).
+2. Consolidar smoke e2e portal para onboarding cámara + notificaciones + suscripción.
+3. Retomar backlog de migración UI Foundation vertical (NH-048 a NH-052).

@@ -28,6 +28,13 @@
 - NH-042: reglas de notificación tenant/cámara operativas en runtime:
   - `rulesProfile.notification` dispara entregas multicanal (`realtime`, `webhook`, `email`) al cierre de detecciones.
   - historial consolidado en `GET /notifications/deliveries` con estado por entrega.
+- NH-043: solicitud de suscripción con comprobante y revisión:
+  - nuevo recurso tenant-scoped `SubscriptionRequest` con estado inicial `pending_review`.
+  - endpoints nuevos:
+    - `GET /subscriptions/requests`
+    - `POST /subscriptions/requests`
+    - `PUT /subscriptions/requests/:id/review`
+  - al aprobar una solicitud se activa/actualiza `subscriptions` para el tenant.
 
 ## 2026-02-24 - v1.2.0
 

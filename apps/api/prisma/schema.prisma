@@ -32,6 +32,7 @@ model Tenant {
   cameraAssignments        CameraAssignment[]
   households               Household[]
   householdMembers         HouseholdMember[]
+  subscriptionRequests     SubscriptionRequest[]
 }
 
 model User {
@@ -46,6 +47,8 @@ model User {
   cameraAssignments CameraAssignment[]
   householdsCreated Household[]
   householdMembersCreated HouseholdMember[]
+  subscriptionRequestsCreated SubscriptionRequest[] @relation("SubscriptionRequestCreatedBy")
+  subscriptionRequestsReviewed SubscriptionRequest[] @relation("SubscriptionRequestReviewedBy")
 }
 
 model Membership {
@@ -159,6 +162,7 @@ model Plan {
   features  String
   createdAt DateTime       @default(now())
   subscriptions Subscription[]
+  subscriptionRequests SubscriptionRequest[]
 }
 
 model Subscription {
@@ -173,6 +177,31 @@ model Subscription {
   plan               Plan     @relation(fields: [planId], references: [id])
 
   @@unique([tenantId])
+}
+
+model SubscriptionRequest {
+  id                 String   @id @default(cuid())
+  tenantId           String
+  planId             String
+  requestedByUserId  String
+  status             String   @default("pending_review")
+  proofImageUrl      String
+  proofFileName      String
+  proofMimeType      String
+  proofSizeBytes     Int
+  proofMetadata      String?
+  notes              String?
+  reviewedByUserId   String?
+  reviewNotes        String?
+  reviewedAt         DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  tenant             Tenant   @relation(fields: [tenantId], references: [id])
+  plan               Plan     @relation(fields: [planId], references: [id])
+  requestedByUser    User     @relation("SubscriptionRequestCreatedBy", fields: [requestedByUserId], references: [id])
+  reviewedByUser     User?    @relation("SubscriptionRequestReviewedBy", fields: [reviewedByUserId], references: [id])
+
+  @@index([tenantId, status, createdAt])
 }
 
 model Event {
