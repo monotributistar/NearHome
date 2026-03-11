@@ -283,7 +283,8 @@ export const EventEnvelopeSchema = z.object({
 
 export const LoginInputSchema = z.object({
   email: z.string().email(),
-  password: z.string().min(4)
+  password: z.string().min(4),
+  audience: z.enum(["backoffice", "portal"]).optional()
 });
 
 export const MeResponseSchema = z.object({

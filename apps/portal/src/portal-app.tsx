@@ -75,7 +75,7 @@ function LoginPage() {
               e.preventDefault();
               setError(null);
               try {
-                const data = await api.post<any>("/auth/login", { email, password });
+                const data = await api.post<any>("/auth/login", { email, password, audience: "portal" });
                 setSession({ accessToken: data.accessToken });
                 navigate("/select-tenant");
               } catch {

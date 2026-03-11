@@ -2216,12 +2216,33 @@ export async function buildApp() {
     const parsed = LoginInputSchema.safeParse(request.body);
     if (!parsed.success) throw parsed.error;
 
-    const { email, password } = parsed.data;
+    const { email, password, audience } = parsed.data;
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user || !user.isActive) throw app.httpErrors.unauthorized("Invalid credentials");
 
     const ok = await bcrypt.compare(password, user.passwordHash);
     if (!ok) throw app.httpErrors.unauthorized("Invalid credentials");
+
+    if (audience === "backoffice") {
+      const isSuperuser = superuserEmails.has(user.email.toLowerCase());
+      if (!isSuperuser) {
+        const elevatedRole = await prisma.membership.findFirst({
+          where: {
+            userId: user.id,
+            role: { in: ["tenant_admin", "monitor"] },
+            tenant: { deletedAt: null }
+          },
+          select: { id: true }
+        });
+        if (!elevatedRole) {
+          throw new ApiDomainError({
+            statusCode: 403,
+            apiCode: "BACKOFFICE_ACCESS_DENIED",
+            message: "Backoffice access requires admin or operator role"
+          });
+        }
+      }
+    }
 
     const token = await reply.jwtSign({ userId: user.id }, { expiresIn: "8h" });
 

@@ -176,6 +176,11 @@ function getTenantId() {
   return localStorage.getItem("nearhome_active_tenant");
 }
 
+function hasBackofficeAccess(me: any) {
+  if (me?.user?.isSuperuser) return true;
+  return (me?.memberships ?? []).some((membership: any) => membership.role === "tenant_admin" || membership.role === "monitor");
+}
+
 function summarizeApiError(error: unknown, fallback: string) {
   const err = error as {
     message?: string;
@@ -241,6 +246,14 @@ function useSession(apiUrl: string) {
       }
 
       const data = await res.json();
+      if (!hasBackofficeAccess(data)) {
+        localStorage.removeItem("nearhome_access_token");
+        localStorage.removeItem("nearhome_active_tenant");
+        setMe(null);
+        setLoading(false);
+        navigate("/login");
+        return;
+      }
       localStorage.setItem("nearhome_me", JSON.stringify(data));
       if (!getTenantId() && data.memberships?.[0]?.tenantId) {
         localStorage.setItem("nearhome_active_tenant", data.memberships[0].tenantId);
@@ -276,11 +289,11 @@ function LoginPage({ apiUrl }: { apiUrl: string }) {
     const res = await fetch(`${apiUrl}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password })
+      body: JSON.stringify({ email, password, audience: "backoffice" })
     });
 
     if (!res.ok) {
-      setError("Credenciales inválidas");
+      setError(res.status === 403 ? "Usuario sin acceso al backoffice" : "Credenciales inválidas");
       return;
     }
 

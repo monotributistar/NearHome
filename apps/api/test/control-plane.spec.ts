@@ -1313,6 +1313,23 @@ describe("NH-016 audit logs", () => {
 });
 
 describe("NH-002 login rate limit", () => {
+  it("denies backoffice login for customer users", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      payload: {
+        email: "client@nearhome.dev",
+        password: "demo1234",
+        audience: "backoffice"
+      }
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toMatchObject({
+      code: "BACKOFFICE_ACCESS_DENIED"
+    });
+  });
+
   it("returns 429 when login attempts exceed configured limit", async () => {
     const previousMax = process.env.LOGIN_RATE_LIMIT_MAX;
     const previousWindow = process.env.LOGIN_RATE_LIMIT_WINDOW_MS;
