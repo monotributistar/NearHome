@@ -370,9 +370,13 @@
   - API tenant-scoped para `households` y `household-members` (CRUD + auditoría).
   - Portal: nueva vista `Cuenta > Domicilios` con alta/baja de domicilios y miembros.
   - validación: `pnpm --filter @app/api test -- -t NH-040` en verde.
+- `NH-041` app cliente alta RTSP y monitor realtime:
+  - API habilita `client_user` para alta/edición/validación de cámaras (`POST/PUT /cameras`, `POST /cameras/:id/validate`).
+  - Portal: formulario RTSP en `Operaciones > Cámaras` + detalle con panel `lifecycle/health`.
+  - validación: `pnpm --filter @app/api test -- -t \"NH-041|NH-005\"` y `pnpm --filter @app/portal typecheck` en verde.
 
 ## Próximo bloque recomendado
 
-1. NH-041: app cliente alta cámara RTSP y monitor realtime.
-2. Endurecimiento e2e multi-tenant para concurrencia de playback (escenarios simultáneos por tenant).
-3. NH-042: notificaciones realtime por reglas de tenant/cámara.
+1. NH-042: notificaciones realtime por reglas de tenant/cámara.
+2. NH-043: suscripción cliente + carga de comprobante.
+3. Endurecimiento e2e multi-tenant para concurrencia de playback (escenarios simultáneos por tenant).

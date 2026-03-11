@@ -45,6 +45,10 @@ Cobertura incluida:
   - `client_user` puede crear/listar/editar/eliminar `households` en su tenant activo
   - `client_user` puede crear/listar/editar/eliminar `household-members` asociados al domicilio
   - `monitor` no puede crear domicilios (`403`)
+- NH-041 onboarding de cámara RTSP en app cliente
+  - `client_user` puede crear/editar cámara (`POST/PUT /cameras`) y ejecutar validación inicial (`POST /cameras/:id/validate`)
+  - `GET /cameras/:id/lifecycle` expone `healthSnapshot` legible para monitoreo en portal
+  - `monitor` mantiene restricción de alta de cámaras (`403`)
 - NH-025 camera internal profile
   - crear cámara activa genera `profile` interno automáticamente
   - `tenant_admin` puede configurar `PUT /cameras/:id/profile`

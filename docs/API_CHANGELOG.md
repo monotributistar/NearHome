@@ -21,6 +21,10 @@
   - nuevas tablas `Household` y `HouseholdMember` tenant-scoped.
   - nuevos endpoints CRUD de domicilios y miembros para `tenant_admin|client_user`, con lectura habilitada a `monitor`.
   - nuevas entradas de auditoría para `household` y `household_member` (`create|update|delete`).
+- NH-041: onboarding RTSP en app cliente y health visible:
+  - RBAC actualizado para onboarding de cámaras: `client_user` puede `POST/PUT /cameras` y `POST /cameras/:id/validate`.
+  - monitor de lifecycle/health reutiliza `GET /cameras/:id/lifecycle` para diagnóstico legible en portal.
+  - `monitor` mantiene restricción de creación/edición de cámaras.
 
 ## 2026-02-24 - v1.2.0
 

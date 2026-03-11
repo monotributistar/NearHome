@@ -396,7 +396,7 @@ Fuente: `docs/HISTORIAS_USUARIO_RBAC_TENANTS_PANEL_APP.md`
 
 ### NH-041 (P1) - App cliente: alta de cámara RTSP y monitor realtime
 
-- Estado: `todo`
+- Estado: `done`
 - Scope:
   - Alta/edición de cámara RTSP desde app cliente.
   - Validación inicial y estado health visible en monitor.

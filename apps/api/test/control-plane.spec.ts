@@ -147,7 +147,7 @@ describe("NH-005 rbac policy", () => {
     expect(response.json()).toMatchObject({ data: { id: expect.any(String) } });
   });
 
-  it("denies client_user camera creation", async () => {
+  it("allows client_user camera creation", async () => {
     const clientToken = await login("client@nearhome.dev");
     const clientMe = await me(clientToken);
     const tenantId = clientMe.memberships[0].tenantId;
@@ -160,7 +160,30 @@ describe("NH-005 rbac policy", () => {
         "x-tenant-id": tenantId
       },
       payload: {
-        name: "Blocked Cam",
+        name: `Client Cam ${Date.now()}`,
+        rtspUrl: "rtsp://demo/client",
+        isActive: true
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ data: { id: expect.any(String) } });
+  });
+
+  it("denies monitor camera creation", async () => {
+    const monitorToken = await login("monitor@nearhome.dev");
+    const monitorMe = await me(monitorToken);
+    const tenantId = monitorMe.memberships[0].tenantId;
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/cameras",
+      headers: {
+        authorization: `Bearer ${monitorToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        name: `Blocked Cam ${Date.now()}`,
         rtspUrl: "rtsp://demo/blocked",
         isActive: true
       }
@@ -1000,6 +1023,110 @@ describe("NH-040 customer households and members", () => {
       }
     });
     expect(createHousehold.statusCode).toBe(403);
+  });
+});
+
+describe("NH-041 customer camera onboarding and health monitor", () => {
+  it("allows client_user to create, edit and validate an RTSP camera", async () => {
+    const clientToken = await login("client@nearhome.dev");
+    const clientMe = await me(clientToken);
+    const tenantId = clientMe.memberships[0].tenantId;
+
+    const createCamera = await app.inject({
+      method: "POST",
+      url: "/cameras",
+      headers: {
+        authorization: `Bearer ${clientToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        name: `Cliente RTSP ${Date.now()}`,
+        rtspUrl: "rtsp://demo/nh041",
+        location: "Ingreso principal",
+        isActive: true
+      }
+    });
+    expect(createCamera.statusCode).toBe(200);
+    const cameraId = createCamera.json<{ data: { id: string } }>().data.id;
+
+    const updateCamera = await app.inject({
+      method: "PUT",
+      url: `/cameras/${cameraId}`,
+      headers: {
+        authorization: `Bearer ${clientToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        name: `Cliente RTSP ${Date.now()} (edit)`,
+        rtspUrl: "rtsp://demo/nh041-updated",
+        location: "Patio trasero",
+        isActive: true
+      }
+    });
+    expect(updateCamera.statusCode).toBe(200);
+    expect(updateCamera.json()).toMatchObject({
+      data: {
+        id: cameraId,
+        rtspUrl: "rtsp://demo/nh041-updated"
+      }
+    });
+
+    const validateCamera = await app.inject({
+      method: "POST",
+      url: `/cameras/${cameraId}/validate`,
+      headers: {
+        authorization: `Bearer ${clientToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: { simulate: "pass" }
+    });
+    expect(validateCamera.statusCode).toBe(200);
+    expect(validateCamera.json()).toMatchObject({
+      data: {
+        id: cameraId,
+        lifecycleStatus: "ready"
+      }
+    });
+
+    const lifecycle = await app.inject({
+      method: "GET",
+      url: `/cameras/${cameraId}/lifecycle`,
+      headers: {
+        authorization: `Bearer ${clientToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+    expect(lifecycle.statusCode).toBe(200);
+    expect(lifecycle.json()).toMatchObject({
+      data: {
+        cameraId,
+        currentStatus: "ready",
+        healthSnapshot: {
+          connectivity: "online"
+        }
+      }
+    });
+  });
+
+  it("keeps monitor read-only for camera onboarding", async () => {
+    const monitorToken = await login("monitor@nearhome.dev");
+    const monitorMe = await me(monitorToken);
+    const tenantId = monitorMe.memberships[0].tenantId;
+
+    const createCamera = await app.inject({
+      method: "POST",
+      url: "/cameras",
+      headers: {
+        authorization: `Bearer ${monitorToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        name: `Blocked Monitor Cam ${Date.now()}`,
+        rtspUrl: "rtsp://demo/blocked-monitor",
+        isActive: true
+      }
+    });
+    expect(createCamera.statusCode).toBe(403);
   });
 });
 

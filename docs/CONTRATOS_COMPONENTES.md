@@ -98,9 +98,9 @@ Versionado:
   - out: `{ data: AuditLog[], total }`
 
 - `GET /cameras` (tenant-scoped; `_start`, `_end`, `_sort`, `_order`, filtros)
-- `POST /cameras` (tenant_admin)
+- `POST /cameras` (tenant_admin|client_user)
 - `GET /cameras/:id`
-- `PUT /cameras/:id` (tenant_admin)
+- `PUT /cameras/:id` (tenant_admin|client_user)
 - `DELETE /cameras/:id` (tenant_admin, soft delete)
 - `GET /cameras/:id/profile` (tenant roles)
 - `PUT /cameras/:id/profile` (tenant_admin)
@@ -108,7 +108,7 @@ Versionado:
   - fallback automático: si la config queda incompleta => `status=pending`
 - `GET /cameras/:id/lifecycle` (tenant roles)
   - out: `{ data: { cameraId, currentStatus, lastSeenAt?, lastTransitionAt?, healthSnapshot?, history[] } }`
-- `POST /cameras/:id/validate` (tenant_admin)
+- `POST /cameras/:id/validate` (tenant_admin|client_user)
   - aplica transición de ciclo de vida (`draft/provisioning/error -> ready`) y registra historial
 - `POST /cameras/:id/retire` (tenant_admin)
   - aplica transición `ready/error -> retired`
@@ -203,10 +203,12 @@ Roles:
 
 Matriz mínima:
 
-- `cameras.create|edit|delete`: solo `tenant_admin`.
+- `cameras.create|edit`: `tenant_admin|client_user`.
+- `cameras.delete`: solo `tenant_admin`.
 - `cameras.create`: además sujeto a `limits.maxCameras`.
 - `cameras.profile.update`: solo `tenant_admin`.
-- `cameras.lifecycle.validate|retire|reactivate`: solo `tenant_admin`.
+- `cameras.lifecycle.validate`: `tenant_admin|client_user`.
+- `cameras.lifecycle.retire|reactivate`: solo `tenant_admin`.
 - `cameras.lifecycle.read`: todos los roles del tenant.
 - `stream.sessions.list|get`: `tenant_admin|monitor`; `client_user` solo propias.
 - `stream.sessions.activate|end`: `tenant_admin|monitor`; `client_user` solo propias.

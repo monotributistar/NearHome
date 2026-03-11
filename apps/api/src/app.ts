@@ -3253,7 +3253,7 @@ export async function buildApp() {
 
   app.post("/cameras", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
     const ctx = getTenantContext(request);
-    assertRole(request, ["tenant_admin"]);
+    assertRole(request, ["tenant_admin", "client_user"]);
     await enforceCameraLimit(ctx.tenantId);
     const body = z
       .object({
@@ -3339,7 +3339,7 @@ export async function buildApp() {
 
   app.put("/cameras/:id", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
     const ctx = getTenantContext(request);
-    assertRole(request, ["tenant_admin"]);
+    assertRole(request, ["tenant_admin", "client_user"]);
     const id = (request.params as { id: string }).id;
     const body = z
       .object({
@@ -3993,7 +3993,7 @@ export async function buildApp() {
 
   app.post("/cameras/:id/validate", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
     const ctx = getTenantContext(request);
-    assertRole(request, ["tenant_admin"]);
+    assertRole(request, ["tenant_admin", "client_user"]);
     const id = (request.params as { id: string }).id;
     const body = z.object({ simulate: z.enum(["pass", "fail"]).optional() }).parse(request.body ?? {});
 
