@@ -38,6 +38,9 @@ Cobertura incluida:
 - NH-037 gestión de roles y memberships
   - `super_admin` puede cambiar roles de un usuario en distintos tenants (vía contexto `X-Tenant-Id`)
   - `tenant_admin` no puede editar usuarios fuera de su tenant (`403`)
+- NH-039 zonificación operador
+  - por default `monitor` ve todas las cámaras del tenant
+  - con `camera-assignments` activos, el listado/detalle se restringe a allowlist
 - NH-025 camera internal profile
   - crear cámara activa genera `profile` interno automáticamente
   - `tenant_admin` puede configurar `PUT /cameras/:id/profile`
@@ -101,6 +104,9 @@ Archivo: `apps/event-gateway/test/app.spec.ts`
 ## E2E portal/admin (Playwright)
 
 Archivos: `e2e/tests/*.spec.ts`
+
+- NH-038 UX errores accionables en cámaras
+  - smoke admin/portal siguen en verde con nueva capa de error handling (`code|message|details`) en vistas de cámaras
 
 - NH-031 aislamiento fuerte de cámaras multi-tenant (10 cámaras)
   - alta de 3 tenants y siembra de 10 cámaras (mock + reales opcionales por env `E2E_REAL_CAM1_RTSP`/`E2E_REAL_CAM2_RTSP`)

@@ -361,9 +361,14 @@
   - `pnpm --filter @app/api test -- -t NH-036` en verde (operator/customer multi-tenant + 403 fuera de membresía)
 - `NH-037` validación gestión de roles/memberships:
   - `pnpm --filter @app/api test -- -t NH-037` en verde (`super_admin` global + `tenant_admin` tenant-scoped)
+- `NH-038` validación UX de errores en cámaras:
+  - `pnpm --filter @app/api-client typecheck`, `@app/admin typecheck`, `@app/portal typecheck` en verde
+  - `playwright` smoke admin + portal en verde tras mejoras de error handling en cámaras
+- `NH-039` estado normalizado:
+  - zonificación de operador ya cubierta en API (`camera-assignments`) y test dedicado `NH-039`
 
 ## Próximo bloque recomendado
 
-1. NH-038: UX de errores accionables en cámaras.
-2. NH-039: alcance operador global por defecto + zonificación.
+1. NH-040: app cliente domicilios y miembros.
+2. NH-041: app cliente alta cámara RTSP y monitor realtime.
 3. Endurecimiento e2e multi-tenant para concurrencia de playback (escenarios simultáneos por tenant).

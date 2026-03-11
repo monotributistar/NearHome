@@ -7,6 +7,20 @@ export type ApiClientOptions = {
 
 export type QueryParams = Record<string, string | number | boolean | undefined | null>;
 
+export class ApiClientError extends Error {
+  status: number;
+  code?: string;
+  details?: unknown;
+
+  constructor(args: { status: number; message: string; code?: string; details?: unknown }) {
+    super(args.message);
+    this.name = "ApiClientError";
+    this.status = args.status;
+    this.code = args.code;
+    this.details = args.details;
+  }
+}
+
 export class ApiClient {
   constructor(private readonly options: ApiClientOptions) {}
 
@@ -43,8 +57,18 @@ export class ApiClient {
     }
 
     if (!response.ok) {
-      const text = await response.text();
-      throw new Error(text || `Request failed: ${response.status}`);
+      let payload: { code?: unknown; message?: unknown; details?: unknown } | null = null;
+      let text = "";
+      try {
+        payload = (await response.json()) as { code?: unknown; message?: unknown; details?: unknown };
+      } catch {
+        text = await response.text();
+      }
+      const code = typeof payload?.code === "string" ? payload.code : undefined;
+      const message =
+        typeof payload?.message === "string" ? payload.message : text.trim().length > 0 ? text : `Request failed: ${response.status}`;
+      const details = payload?.details;
+      throw new ApiClientError({ status: response.status, code, message, details });
     }
 
     return response.json() as Promise<T>;

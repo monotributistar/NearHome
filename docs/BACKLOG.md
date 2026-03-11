@@ -366,7 +366,7 @@ Fuente: `docs/HISTORIAS_USUARIO_RBAC_TENANTS_PANEL_APP.md`
 
 ### NH-038 (P0) - UX de errores accionables en cámaras
 
-- Estado: `todo`
+- Estado: `done`
 - Scope:
   - Mostrar `code`, `message` y `details` de errores backend en panel.
   - Diferenciar errores de autorización/entitlement/validación.
@@ -376,7 +376,7 @@ Fuente: `docs/HISTORIAS_USUARIO_RBAC_TENANTS_PANEL_APP.md`
 
 ### NH-039 (P1) - Alcance operador global por defecto + zonificación
 
-- Estado: `todo`
+- Estado: `done`
 - Scope:
   - Política default de visibilidad amplia para operadores.
   - Configuración de zonificación por tenant/sede/cámara.

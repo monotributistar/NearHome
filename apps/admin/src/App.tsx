@@ -245,6 +245,31 @@ function summarizeApiError(error: unknown, fallback: string) {
   return status ? `[${status}] ${fallback}` : fallback;
 }
 
+async function summarizeApiErrorResponse(response: Response, fallback: string) {
+  let payload: { code?: unknown; message?: unknown; details?: unknown } | null = null;
+  let text = "";
+  try {
+    payload = (await response.json()) as { code?: unknown; message?: unknown; details?: unknown };
+  } catch {
+    text = await response.text();
+  }
+  const code = typeof payload?.code === "string" ? payload.code : null;
+  const message =
+    typeof payload?.message === "string"
+      ? payload.message
+      : text.trim().length > 0
+        ? text
+        : fallback;
+  const details =
+    payload?.details !== undefined
+      ? typeof payload.details === "string"
+        ? payload.details
+        : JSON.stringify(payload.details)
+      : null;
+  const parts = [code, message, details].filter(Boolean).join(" | ");
+  return `[${response.status}] ${parts || fallback}`;
+}
+
 function useSession(apiUrl: string) {
   const [loading, setLoading] = useState(true);
   const [me, setMe] = useState<any>(null);
@@ -1270,6 +1295,7 @@ function CamerasPage() {
   const [saveOk, setSaveOk] = useState<string | null>(null);
 
   const totalPages = Math.max(Math.ceil((result?.total ?? 0) / 5), 1);
+  const listError = (camerasList as any).query?.error;
 
   const rows = useMemo(() => result?.data ?? [], [result?.data]);
 
@@ -1279,6 +1305,11 @@ function CamerasPage() {
         <TextInput placeholder="Filter by name" value={q} onChange={(e) => setQ(e.target.value)} className="max-w-sm" />
         <PrimaryButton onClick={() => (camerasList as any).query.refetch()}>Search</PrimaryButton>
       </div>
+      {listError && (
+        <div className="mb-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          {summarizeApiError(listError, "No se pudo cargar cámaras")}
+        </div>
+      )}
 
       {(canCreate || canEdit) && (
         <form
@@ -1431,8 +1462,19 @@ function CamerasPage() {
                     <DangerButton
                       className="px-2 py-1 text-xs"
                       onClick={() => {
-                        remove({ resource: "cameras", id: c.id });
-                        (camerasList as any).query.refetch();
+                        setSaveError(null);
+                        remove(
+                          { resource: "cameras", id: c.id },
+                          {
+                            onSuccess: () => {
+                              setSaveOk("Cámara eliminada");
+                              (camerasList as any).query.refetch();
+                            },
+                            onError: (error: any) => {
+                              setSaveError(summarizeApiError(error, "No se pudo eliminar la cámara"));
+                            }
+                          }
+                        );
                       }}
                     >
                       Delete
@@ -1908,6 +1950,7 @@ function CameraShow() {
   const [lifecycle, setLifecycle] = useState<any>(null);
   const [loadingLifecycle, setLoadingLifecycle] = useState(true);
   const [lifecycleMessage, setLifecycleMessage] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   function normalizeNotificationRule(raw: any) {
     const base = raw && typeof raw === "object" ? raw : {};
@@ -1930,8 +1973,12 @@ function CameraShow() {
     if (!cameraId) return;
     const token = getToken();
     const tenantId = getTenantId();
-    if (!token || !tenantId) return;
+    if (!token || !tenantId) {
+      setActionError("Missing auth context");
+      return;
+    }
     setLoadingCamera(true);
+    setActionError(null);
     const res = await fetch(`${import.meta.env.VITE_API_URL ?? "http://localhost:3001"}/cameras/${cameraId}`, {
       headers: {
         Authorization: `Bearer ${token}`,
@@ -1941,6 +1988,8 @@ function CameraShow() {
     if (res.ok) {
       const body = await res.json();
       setCamera(body.data);
+    } else {
+      setActionError(await summarizeApiErrorResponse(res, "No se pudo cargar cámara"));
     }
     setLoadingCamera(false);
   }
@@ -1950,8 +1999,12 @@ function CameraShow() {
     if (!cameraId) return;
     const token = getToken();
     const tenantId = getTenantId();
-    if (!token || !tenantId) return;
+    if (!token || !tenantId) {
+      setActionError("Missing auth context");
+      return;
+    }
     setLoadingLifecycle(true);
+    setActionError(null);
     const res = await fetch(`${import.meta.env.VITE_API_URL ?? "http://localhost:3001"}/cameras/${cameraId}/lifecycle`, {
       headers: {
         Authorization: `Bearer ${token}`,
@@ -1961,6 +2014,8 @@ function CameraShow() {
     if (res.ok) {
       const body = await res.json();
       setLifecycle(body.data);
+    } else {
+      setActionError(await summarizeApiErrorResponse(res, "No se pudo cargar lifecycle"));
     }
     setLoadingLifecycle(false);
   }
@@ -1976,7 +2031,10 @@ function CameraShow() {
     if (!cameraId) return;
     const token = getToken();
     const tenantId = getTenantId();
-    if (!token || !tenantId) return;
+    if (!token || !tenantId) {
+      setActionError("Missing auth context");
+      return;
+    }
 
     const loadProfile = async () => {
       setLoadingProfile(true);
@@ -1992,6 +2050,8 @@ function CameraShow() {
           ...body.data,
           notificationRule: normalizeNotificationRule(body.data?.rulesProfile?.notification)
         });
+      } else {
+        setActionError(await summarizeApiErrorResponse(res, "No se pudo cargar profile interno"));
       }
       setLoadingProfile(false);
     };
@@ -2006,7 +2066,11 @@ function CameraShow() {
     if (!id || !profile) return;
     const token = getToken();
     const tenantId = getTenantId();
-    if (!token || !tenantId) return;
+    if (!token || !tenantId) {
+      setActionError("Missing auth context");
+      return;
+    }
+    setActionError(null);
 
     const res = await fetch(`${import.meta.env.VITE_API_URL ?? "http://localhost:3001"}/cameras/${id}/profile`, {
       method: "PUT",
@@ -2050,6 +2114,8 @@ function CameraShow() {
       setProfile(body.data);
       setProfileSaved(true);
       setTimeout(() => setProfileSaved(false), 1200);
+    } else {
+      setActionError(await summarizeApiErrorResponse(res, "No se pudo guardar profile interno"));
     }
   }
 
@@ -2057,7 +2123,11 @@ function CameraShow() {
     if (!id) return;
     const token = getToken();
     const tenantId = getTenantId();
-    if (!token || !tenantId) return;
+    if (!token || !tenantId) {
+      setActionError("Missing auth context");
+      return;
+    }
+    setActionError(null);
 
     const res = await fetch(`${import.meta.env.VITE_API_URL ?? "http://localhost:3001"}/cameras/${id}/${action}`, {
       method: "POST",
@@ -2073,11 +2143,14 @@ function CameraShow() {
       setLifecycleMessage(`${action} executed`);
       setTimeout(() => setLifecycleMessage(null), 1200);
       await Promise.all([loadCamera(), loadLifecycle()]);
+    } else {
+      setActionError(await summarizeApiErrorResponse(res, `No se pudo ejecutar ${action}`));
     }
   }
 
   return (
     <PageCard title={`Camera: ${camera.name}`}>
+      {actionError && <div className="mb-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{actionError}</div>}
       <div className="space-y-2">
         <div>Description: {camera.description ?? "-"}</div>
         <div>RTSP: {camera.rtspUrl}</div>

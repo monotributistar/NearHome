@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ApiClient, loadSessionState, saveSessionState } from "@app/api-client";
+import { ApiClient, ApiClientError, loadSessionState, saveSessionState } from "@app/api-client";
 import {
   AppShell,
   PageCard,
@@ -212,6 +212,16 @@ function LegacyPortalCameraDetailRedirect() {
   return <Navigate to={PORTAL_ROUTES.operations.cameraDetail(id)} replace />;
 }
 
+function formatApiError(error: unknown, fallback: string) {
+  if (error instanceof ApiClientError) {
+    const details = error.details !== undefined ? ` | ${typeof error.details === "string" ? error.details : JSON.stringify(error.details)}` : "";
+    const code = error.code ? `${error.code} | ` : "";
+    return `[${error.status}] ${code}${error.message}${details}`;
+  }
+  if (error instanceof Error && error.message.trim().length > 0) return error.message;
+  return fallback;
+}
+
 function SelectTenantPage({ me }: { me: any }) {
   return (
     <PageCard title="Active Tenant">
@@ -229,13 +239,23 @@ function SelectTenantPage({ me }: { me: any }) {
 
 function CamerasPage({ api }: { api: ApiClient }) {
   const [cameras, setCameras] = useState<any[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api.get<any>("/cameras", { _start: 0, _end: 50 }).then((res) => setCameras(res.data ?? res));
+    api
+      .get<any>("/cameras", { _start: 0, _end: 50 })
+      .then((res) => {
+        setCameras(res.data ?? res);
+        setError(null);
+      })
+      .catch((cause) => {
+        setError(formatApiError(cause, "No se pudo cargar cámaras"));
+      });
   }, [api]);
 
   return (
     <PageCard title="Cameras">
+      {error && <div className="mb-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
         {cameras.map((c) => (
           <Surface key={c.id} className="space-y-2 p-4">
@@ -262,32 +282,52 @@ function CameraDetailPage({ api }: { api: ApiClient }) {
   const [token, setToken] = useState<any>(null);
   const [session, setSession] = useState<any>(null);
   const [sessions, setSessions] = useState<any[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
   async function loadSessions(cameraId: string) {
-    const res = await api.get<any>("/stream-sessions", { cameraId, _start: 0, _end: 5, _sort: "createdAt", _order: "DESC" });
-    setSessions(res.data ?? []);
+    try {
+      const res = await api.get<any>("/stream-sessions", { cameraId, _start: 0, _end: 5, _sort: "createdAt", _order: "DESC" });
+      setSessions(res.data ?? []);
+    } catch (cause) {
+      setSessions([]);
+      setError(formatApiError(cause, "No se pudo cargar sesiones de stream"));
+    }
   }
 
   useEffect(() => {
     if (!id) return;
-    api.get<any>(`/cameras/${id}`).then((res) => setCamera(res.data ?? res));
-    loadSessions(id).catch(() => setSessions([]));
+    api
+      .get<any>(`/cameras/${id}`)
+      .then((res) => {
+        setCamera(res.data ?? res);
+        setError(null);
+      })
+      .catch((cause) => {
+        setError(formatApiError(cause, "No se pudo cargar detalle de cámara"));
+      });
+    void loadSessions(id);
   }, [api, id]);
 
-  if (!camera) return <div>Loading...</div>;
+  if (!camera) return <div className="p-4">{error ? `Error: ${error}` : "Loading..."}</div>;
 
   return (
     <PageCard title={camera.name}>
+      {error && <div className="mb-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
       <div className="space-y-2">
         <div className="rounded-lg bg-slate-100 p-8 text-center">Viewer mock (no streaming in this iteration)</div>
         <div>RTSP: {camera.rtspUrl}</div>
         <div>Location: {camera.location || "-"}</div>
         <PrimaryButton
           onClick={async () => {
-            const res = await api.post<any>(`/cameras/${camera.id}/stream-token`);
-            setToken(res);
-            setSession(res.session ?? null);
-            await loadSessions(camera.id);
+            try {
+              const res = await api.post<any>(`/cameras/${camera.id}/stream-token`);
+              setToken(res);
+              setSession(res.session ?? null);
+              setError(null);
+              await loadSessions(camera.id);
+            } catch (cause) {
+              setError(formatApiError(cause, "No se pudo emitir stream token"));
+            }
           }}
         >
           Get stream token
@@ -323,9 +363,14 @@ function CameraDetailPage({ api }: { api: ApiClient }) {
                 type="button"
                 disabled={session.status !== "issued"}
                 onClick={async () => {
-                  const res = await api.post<any>(`/stream-sessions/${session.id}/activate`, {});
-                  setSession(res.data ?? res);
-                  await loadSessions(camera.id);
+                  try {
+                    const res = await api.post<any>(`/stream-sessions/${session.id}/activate`, {});
+                    setSession(res.data ?? res);
+                    setError(null);
+                    await loadSessions(camera.id);
+                  } catch (cause) {
+                    setError(formatApiError(cause, "No se pudo activar sesión"));
+                  }
                 }}
               >
                 Mark active
@@ -335,9 +380,14 @@ function CameraDetailPage({ api }: { api: ApiClient }) {
                 type="button"
                 disabled={session.status === "ended" || session.status === "expired"}
                 onClick={async () => {
-                  const res = await api.post<any>(`/stream-sessions/${session.id}/end`, { reason: "portal user ended" });
-                  setSession(res.data ?? res);
-                  await loadSessions(camera.id);
+                  try {
+                    const res = await api.post<any>(`/stream-sessions/${session.id}/end`, { reason: "portal user ended" });
+                    setSession(res.data ?? res);
+                    setError(null);
+                    await loadSessions(camera.id);
+                  } catch (cause) {
+                    setError(formatApiError(cause, "No se pudo finalizar sesión"));
+                  }
                 }}
               >
                 End session
