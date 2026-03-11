@@ -384,6 +384,9 @@
   - API guarda metadata de comprobante (url, nombre, mime, tamaño, metadata opcional) y permite revisión `approved|rejected` por `tenant_admin`.
   - aprobación activa plan en `subscriptions`; portal agrega pantalla de solicitud y admin comercial agrega bandeja de revisión.
   - validación: `pnpm --filter @app/api test -- -t NH-043` + typechecks `api/admin/portal` en verde.
+- Endurecimiento e2e portal:
+  - nuevo smoke integrado `NH-056` para flujo cliente completo (onboarding cámara + realtime + solicitud de suscripción con comprobante).
+  - validación: `pnpm test:e2e -- e2e/tests/portal.smoke.spec.ts` en verde.
 
 ## Próximo bloque recomendado
 

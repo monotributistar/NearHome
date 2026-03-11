@@ -125,6 +125,12 @@ Archivos: `e2e/tests/*.spec.ts`
 - NH-038 UX errores accionables en cámaras
   - smoke admin/portal siguen en verde con nueva capa de error handling (`code|message|details`) en vistas de cámaras
 
+- NH-056 smoke portal unificado (cliente)
+  - login `client_user` + alta de cámara RTSP desde portal
+  - validación de cámara + stream token + ciclo de sesión (`issued -> active -> ended`)
+  - verificación de realtime con tópico `notification` por defecto
+  - creación de solicitud de suscripción con comprobante (`pending_review`)
+
 - NH-031 aislamiento fuerte de cámaras multi-tenant (10 cámaras)
   - alta de 3 tenants y siembra de 10 cámaras (mock + reales opcionales por env `E2E_REAL_CAM1_RTSP`/`E2E_REAL_CAM2_RTSP`)
   - validación API de aislamiento por tenant para `monitor` y `client_user`
