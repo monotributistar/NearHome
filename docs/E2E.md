@@ -8,7 +8,11 @@
 - Admin cameras profile: `e2e/tests/admin.cameras-profile.spec.ts`
 - Admin cameras lifecycle: `e2e/tests/admin.cameras-lifecycle.spec.ts`
 - Admin tenants: `e2e/tests/admin.tenants.spec.ts`
+- Admin mobile smoke: `e2e/tests/admin.mobile-smoke.spec.ts`
+- Admin responsive/a11y baseline: `e2e/tests/admin.responsive-a11y.spec.ts`
 - Portal smoke: `e2e/tests/portal.smoke.spec.ts`
+- Portal mobile smoke: `e2e/tests/portal.mobile-smoke.spec.ts`
+- Portal responsive/a11y baseline: `e2e/tests/portal.responsive-a11y.spec.ts`
 
 ## Cobertura
 
@@ -29,6 +33,28 @@
 - Activar sesión de stream (`issued -> active`)
 - Cerrar sesión de stream (`active -> ended`)
 - Listado de eventos
+
+### NH-055 UI Smoke (desktop + mobile básico)
+
+- Admin mobile smoke:
+  - Login en viewport `390x844`
+  - Navegación a cámaras
+  - Render de layout y rol visible
+- Portal mobile smoke:
+  - Login en viewport `390x844`
+  - Navegación cámaras -> eventos
+  - Render de vistas operativas sin regresión de flujo
+
+### NH-054 Responsive baseline
+
+- Admin responsive baseline:
+  - Breakpoints `375`, `768`, `1024`, `1280`
+  - Rutas verificadas: `/operations/control`, `/resources/cameras`
+  - Check automático de no-overflow horizontal
+- Portal responsive baseline:
+  - Breakpoints `375`, `768`, `1024`, `1280`
+  - Ruta verificada: `/login`
+  - Check automático de no-overflow horizontal
 
 ### NH-022 Admin Users
 

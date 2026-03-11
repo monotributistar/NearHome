@@ -9,7 +9,7 @@ test("NH-022 admin users flow: create + update role", async ({ page }) => {
   await page.getByRole("button", { name: "Login" }).click();
 
   await expect(page.getByText("NearHome Admin")).toBeVisible();
-  await page.getByRole("link", { name: "Users" }).click();
+  await page.locator('a[href="/identity/users"]').click();
   await expect(page.getByRole("heading", { name: "Users" })).toBeVisible();
 
   const unique = Date.now();

@@ -65,9 +65,9 @@ test("NH-030 portal monitor tenant switch shows only assigned tenant cameras", a
   await page.getByLabel("Password").fill("demo1234");
   await page.getByRole("button", { name: "Login" }).click();
 
-  await page.getByRole("link", { name: "Cameras" }).click();
+  await page.locator('a[href="/operations/cameras"]').click();
   await expect(page.getByText(cameraName)).toHaveCount(0);
 
-  await page.locator(".navbar select").selectOption({ label: tenantName });
+  await page.getByRole("combobox").first().selectOption({ label: tenantName });
   await expect(page.getByText(cameraName)).toBeVisible();
 });

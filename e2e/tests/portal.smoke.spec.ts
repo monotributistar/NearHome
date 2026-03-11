@@ -8,13 +8,13 @@ test("NH-007 portal smoke: login + cameras + stream token + events", async ({ pa
   await page.getByLabel("Password").fill("demo1234");
   await page.getByRole("button", { name: "Login" }).click();
 
-  await expect(page.getByText("NearHome Portal")).toBeVisible();
+  await expect(page.getByText("NearHome App")).toBeVisible();
   const tenantSelector = page.getByRole("combobox").first();
   await expect(tenantSelector).not.toHaveValue("");
   const activeTenant = await tenantSelector.inputValue();
   await tenantSelector.selectOption(activeTenant);
 
-  await page.getByRole("link", { name: "Cameras" }).click();
+  await page.locator('a[href="/operations/cameras"]').click();
   await expect(page.getByText("Cameras")).toBeVisible();
 
   await page.getByRole("link", { name: "Open" }).first().click();
@@ -35,7 +35,7 @@ test("NH-007 portal smoke: login + cameras + stream token + events", async ({ pa
   await page.getByTestId("stream-end").click();
   await expect(page.getByTestId("stream-session-status")).toContainText("ended");
 
-  await page.getByRole("link", { name: "Events" }).click();
+  await page.locator('a[href="/operations/events"]').click();
   await expect(page.getByText("Events")).toBeVisible();
   await expect(page.locator("tbody tr").first()).toBeVisible();
 });

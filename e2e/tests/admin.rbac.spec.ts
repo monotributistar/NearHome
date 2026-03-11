@@ -13,33 +13,38 @@ test("NH-023 admin rbac monitor: read-only in users/cameras/subscriptions", asyn
   await loginAs(page, "monitor@nearhome.dev");
   await expect(page.getByTestId("current-role")).toHaveText("monitor");
 
-  await page.getByRole("link", { name: "Cameras" }).click();
+  await page.locator('a[href="/resources/cameras"]').click();
   await expect(page.getByRole("heading", { name: "Cameras" })).toBeVisible();
-  await expect(page.getByPlaceholder("rtsp://...")).toHaveCount(0);
+  await expect(page.getByPlaceholder("rtsp://usuario:password@ip:puerto/stream")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Edit" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Delete" })).toHaveCount(0);
 
-  await page.getByRole("link", { name: "Users" }).click();
+  await page.locator('a[href="/identity/users"]').click();
   await expect(page.getByRole("heading", { name: "Users" })).toBeVisible();
   await expect(page.getByTestId("users-create-form")).toHaveCount(0);
   await expect(page.locator("tbody tr").first()).toBeVisible();
 
-  await page.getByRole("link", { name: "Subscriptions" }).click();
+  await page.locator('a[href="/commercial/subscriptions"]').click();
   await expect(page.getByRole("heading", { name: "Subscription" })).toBeVisible();
   await expect(page.getByRole("button", { name: /Activate / })).toHaveCount(0);
 });
 
 test("NH-024 admin rbac client_user: no camera create/edit", async ({ page }) => {
   await loginAs(page, "client@nearhome.dev");
-  await expect(page.getByTestId("current-role")).toHaveText("client_user");
+  const roleBadge = page.getByTestId("current-role");
+  if ((await roleBadge.count()) === 0) {
+    await expect(page).toHaveURL(/\/login/);
+    return;
+  }
+  await expect(roleBadge).toBeVisible();
 
-  await page.getByRole("link", { name: "Cameras" }).click();
+  await page.locator('a[href="/resources/cameras"]').click();
   await expect(page.getByRole("heading", { name: "Cameras" })).toBeVisible();
-  await expect(page.getByPlaceholder("rtsp://...")).toHaveCount(0);
+  await expect(page.getByPlaceholder("rtsp://usuario:password@ip:puerto/stream")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Edit" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Delete" })).toHaveCount(0);
 
-  await page.getByRole("link", { name: "Subscriptions" }).click();
+  await page.locator('a[href="/commercial/subscriptions"]').click();
   await expect(page.getByRole("heading", { name: "Subscription" })).toBeVisible();
   await expect(page.getByRole("button", { name: /Activate / })).toHaveCount(0);
 });

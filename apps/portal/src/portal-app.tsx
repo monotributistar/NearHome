@@ -1,11 +1,34 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiClient, loadSessionState, saveSessionState } from "@app/api-client";
-import { AppShell, PageCard, PrimaryButton, SelectInput, TextInput, Badge, WorkspaceShell, type WorkspaceNavGroup } from "@app/ui";
+import {
+  AppShell,
+  PageCard,
+  PrimaryButton,
+  SelectInput,
+  TextInput,
+  Badge,
+  WorkspaceShell,
+  Surface,
+  DataTable,
+  type WorkspaceNavGroup
+} from "@app/ui";
 import { Link, Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import { Camera, Internet, UserCircle, ViewGrid, WarningSquare } from "iconoir-react";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3001";
 const EVENT_GATEWAY_URL = import.meta.env.VITE_EVENT_GATEWAY_URL ?? "http://localhost:3011";
+const PORTAL_ROUTES = {
+  operations: {
+    cameras: "/operations/cameras",
+    cameraDetail: (id: string) => `/operations/cameras/${id}`,
+    events: "/operations/events",
+    realtime: "/operations/realtime"
+  },
+  account: {
+    tenant: "/account/tenant",
+    profile: "/account/profile"
+  }
+} as const;
 
 type RealtimeEvent = {
   eventId: string;
@@ -63,7 +86,7 @@ function LoginPage() {
   const [password, setPassword] = useState("demo1234");
   const [error, setError] = useState<string | null>(null);
 
-  if (state.accessToken) return <Navigate to="/select-tenant" replace />;
+  if (state.accessToken) return <Navigate to={PORTAL_ROUTES.account.tenant} replace />;
 
   return (
     <AppShell>
@@ -77,7 +100,7 @@ function LoginPage() {
               try {
                 const data = await api.post<any>("/auth/login", { email, password, audience: "portal" });
                 setSession({ accessToken: data.accessToken });
-                navigate("/select-tenant");
+                navigate(PORTAL_ROUTES.account.tenant);
               } catch {
                 setError("Credenciales inválidas");
               }
@@ -127,16 +150,16 @@ function ProtectedLayout() {
     {
       title: "Operaciones",
       items: [
-        { to: "/cameras", label: "Cámaras", icon: <Camera width={16} height={16} /> },
-        { to: "/events", label: "Eventos", icon: <WarningSquare width={16} height={16} /> },
-        { to: "/realtime", label: "Realtime", icon: <Internet width={16} height={16} /> }
+        { to: PORTAL_ROUTES.operations.cameras, label: "Cámaras", icon: <Camera width={16} height={16} /> },
+        { to: PORTAL_ROUTES.operations.events, label: "Eventos", icon: <WarningSquare width={16} height={16} /> },
+        { to: PORTAL_ROUTES.operations.realtime, label: "Tiempo Real", icon: <Internet width={16} height={16} /> }
       ]
     },
     {
       title: "Cuenta",
       items: [
-        { to: "/select-tenant", label: "Tenant activo", icon: <ViewGrid width={16} height={16} /> },
-        { to: "/account", label: "Perfil", icon: <UserCircle width={16} height={16} /> }
+        { to: PORTAL_ROUTES.account.tenant, label: "Tenant Activo", icon: <ViewGrid width={16} height={16} /> },
+        { to: PORTAL_ROUTES.account.profile, label: "Perfil", icon: <UserCircle width={16} height={16} /> }
       ]
     }
   ];
@@ -162,22 +185,37 @@ function ProtectedLayout() {
       navigation={navigation}
     >
       <Routes>
-        <Route path="/" element={<Navigate to="/cameras" replace />} />
-        <Route path="/select-tenant" element={<SelectTenantPage me={me} />} />
-        <Route path="/cameras" element={<CamerasPage api={api} />} />
-        <Route path="/cameras/:id" element={<CameraDetailPage api={api} />} />
-        <Route path="/events" element={<EventsPage api={api} />} />
-        <Route path="/realtime" element={<RealtimePage api={api} tenantId={state.activeTenantId} />} />
-        <Route path="/account" element={<AccountPage me={me} />} />
+        <Route path="/" element={<Navigate to={PORTAL_ROUTES.operations.cameras} replace />} />
+
+        <Route path={PORTAL_ROUTES.operations.cameras} element={<CamerasPage api={api} />} />
+        <Route path="/operations/cameras/:id" element={<CameraDetailPage api={api} />} />
+        <Route path={PORTAL_ROUTES.operations.events} element={<EventsPage api={api} />} />
+        <Route path={PORTAL_ROUTES.operations.realtime} element={<RealtimePage api={api} tenantId={state.activeTenantId} />} />
+
+        <Route path={PORTAL_ROUTES.account.tenant} element={<SelectTenantPage me={me} />} />
+        <Route path={PORTAL_ROUTES.account.profile} element={<AccountPage me={me} />} />
+
+        <Route path="/cameras" element={<Navigate to={PORTAL_ROUTES.operations.cameras} replace />} />
+        <Route path="/cameras/:id" element={<LegacyPortalCameraDetailRedirect />} />
+        <Route path="/events" element={<Navigate to={PORTAL_ROUTES.operations.events} replace />} />
+        <Route path="/realtime" element={<Navigate to={PORTAL_ROUTES.operations.realtime} replace />} />
+        <Route path="/select-tenant" element={<Navigate to={PORTAL_ROUTES.account.tenant} replace />} />
+        <Route path="/account" element={<Navigate to={PORTAL_ROUTES.account.profile} replace />} />
       </Routes>
     </WorkspaceShell>
   );
 }
 
+function LegacyPortalCameraDetailRedirect() {
+  const { id } = useParams();
+  if (!id) return <Navigate to={PORTAL_ROUTES.operations.cameras} replace />;
+  return <Navigate to={PORTAL_ROUTES.operations.cameraDetail(id)} replace />;
+}
+
 function SelectTenantPage({ me }: { me: any }) {
   return (
     <PageCard title="Active Tenant">
-      <p className="mb-2 text-sm opacity-70">Seleccioná el tenant desde el navbar superior.</p>
+      <p className="mb-2 text-sm text-slate-600">Seleccioná el tenant desde el selector superior.</p>
       <ul className="list-disc pl-6">
         {me.memberships?.map((m: any) => (
           <li key={m.id}>
@@ -200,17 +238,18 @@ function CamerasPage({ api }: { api: ApiClient }) {
     <PageCard title="Cameras">
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
         {cameras.map((c) => (
-          <div key={c.id} className="card bg-base-100 shadow">
-            <div className="card-body">
-              <h3 className="card-title">{c.name}</h3>
-              <p className="text-sm opacity-70">{c.location || "No location"}</p>
-              <div className="card-actions justify-end">
-                <Link className="btn btn-sm btn-primary" to={`/cameras/${c.id}`}>
+          <Surface key={c.id} className="space-y-2 p-4">
+            <h3 className="text-base font-semibold">{c.name}</h3>
+            <p className="text-sm text-slate-600">{c.location || "No location"}</p>
+            <div className="flex justify-end">
+              <Link
+                className="inline-flex items-center justify-center rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                to={PORTAL_ROUTES.operations.cameraDetail(c.id)}
+              >
                   Open
-                </Link>
-              </div>
+              </Link>
             </div>
-          </div>
+          </Surface>
         ))}
       </div>
     </PageCard>
@@ -240,7 +279,7 @@ function CameraDetailPage({ api }: { api: ApiClient }) {
   return (
     <PageCard title={camera.name}>
       <div className="space-y-2">
-        <div className="rounded-box bg-base-200 p-8 text-center">Viewer mock (no streaming in this iteration)</div>
+        <div className="rounded-lg bg-slate-100 p-8 text-center">Viewer mock (no streaming in this iteration)</div>
         <div>RTSP: {camera.rtspUrl}</div>
         <div>Location: {camera.location || "-"}</div>
         <PrimaryButton
@@ -254,24 +293,27 @@ function CameraDetailPage({ api }: { api: ApiClient }) {
           Get stream token
         </PrimaryButton>
         {token && (
-          <div className="alert">
+          <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
             <div className="text-xs break-all">token: {token.token}</div>
             <div className="text-xs">expiresAt: {token.expiresAt}</div>
             {token.playbackUrl && (
               <div className="text-xs break-all">
-                playbackUrl: <a className="link" href={token.playbackUrl} target="_blank" rel="noreferrer">{token.playbackUrl}</a>
+                playbackUrl:{" "}
+                <a className="text-slate-700 underline underline-offset-2" href={token.playbackUrl} target="_blank" rel="noreferrer">
+                  {token.playbackUrl}
+                </a>
               </div>
             )}
           </div>
         )}
         {token?.playbackUrl && (
-          <div className="rounded-box bg-base-200 p-3">
-            <div className="mb-2 text-xs opacity-70">Playback preview (MVP)</div>
-            <video className="w-full rounded-box" controls muted src={token.playbackUrl} />
+          <div className="rounded-lg bg-slate-100 p-3">
+            <div className="mb-2 text-xs text-slate-600">Playback preview (MVP)</div>
+            <video className="w-full rounded-lg" controls muted src={token.playbackUrl} />
           </div>
         )}
         {session && (
-          <div className="space-y-2 rounded-box bg-base-200 p-3">
+          <div className="space-y-2 rounded-lg bg-slate-100 p-3">
             <div className="text-sm">
               Session: <Badge data-testid="stream-session-status">{session.status}</Badge>
             </div>
@@ -307,12 +349,12 @@ function CameraDetailPage({ api }: { api: ApiClient }) {
           <h3 className="mb-2 text-sm font-semibold">Recent stream sessions</h3>
           <div className="space-y-1">
             {sessions.map((item) => (
-              <div key={item.id} className="flex items-center justify-between rounded-box bg-base-200 px-3 py-2 text-xs">
+              <div key={item.id} className="flex items-center justify-between rounded-lg bg-slate-100 px-3 py-2 text-xs">
                 <span className="truncate">{item.id}</span>
                 <Badge>{item.status}</Badge>
               </div>
             ))}
-            {!sessions.length && <div className="text-xs opacity-70">No stream sessions yet</div>}
+            {!sessions.length && <div className="text-xs text-slate-500">No stream sessions yet</div>}
           </div>
         </div>
       </div>
@@ -348,40 +390,38 @@ function EventsPage({ api }: { api: ApiClient }) {
         <TextInput type="datetime-local" value={to} onChange={(e) => setTo(e.target.value)} />
         <PrimaryButton onClick={search}>Filter</PrimaryButton>
       </div>
-      <div className="overflow-x-auto">
-        <table className="table table-zebra">
-          <thead>
-            <tr>
-              <th>Time</th>
-              <th>Camera</th>
-              <th>Type</th>
-              <th>Severity</th>
+      <DataTable>
+        <thead className="bg-slate-50 text-slate-600">
+          <tr>
+            <th className="px-3 py-2">Time</th>
+            <th className="px-3 py-2">Camera</th>
+            <th className="px-3 py-2">Type</th>
+            <th className="px-3 py-2">Severity</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {events.map((e) => (
+            <tr key={e.id}>
+              <td className="px-3 py-2">{new Date(e.timestamp).toLocaleString()}</td>
+              <td className="px-3 py-2">{e.cameraId}</td>
+              <td className="px-3 py-2">{e.type}</td>
+              <td className="px-3 py-2">
+                <Badge
+                  className={
+                    e.severity === "high"
+                      ? "border-rose-200 bg-rose-50 text-rose-700"
+                      : e.severity === "medium"
+                        ? "border-amber-200 bg-amber-50 text-amber-700"
+                        : "border-emerald-200 bg-emerald-50 text-emerald-700"
+                  }
+                >
+                  {e.severity}
+                </Badge>
+              </td>
             </tr>
-          </thead>
-          <tbody>
-            {events.map((e) => (
-              <tr key={e.id}>
-                <td>{new Date(e.timestamp).toLocaleString()}</td>
-                <td>{e.cameraId}</td>
-                <td>{e.type}</td>
-                <td>
-                  <Badge
-                    className={
-                      e.severity === "high"
-                        ? "badge-error"
-                        : e.severity === "medium"
-                          ? "badge-warning"
-                          : "badge-success"
-                    }
-                  >
-                    {e.severity}
-                  </Badge>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+          ))}
+        </tbody>
+      </DataTable>
     </PageCard>
   );
 }
@@ -529,21 +569,21 @@ function RealtimePage({ api, tenantId }: { api: ApiClient; tenantId: string | nu
           onChange={(event) => setTopics(event.target.value)}
           placeholder="topics csv (incident,detection,stream)"
         />
-        <div className="rounded-box bg-base-200 px-3 py-2 text-sm">transport: {transport}</div>
-        <div className="rounded-box bg-base-200 px-3 py-2 text-sm">tenant: {tenantId ?? "-"}</div>
-        <div className="rounded-box bg-base-200 px-3 py-2 text-sm">status: {status}</div>
+        <Surface className="px-3 py-2 text-sm">transport: {transport}</Surface>
+        <Surface className="px-3 py-2 text-sm">tenant: {tenantId ?? "-"}</Surface>
+        <Surface className="px-3 py-2 text-sm">status: {status}</Surface>
       </div>
       <div className="space-y-2">
         {events.map((event) => (
-          <div key={event.eventId} className="rounded-box bg-base-200 p-3 text-xs">
+          <Surface key={event.eventId} className="bg-slate-100 p-3 text-xs">
             <div className="mb-1 flex items-center justify-between">
               <Badge>{event.eventType}</Badge>
               <span>{new Date(event.occurredAt).toLocaleString()}</span>
             </div>
             <pre className="overflow-x-auto whitespace-pre-wrap">{JSON.stringify(event.payload, null, 2)}</pre>
-          </div>
+          </Surface>
         ))}
-        {!events.length && <div className="text-sm opacity-70">No realtime events received yet.</div>}
+        {!events.length && <div className="text-sm text-slate-500">No realtime events received yet.</div>}
       </div>
     </PageCard>
   );
@@ -552,9 +592,11 @@ function RealtimePage({ api, tenantId }: { api: ApiClient; tenantId: string | nu
 function AccountPage({ me }: { me: any }) {
   return (
     <PageCard title="Account">
-      <div>Email: {me.user?.email}</div>
-      <div>Name: {me.user?.name}</div>
-      <div className="mt-2">Memberships: {me.memberships?.length}</div>
+      <Surface className="space-y-1">
+        <div>Email: {me.user?.email}</div>
+        <div>Name: {me.user?.name}</div>
+        <div className="mt-2">Memberships: {me.memberships?.length}</div>
+      </Surface>
     </PageCard>
   );
 }

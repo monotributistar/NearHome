@@ -10,6 +10,8 @@ import {
   DangerButton,
   Badge,
   WorkspaceShell,
+  Surface,
+  DataTable,
   type WorkspaceNavGroup
 } from "@app/ui";
 import {
@@ -27,6 +29,29 @@ import Hls from "hls.js";
 
 type AppProps = { apiUrl: string };
 const EVENT_GATEWAY_URL = import.meta.env.VITE_EVENT_GATEWAY_URL ?? "http://localhost:3011";
+const ADMIN_ROUTES = {
+  operations: {
+    control: "/operations/control",
+    monitor: "/operations/monitor",
+    realtime: "/operations/realtime",
+    nodes: "/operations/nodes"
+  },
+  resources: {
+    cameras: "/resources/cameras",
+    cameraDetail: (id: string) => `/resources/cameras/${id}`,
+    notifications: "/resources/notifications"
+  },
+  identity: {
+    tenants: "/identity/tenants",
+    users: "/identity/users",
+    memberships: "/identity/memberships",
+    cameraAssignments: "/identity/camera-assignments"
+  },
+  commercial: {
+    plans: "/commercial/plans",
+    subscriptions: "/commercial/subscriptions"
+  }
+} as const;
 
 type RealtimeEvent = {
   eventId: string;
@@ -339,33 +364,33 @@ function Layout({ apiUrl }: { apiUrl: string }) {
     {
       title: "Operaciones",
       items: [
-        { to: "/control", label: "Control", icon: <HomeAlt width={16} height={16} /> },
-        { to: "/monitor", label: "Monitor", icon: <MediaImageList width={16} height={16} /> },
-        { to: "/realtime", label: "Realtime", icon: <Internet width={16} height={16} /> },
-        { to: "/nodes", label: "Nodos", icon: <Settings width={16} height={16} /> }
+        { to: ADMIN_ROUTES.operations.control, label: "Control Operativo", icon: <HomeAlt width={16} height={16} /> },
+        { to: ADMIN_ROUTES.operations.monitor, label: "Monitor", icon: <MediaImageList width={16} height={16} /> },
+        { to: ADMIN_ROUTES.operations.realtime, label: "Tiempo Real", icon: <Internet width={16} height={16} /> },
+        { to: ADMIN_ROUTES.operations.nodes, label: "Nodos", icon: <Settings width={16} height={16} /> }
       ]
     },
     {
       title: "Recursos",
       items: [
-        { to: "/cameras", label: "Cámaras", icon: <Camera width={16} height={16} /> },
-        { to: "/notifications", label: "Notificaciones", icon: <BellNotification width={16} height={16} /> }
+        { to: ADMIN_ROUTES.resources.cameras, label: "Cámaras", icon: <Camera width={16} height={16} /> },
+        { to: ADMIN_ROUTES.resources.notifications, label: "Notificaciones", icon: <BellNotification width={16} height={16} /> }
       ]
     },
     {
       title: "Identidad y Acceso",
       items: [
-        { to: "/tenants", label: "Tenants", icon: <Group width={16} height={16} /> },
-        { to: "/users", label: "Usuarios", icon: <User width={16} height={16} /> },
-        { to: "/memberships", label: "Membresías", icon: <Group width={16} height={16} /> },
-        { to: "/camera-assignments", label: "Scope cámaras", icon: <Camera width={16} height={16} /> }
+        { to: ADMIN_ROUTES.identity.tenants, label: "Tenants", icon: <Group width={16} height={16} /> },
+        { to: ADMIN_ROUTES.identity.users, label: "Usuarios", icon: <User width={16} height={16} /> },
+        { to: ADMIN_ROUTES.identity.memberships, label: "Membresías", icon: <Group width={16} height={16} /> },
+        { to: ADMIN_ROUTES.identity.cameraAssignments, label: "Scope Cámaras", icon: <Camera width={16} height={16} /> }
       ]
     },
     {
       title: "Comercial",
       items: [
-        { to: "/plans", label: "Planes", icon: <Planimetry width={16} height={16} /> },
-        { to: "/subscriptions", label: "Suscripciones", icon: <Planimetry width={16} height={16} /> }
+        { to: ADMIN_ROUTES.commercial.plans, label: "Planes", icon: <Planimetry width={16} height={16} /> },
+        { to: ADMIN_ROUTES.commercial.subscriptions, label: "Suscripciones", icon: <Planimetry width={16} height={16} /> }
       ]
     }
   ];
@@ -399,23 +424,47 @@ function Layout({ apiUrl }: { apiUrl: string }) {
       navigation={navigation}
     >
       <Routes>
-        <Route path="/" element={<Navigate to="/control" replace />} />
-        <Route path="/control" element={<ControlPanelPage apiUrl={apiUrl} />} />
-        <Route path="/tenants" element={<TenantsPage />} />
-        <Route path="/users" element={<UsersPage />} />
-        <Route path="/memberships" element={<MembershipsPage />} />
-        <Route path="/camera-assignments" element={<CameraAssignmentsPage apiUrl={apiUrl} />} />
-        <Route path="/cameras" element={<CamerasPage />} />
-        <Route path="/cameras/:id" element={<CameraShow />} />
-        <Route path="/monitor" element={<MonitorPage apiUrl={apiUrl} />} />
-        <Route path="/nodes" element={<DetectionNodesPage apiUrl={apiUrl} />} />
-        <Route path="/notifications" element={<NotificationsPage apiUrl={apiUrl} />} />
-        <Route path="/realtime" element={<RealtimePage apiUrl={apiUrl} />} />
-        <Route path="/plans" element={<PlansPage />} />
-        <Route path="/subscriptions" element={<SubscriptionPage apiUrl={apiUrl} onChanged={refresh} />} />
+        <Route path="/" element={<Navigate to={ADMIN_ROUTES.operations.control} replace />} />
+
+        <Route path={ADMIN_ROUTES.operations.control} element={<ControlPanelPage apiUrl={apiUrl} />} />
+        <Route path={ADMIN_ROUTES.operations.monitor} element={<MonitorPage apiUrl={apiUrl} />} />
+        <Route path={ADMIN_ROUTES.operations.nodes} element={<DetectionNodesPage apiUrl={apiUrl} />} />
+        <Route path={ADMIN_ROUTES.operations.realtime} element={<RealtimePage apiUrl={apiUrl} />} />
+
+        <Route path={ADMIN_ROUTES.resources.cameras} element={<CamerasPage />} />
+        <Route path="/resources/cameras/:id" element={<CameraShow />} />
+        <Route path={ADMIN_ROUTES.resources.notifications} element={<NotificationsPage apiUrl={apiUrl} />} />
+
+        <Route path={ADMIN_ROUTES.identity.tenants} element={<TenantsPage />} />
+        <Route path={ADMIN_ROUTES.identity.users} element={<UsersPage />} />
+        <Route path={ADMIN_ROUTES.identity.memberships} element={<MembershipsPage />} />
+        <Route path={ADMIN_ROUTES.identity.cameraAssignments} element={<CameraAssignmentsPage apiUrl={apiUrl} />} />
+
+        <Route path={ADMIN_ROUTES.commercial.plans} element={<PlansPage />} />
+        <Route path={ADMIN_ROUTES.commercial.subscriptions} element={<SubscriptionPage apiUrl={apiUrl} onChanged={refresh} />} />
+
+        <Route path="/control" element={<Navigate to={ADMIN_ROUTES.operations.control} replace />} />
+        <Route path="/monitor" element={<Navigate to={ADMIN_ROUTES.operations.monitor} replace />} />
+        <Route path="/nodes" element={<Navigate to={ADMIN_ROUTES.operations.nodes} replace />} />
+        <Route path="/realtime" element={<Navigate to={ADMIN_ROUTES.operations.realtime} replace />} />
+        <Route path="/cameras" element={<Navigate to={ADMIN_ROUTES.resources.cameras} replace />} />
+        <Route path="/cameras/:id" element={<LegacyCameraDetailRedirect />} />
+        <Route path="/notifications" element={<Navigate to={ADMIN_ROUTES.resources.notifications} replace />} />
+        <Route path="/tenants" element={<Navigate to={ADMIN_ROUTES.identity.tenants} replace />} />
+        <Route path="/users" element={<Navigate to={ADMIN_ROUTES.identity.users} replace />} />
+        <Route path="/memberships" element={<Navigate to={ADMIN_ROUTES.identity.memberships} replace />} />
+        <Route path="/camera-assignments" element={<Navigate to={ADMIN_ROUTES.identity.cameraAssignments} replace />} />
+        <Route path="/plans" element={<Navigate to={ADMIN_ROUTES.commercial.plans} replace />} />
+        <Route path="/subscriptions" element={<Navigate to={ADMIN_ROUTES.commercial.subscriptions} replace />} />
       </Routes>
     </WorkspaceShell>
   );
+}
+
+function LegacyCameraDetailRedirect() {
+  const { id } = useParams();
+  if (!id) return <Navigate to={ADMIN_ROUTES.resources.cameras} replace />;
+  return <Navigate to={ADMIN_ROUTES.resources.cameraDetail(id)} replace />;
 }
 
 function ControlPanelPage({ apiUrl }: { apiUrl: string }) {
@@ -463,163 +512,163 @@ function ControlPanelPage({ apiUrl }: { apiUrl: string }) {
     <div className="space-y-4">
       <PageCard title="Control Panel">
         <div className="mb-3 flex flex-wrap items-center gap-2">
-          <Badge className={data?.overallOk ? "badge-success" : "badge-error"}>
+          <Badge className={data?.overallOk ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-rose-200 bg-rose-50 text-rose-700"}>
             overall: {data?.overallOk ? "ok" : "degraded"}
           </Badge>
-          <span className="text-sm opacity-70">
+          <span className="text-sm text-slate-500">
             updated: {data?.generatedAt ? new Date(data.generatedAt).toLocaleString() : "-"}
           </span>
-          <PrimaryButton className="btn-sm" type="button" onClick={() => void refreshStatus()}>
+          <PrimaryButton className="px-2.5 py-1.5 text-xs" type="button" onClick={() => void refreshStatus()}>
             Refresh
           </PrimaryButton>
         </div>
-        {error && <div className="alert alert-error py-2 text-sm">{error}</div>}
+        {error && <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
         <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
-          <div className="rounded-box border border-base-300 p-3 text-sm">
+          <Surface className="text-sm">
             <div className="font-semibold">Services</div>
             <div>{data?.services.length ?? 0}</div>
-          </div>
-          <div className="rounded-box border border-base-300 p-3 text-sm">
+          </Surface>
+          <Surface className="text-sm">
             <div className="font-semibold">Nodes online</div>
             <div>{data?.nodes.online ?? 0}</div>
-          </div>
-          <div className="rounded-box border border-base-300 p-3 text-sm">
+          </Surface>
+          <Surface className="text-sm">
             <div className="font-semibold">Nodes degraded</div>
             <div>{data?.nodes.degraded ?? 0}</div>
-          </div>
-          <div className="rounded-box border border-base-300 p-3 text-sm">
+          </Surface>
+          <Surface className="text-sm">
             <div className="font-semibold">Nodes offline</div>
             <div>{data?.nodes.offline ?? 0}</div>
-          </div>
-          <div className="rounded-box border border-base-300 p-3 text-sm">
+          </Surface>
+          <Surface className="text-sm">
             <div className="font-semibold">Drained</div>
             <div>{data?.nodes.drained ?? 0}</div>
-          </div>
+          </Surface>
         </div>
       </PageCard>
 
       <PageCard title="Service Status">
-        <div className="overflow-x-auto">
-          <table className="table table-zebra">
-            <thead>
-              <tr>
-                <th>Service</th>
-                <th>Target</th>
-                <th>Status</th>
-                <th>HTTP</th>
-                <th>Latency</th>
-                <th>Error</th>
+        <DataTable>
+          <thead className="bg-slate-50 text-slate-600">
+            <tr>
+              <th className="px-3 py-2">Service</th>
+              <th className="px-3 py-2">Target</th>
+              <th className="px-3 py-2">Status</th>
+              <th className="px-3 py-2">HTTP</th>
+              <th className="px-3 py-2">Latency</th>
+              <th className="px-3 py-2">Error</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {(data?.services ?? []).map((service) => (
+              <tr key={service.name}>
+                <td className="px-3 py-2">{service.name}</td>
+                <td className="px-3 py-2 text-xs text-slate-600">{service.target}</td>
+                <td className="px-3 py-2">
+                  <Badge className={service.ok ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-rose-200 bg-rose-50 text-rose-700"}>
+                    {service.ok ? "ok" : "down"}
+                  </Badge>
+                </td>
+                <td className="px-3 py-2">{service.statusCode ?? "-"}</td>
+                <td className="px-3 py-2">{service.latencyMs ?? "-"}</td>
+                <td className="px-3 py-2 text-xs text-slate-600">{service.error ?? "-"}</td>
               </tr>
-            </thead>
-            <tbody>
-              {(data?.services ?? []).map((service) => (
-                <tr key={service.name}>
-                  <td>{service.name}</td>
-                  <td className="text-xs">{service.target}</td>
-                  <td>
-                    <Badge className={service.ok ? "badge-success" : "badge-error"}>{service.ok ? "ok" : "down"}</Badge>
-                  </td>
-                  <td>{service.statusCode ?? "-"}</td>
-                  <td>{service.latencyMs ?? "-"}</td>
-                  <td className="text-xs">{service.error ?? "-"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+            ))}
+          </tbody>
+        </DataTable>
       </PageCard>
 
       <PageCard title="Node Registry">
         {!data?.nodes.sourceOk && data?.nodes.sourceError && (
-          <div className="alert alert-warning mb-3 py-2 text-sm">node source error: {data.nodes.sourceError}</div>
+          <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+            node source error: {data.nodes.sourceError}
+          </div>
         )}
-        <div className="mb-3 text-sm opacity-80">
+        <div className="mb-3 text-sm text-slate-600">
           total: {data?.nodes.total ?? 0} | revoked estimate: {data?.nodes.revokedEstimate ?? 0}
         </div>
-        <div className="overflow-x-auto">
-          <table className="table table-zebra">
-            <thead>
-              <tr>
-                <th>Node</th>
-                <th>Status</th>
-                <th>Tenant</th>
-                <th>Runtime</th>
-                <th>Endpoint</th>
-                <th>Queue</th>
-                <th>Max</th>
-                <th>Drained</th>
-                <th>Resources</th>
-                <th>Capabilities</th>
-                <th>Models</th>
-                <th>Contract</th>
+        <DataTable>
+          <thead className="bg-slate-50 text-slate-600">
+            <tr>
+              <th className="px-3 py-2">Node</th>
+              <th className="px-3 py-2">Status</th>
+              <th className="px-3 py-2">Tenant</th>
+              <th className="px-3 py-2">Runtime</th>
+              <th className="px-3 py-2">Endpoint</th>
+              <th className="px-3 py-2">Queue</th>
+              <th className="px-3 py-2">Max</th>
+              <th className="px-3 py-2">Drained</th>
+              <th className="px-3 py-2">Resources</th>
+              <th className="px-3 py-2">Capabilities</th>
+              <th className="px-3 py-2">Models</th>
+              <th className="px-3 py-2">Contract</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {(data?.nodes.items ?? []).map((node, idx) => (
+              <tr key={node.nodeId ?? `node-${idx}`}>
+                <td className="px-3 py-2">{node.nodeId ?? "-"}</td>
+                <td className="px-3 py-2">
+                  <Badge
+                    className={
+                      node.status === "online"
+                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                        : node.status === "degraded"
+                          ? "border-amber-200 bg-amber-50 text-amber-700"
+                          : "border-rose-200 bg-rose-50 text-rose-700"
+                    }
+                  >
+                    {node.status ?? "-"}
+                  </Badge>
+                </td>
+                <td className="px-3 py-2">{node.tenantId ?? "-"}</td>
+                <td className="px-3 py-2">{node.runtime ?? "-"}</td>
+                <td className="px-3 py-2 text-xs text-slate-600">{node.endpoint ?? "-"}</td>
+                <td className="px-3 py-2">{node.queueDepth ?? 0}</td>
+                <td className="px-3 py-2">{node.maxConcurrent ?? 0}</td>
+                <td className="px-3 py-2">{node.isDrained ? "yes" : "no"}</td>
+                <td className="px-3 py-2 text-xs text-slate-600">
+                  {node.resources
+                    ? Object.entries(node.resources)
+                        .map(([key, value]) => `${key}:${String(value)}`)
+                        .join(", ")
+                    : "-"}
+                </td>
+                <td className="px-3 py-2 text-xs text-slate-600">
+                  {(node.capabilities ?? [])
+                    .flatMap((cap) => cap.taskTypes ?? [])
+                    .join(", ") || "-"}
+                </td>
+                <td className="px-3 py-2 text-xs text-slate-600">{(node.models ?? []).join(", ") || "-"}</td>
+                <td className="px-3 py-2 text-xs text-slate-600">{node.contractVersion ?? "-"}</td>
               </tr>
-            </thead>
-            <tbody>
-              {(data?.nodes.items ?? []).map((node, idx) => (
-                <tr key={node.nodeId ?? `node-${idx}`}>
-                  <td>{node.nodeId ?? "-"}</td>
-                  <td>
-                    <Badge
-                      className={
-                        node.status === "online"
-                          ? "badge-success"
-                          : node.status === "degraded"
-                            ? "badge-warning"
-                            : "badge-error"
-                      }
-                    >
-                      {node.status ?? "-"}
-                    </Badge>
-                  </td>
-                  <td>{node.tenantId ?? "-"}</td>
-                  <td>{node.runtime ?? "-"}</td>
-                  <td className="text-xs">{node.endpoint ?? "-"}</td>
-                  <td>{node.queueDepth ?? 0}</td>
-                  <td>{node.maxConcurrent ?? 0}</td>
-                  <td>{node.isDrained ? "yes" : "no"}</td>
-                  <td className="text-xs">
-                    {node.resources
-                      ? Object.entries(node.resources)
-                          .map(([key, value]) => `${key}:${String(value)}`)
-                          .join(", ")
-                      : "-"}
-                  </td>
-                  <td className="text-xs">
-                    {(node.capabilities ?? [])
-                      .flatMap((cap) => cap.taskTypes ?? [])
-                      .join(", ") || "-"}
-                  </td>
-                  <td className="text-xs">{(node.models ?? []).join(", ") || "-"}</td>
-                  <td className="text-xs">{node.contractVersion ?? "-"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+            ))}
+          </tbody>
+        </DataTable>
       </PageCard>
 
       <PageCard title="Architecture Hierarchy">
         <div className="grid grid-cols-1 gap-3 text-sm md:grid-cols-2">
-          <div className="rounded-box border border-base-300 p-3">
+          <Surface>
             <div className="mb-1 font-semibold">Control Plane</div>
             <div>API</div>
             <div>Admin UI / Portal UI</div>
-          </div>
-          <div className="rounded-box border border-base-300 p-3">
+          </Surface>
+          <Surface>
             <div className="mb-1 font-semibold">Data Plane</div>
             <div>Stream Gateway</div>
             <div>Vault local/remote</div>
-          </div>
-          <div className="rounded-box border border-base-300 p-3">
+          </Surface>
+          <Surface>
             <div className="mb-1 font-semibold">Event Plane</div>
             <div>Event Gateway</div>
             <div>Realtime SSE/WS</div>
-          </div>
-          <div className="rounded-box border border-base-300 p-3">
+          </Surface>
+          <Surface>
             <div className="mb-1 font-semibold">Detection Plane</div>
             <div>Inference Bridge</div>
             <div>Dispatcher + Temporal + Worker + Nodes</div>
-          </div>
+          </Surface>
         </div>
       </PageCard>
     </div>
@@ -665,86 +714,84 @@ function TenantsPage() {
           <PrimaryButton type="submit">Create</PrimaryButton>
         </form>
       )}
-      <div className="overflow-x-auto">
-        <table className="table table-zebra">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Created</th>
-              {(canEdit || canDelete) && <th>Actions</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {(result?.data ?? []).map((t: any) => (
-              <tr key={t.id}>
-                <td>
-                  {canEdit ? (
-                    <TextInput
-                      data-testid={`tenant-name-${t.id}`}
-                      value={drafts[t.id] ?? ""}
-                      onChange={(e) => setDrafts((prev) => ({ ...prev, [t.id]: e.target.value }))}
-                    />
-                  ) : (
-                    t.name
-                  )}
-                </td>
-                <td>{new Date(t.createdAt).toLocaleString()}</td>
-                {(canEdit || canDelete) && (
-                  <td>
-                    <div className="flex flex-wrap gap-2">
-                      {canEdit && (
-                        <PrimaryButton
-                          data-testid={`tenant-save-${t.id}`}
-                          className="btn-sm"
-                          type="button"
-                          onClick={() =>
-                            update(
-                              {
-                                resource: "tenants",
-                                id: t.id,
-                                values: { name: drafts[t.id] ?? t.name }
-                              },
-                              {
-                                onSuccess: () => {
-                                  (tenantsList as any).query.refetch();
-                                }
-                              }
-                            )
-                          }
-                        >
-                          Save
-                        </PrimaryButton>
-                      )}
-                      {canDelete && (
-                        <button
-                          data-testid={`tenant-delete-${t.id}`}
-                          className="btn btn-sm btn-error"
-                          type="button"
-                          onClick={() =>
-                            remove(
-                              {
-                                resource: "tenants",
-                                id: t.id
-                              },
-                              {
-                                onSuccess: () => {
-                                  (tenantsList as any).query.refetch();
-                                }
-                              }
-                            )
-                          }
-                        >
-                          Delete
-                        </button>
-                      )}
-                    </div>
-                  </td>
+      <DataTable>
+        <thead className="bg-slate-50 text-slate-600">
+          <tr>
+            <th className="px-3 py-2">Name</th>
+            <th className="px-3 py-2">Created</th>
+            {(canEdit || canDelete) && <th className="px-3 py-2">Actions</th>}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {(result?.data ?? []).map((t: any) => (
+            <tr key={t.id}>
+              <td className="px-3 py-2">
+                {canEdit ? (
+                  <TextInput
+                    data-testid={`tenant-name-${t.id}`}
+                    value={drafts[t.id] ?? ""}
+                    onChange={(e) => setDrafts((prev) => ({ ...prev, [t.id]: e.target.value }))}
+                  />
+                ) : (
+                  t.name
                 )}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+              </td>
+              <td className="px-3 py-2">{new Date(t.createdAt).toLocaleString()}</td>
+              {(canEdit || canDelete) && (
+                <td className="px-3 py-2">
+                  <div className="flex flex-wrap gap-2">
+                    {canEdit && (
+                      <PrimaryButton
+                        data-testid={`tenant-save-${t.id}`}
+                        className="px-2 py-1 text-xs"
+                        type="button"
+                        onClick={() =>
+                          update(
+                            {
+                              resource: "tenants",
+                              id: t.id,
+                              values: { name: drafts[t.id] ?? t.name }
+                            },
+                            {
+                              onSuccess: () => {
+                                (tenantsList as any).query.refetch();
+                              }
+                            }
+                          )
+                        }
+                      >
+                        Save
+                      </PrimaryButton>
+                    )}
+                    {canDelete && (
+                      <DangerButton
+                        data-testid={`tenant-delete-${t.id}`}
+                        className="px-2 py-1 text-xs"
+                        type="button"
+                        onClick={() =>
+                          remove(
+                            {
+                              resource: "tenants",
+                              id: t.id
+                            },
+                            {
+                              onSuccess: () => {
+                                (tenantsList as any).query.refetch();
+                              }
+                            }
+                          )
+                        }
+                      >
+                        Delete
+                      </DangerButton>
+                    )}
+                  </div>
+                </td>
+              )}
+            </tr>
+          ))}
+        </tbody>
+      </DataTable>
     </PageCard>
   );
 }
@@ -819,21 +866,21 @@ function UsersPage() {
         </form>
       )}
 
-      <table className="table table-zebra">
-        <thead>
+      <DataTable>
+        <thead className="bg-slate-50 text-slate-600">
           <tr>
-            <th>Email</th>
-            <th>Name</th>
-            <th>Role</th>
-            <th>Status</th>
-            {canEdit && <th>Actions</th>}
+            <th className="px-3 py-2">Email</th>
+            <th className="px-3 py-2">Name</th>
+            <th className="px-3 py-2">Role</th>
+            <th className="px-3 py-2">Status</th>
+            {canEdit && <th className="px-3 py-2">Actions</th>}
           </tr>
         </thead>
-        <tbody>
+        <tbody className="divide-y divide-slate-100">
           {users.map((u: any) => (
             <tr key={u.id}>
-              <td>{u.email}</td>
-              <td>
+              <td className="px-3 py-2">{u.email}</td>
+              <td className="px-3 py-2">
                 {canEdit ? (
                   <TextInput
                     data-testid={`users-name-${u.id}`}
@@ -849,7 +896,7 @@ function UsersPage() {
                   u.name
                 )}
               </td>
-              <td>
+              <td className="px-3 py-2">
                 {canEdit ? (
                   <SelectInput
                     data-testid={`users-role-${u.id}`}
@@ -869,17 +916,17 @@ function UsersPage() {
                   u.role
                 )}
               </td>
-              <td>
-                <Badge className={rowDrafts[u.id]?.isActive ? "badge-success" : "badge-neutral"}>
+              <td className="px-3 py-2">
+                <Badge className={rowDrafts[u.id]?.isActive ? "border-emerald-200 bg-emerald-50 text-emerald-700" : ""}>
                   {rowDrafts[u.id]?.isActive ? "active" : "inactive"}
                 </Badge>
               </td>
               {canEdit && (
-                <td>
+                <td className="px-3 py-2">
                   <div className="flex flex-wrap gap-2">
                     <PrimaryButton
                       data-testid={`users-save-${u.id}`}
-                      className="btn-sm"
+                      className="px-2 py-1 text-xs"
                       type="button"
                       onClick={() =>
                         update(
@@ -901,9 +948,9 @@ function UsersPage() {
                     >
                       Save
                     </PrimaryButton>
-                    <button
+                    <PrimaryButton
                       data-testid={`users-toggle-${u.id}`}
-                      className="btn btn-sm"
+                      className="px-2 py-1 text-xs"
                       type="button"
                       onClick={() =>
                         update(
@@ -921,14 +968,14 @@ function UsersPage() {
                       }
                     >
                       {rowDrafts[u.id]?.isActive ? "Disable" : "Enable"}
-                    </button>
+                    </PrimaryButton>
                   </div>
                 </td>
               )}
             </tr>
           ))}
         </tbody>
-      </table>
+      </DataTable>
     </PageCard>
   );
 }
@@ -980,24 +1027,24 @@ function MembershipsPage() {
           <PrimaryButton type="submit">Assign role</PrimaryButton>
         </form>
       )}
-      <table className="table table-zebra">
-        <thead>
+      <DataTable>
+        <thead className="bg-slate-50 text-slate-600">
           <tr>
-            <th>Tenant</th>
-            <th>User</th>
-            <th>Role</th>
+            <th className="px-3 py-2">Tenant</th>
+            <th className="px-3 py-2">User</th>
+            <th className="px-3 py-2">Role</th>
           </tr>
         </thead>
-        <tbody>
+        <tbody className="divide-y divide-slate-100">
           {(result?.data ?? []).map((m: any) => (
             <tr key={m.id}>
-              <td>{m.tenant?.name ?? m.tenantId}</td>
-              <td>{m.user?.email ?? m.userId}</td>
-              <td>{m.role}</td>
+              <td className="px-3 py-2">{m.tenant?.name ?? m.tenantId}</td>
+              <td className="px-3 py-2">{m.user?.email ?? m.userId}</td>
+              <td className="px-3 py-2">{m.role}</td>
             </tr>
           ))}
         </tbody>
-      </table>
+      </DataTable>
     </PageCard>
   );
 }
@@ -1233,7 +1280,7 @@ function CamerasPage() {
           />
           <textarea
             placeholder="description"
-            className="textarea textarea-bordered w-full md:col-span-3"
+            className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-500 focus:ring-2 focus:ring-slate-200 md:col-span-3"
             value={form.description}
             onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
           />
@@ -1272,9 +1319,9 @@ function CamerasPage() {
             {editing ? "Guardar cambios" : "Crear cámara"}
           </PrimaryButton>
           {editing && (
-            <button
+            <PrimaryButton
               type="button"
-              className="btn btn-ghost md:col-span-2"
+              className="md:col-span-2"
               onClick={() => {
                 setEditing(null);
                 setForm({ name: "", description: "", rtspUrl: "", location: "", tags: "", isActive: true });
@@ -1282,96 +1329,101 @@ function CamerasPage() {
               }}
             >
               Cancelar edición
-            </button>
+            </PrimaryButton>
           )}
           {editing && (
-            <div className="alert py-2 text-sm md:col-span-12">
+            <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm md:col-span-12">
               Editando cámara: <strong>{editing.name}</strong> ({editing.id})
             </div>
           )}
-          {saveError && <div className="alert alert-error py-2 text-sm md:col-span-12">{saveError}</div>}
-          {saveOk && <div className="alert alert-success py-2 text-sm md:col-span-12">{saveOk}</div>}
+          {saveError && <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 md:col-span-12">{saveError}</div>}
+          {saveOk && <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 md:col-span-12">{saveOk}</div>}
         </form>
       )}
 
-      <table className="table table-zebra">
-        <thead>
+      <DataTable>
+        <thead className="bg-slate-50 text-slate-600">
           <tr>
-            <th>Name</th>
-            <th>Location</th>
-            <th>RTSP URL</th>
-            <th>Status</th>
-            <th></th>
+            <th className="px-3 py-2">Name</th>
+            <th className="px-3 py-2">Location</th>
+            <th className="px-3 py-2">RTSP URL</th>
+            <th className="px-3 py-2">Status</th>
+            <th className="px-3 py-2"></th>
           </tr>
         </thead>
-        <tbody>
+        <tbody className="divide-y divide-slate-100">
           {rows.map((c: any) => (
             <tr key={c.id}>
-              <td>{c.name}</td>
-              <td>{c.location || "-"}</td>
-              <td>
+              <td className="px-3 py-2">{c.name}</td>
+              <td className="px-3 py-2">{c.location || "-"}</td>
+              <td className="px-3 py-2">
                 <code className="block max-w-[22rem] overflow-x-auto whitespace-nowrap text-xs">{c.rtspUrl}</code>
               </td>
-              <td>
-                <Badge className={c.isActive ? "badge-success" : "badge-ghost"}>
+              <td className="px-3 py-2">
+                <Badge className={c.isActive ? "border-emerald-200 bg-emerald-50 text-emerald-700" : ""}>
                   {c.isActive ? "Active" : "Inactive"}
                 </Badge>
               </td>
-              <td className="flex gap-2">
-                <Link className="btn btn-xs" to={`/cameras/${c.id}`}>
-                  Show
-                </Link>
-                {canEdit && (
-                  <button
-                    className="btn btn-xs"
-                    onClick={() => {
-                      setEditing(c);
-                      setSaveError(null);
-                      setSaveOk(null);
-                      setForm({
-                        name: c.name,
-                        description: c.description ?? "",
-                        rtspUrl: c.rtspUrl,
-                        location: c.location ?? "",
-                        tags: (c.tags ?? []).join(","),
-                        isActive: c.isActive
-                      });
-                    }}
+              <td className="px-3 py-2">
+                <div className="flex gap-2">
+                  <Link
+                    className="inline-flex items-center justify-center rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                    to={ADMIN_ROUTES.resources.cameraDetail(c.id)}
                   >
-                    Edit
-                  </button>
-                )}
-                {canDelete && (
-                  <DangerButton
-                    className="btn-xs"
-                    onClick={() => {
-                      remove({ resource: "cameras", id: c.id });
-                      (camerasList as any).query.refetch();
-                    }}
-                  >
-                    Delete
-                  </DangerButton>
-                )}
+                    Show
+                  </Link>
+                  {canEdit && (
+                    <PrimaryButton
+                      className="px-2 py-1 text-xs"
+                      onClick={() => {
+                        setEditing(c);
+                        setSaveError(null);
+                        setSaveOk(null);
+                        setForm({
+                          name: c.name,
+                          description: c.description ?? "",
+                          rtspUrl: c.rtspUrl,
+                          location: c.location ?? "",
+                          tags: (c.tags ?? []).join(","),
+                          isActive: c.isActive
+                        });
+                      }}
+                    >
+                      Edit
+                    </PrimaryButton>
+                  )}
+                  {canDelete && (
+                    <DangerButton
+                      className="px-2 py-1 text-xs"
+                      onClick={() => {
+                        remove({ resource: "cameras", id: c.id });
+                        (camerasList as any).query.refetch();
+                      }}
+                    >
+                      Delete
+                    </DangerButton>
+                  )}
+                </div>
               </td>
             </tr>
           ))}
         </tbody>
-      </table>
+      </DataTable>
 
       <div className="mt-4 flex items-center justify-end gap-2">
-        <button className="btn btn-sm" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+        <PrimaryButton className="px-2 py-1 text-xs" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
           Prev
-        </button>
+        </PrimaryButton>
         <span className="text-sm">
           Page {page} / {totalPages}
         </span>
-        <button
-          className="btn btn-sm"
+        <PrimaryButton
+          className="px-2 py-1 text-xs"
           disabled={page >= totalPages}
           onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
         >
           Next
-        </button>
+        </PrimaryButton>
       </div>
     </PageCard>
   );
@@ -1583,81 +1635,93 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
     <div className="space-y-4">
       <PageCard title="Detection Nodes">
         <div className="mb-3 flex flex-wrap items-center gap-2">
-          <PrimaryButton className="btn-sm" type="button" onClick={() => void loadNodes(true)} disabled={loading || saving}>
+          <PrimaryButton className="px-2.5 py-1.5 text-xs" type="button" onClick={() => void loadNodes(true)} disabled={loading || saving}>
             Sync bridge
           </PrimaryButton>
-          <PrimaryButton className="btn-sm" type="button" onClick={() => void loadNodes(false)} disabled={loading || saving}>
+          <PrimaryButton className="px-2.5 py-1.5 text-xs" type="button" onClick={() => void loadNodes(false)} disabled={loading || saving}>
             Reload cache
           </PrimaryButton>
-          <Badge className="badge-ghost">total: {nodes.length}</Badge>
+          <Badge>total: {nodes.length}</Badge>
         </div>
-        {error && <div className="alert alert-error py-2 text-sm">{error}</div>}
-        {ok && <div className="alert alert-success py-2 text-sm">{ok}</div>}
+        {error && <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
+        {ok && <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{ok}</div>}
         {enrollmentToken && (
-          <div className="alert py-2 text-sm">
+          <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
             enrollment token: <code className="break-all">{enrollmentToken}</code>
           </div>
         )}
-        <div className="overflow-x-auto">
-          <table className="table table-zebra">
-            <thead>
-              <tr>
-                <th>Node</th>
-                <th>Status</th>
-                <th>Runtime</th>
-                <th>Endpoint</th>
-                <th>Tenant(s)</th>
-                <th>Queue</th>
-                <th>Drained</th>
-                <th>Models</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {nodes.map((node) => (
-                <tr key={node.nodeId} className={selectedNodeId === node.nodeId ? "bg-base-200" : ""}>
-                  <td>
-                    <button className="link link-hover text-left" type="button" onClick={() => setSelectedNodeId(node.nodeId)}>
-                      {node.nodeId}
-                    </button>
-                  </td>
-                  <td>
-                    <Badge
-                      className={
-                        node.status === "online"
-                          ? "badge-success"
-                          : node.status === "degraded"
-                            ? "badge-warning"
-                            : "badge-error"
-                      }
+        <DataTable>
+          <thead className="bg-slate-50 text-slate-600">
+            <tr>
+              <th className="px-3 py-2">Node</th>
+              <th className="px-3 py-2">Status</th>
+              <th className="px-3 py-2">Runtime</th>
+              <th className="px-3 py-2">Endpoint</th>
+              <th className="px-3 py-2">Tenant(s)</th>
+              <th className="px-3 py-2">Queue</th>
+              <th className="px-3 py-2">Drained</th>
+              <th className="px-3 py-2">Models</th>
+              <th className="px-3 py-2">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {nodes.map((node) => (
+              <tr key={node.nodeId} className={selectedNodeId === node.nodeId ? "bg-slate-50" : ""}>
+                <td className="px-3 py-2">
+                  <button
+                    className="text-left text-sm font-medium text-slate-700 underline underline-offset-2"
+                    type="button"
+                    onClick={() => setSelectedNodeId(node.nodeId)}
+                  >
+                    {node.nodeId}
+                  </button>
+                </td>
+                <td className="px-3 py-2">
+                  <Badge
+                    className={
+                      node.status === "online"
+                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                        : node.status === "degraded"
+                          ? "border-amber-200 bg-amber-50 text-amber-700"
+                          : "border-rose-200 bg-rose-50 text-rose-700"
+                    }
+                  >
+                    {node.status}
+                  </Badge>
+                </td>
+                <td className="px-3 py-2">{node.runtime}</td>
+                <td className="px-3 py-2 text-xs text-slate-600">{node.endpoint}</td>
+                <td className="px-3 py-2 text-xs text-slate-600">{(node.assignedTenantIds ?? []).join(", ") || node.tenantId || "*"}</td>
+                <td className="px-3 py-2">
+                  {node.queueDepth}/{node.maxConcurrent}
+                </td>
+                <td className="px-3 py-2">{node.isDrained ? "yes" : "no"}</td>
+                <td className="px-3 py-2 text-xs text-slate-600">{node.models.join(", ") || "-"}</td>
+                <td className="px-3 py-2">
+                  <div className="flex gap-2">
+                    <PrimaryButton
+                      className="px-2 py-1 text-xs"
+                      disabled={saving}
+                      onClick={() => void executeNodeAction(node.nodeId, "drain")}
                     >
-                      {node.status}
-                    </Badge>
-                  </td>
-                  <td>{node.runtime}</td>
-                  <td className="text-xs">{node.endpoint}</td>
-                  <td className="text-xs">{(node.assignedTenantIds ?? []).join(", ") || node.tenantId || "*"}</td>
-                  <td>
-                    {node.queueDepth}/{node.maxConcurrent}
-                  </td>
-                  <td>{node.isDrained ? "yes" : "no"}</td>
-                  <td className="text-xs">{node.models.join(", ") || "-"}</td>
-                  <td className="flex gap-2">
-                    <button className="btn btn-xs" disabled={saving} onClick={() => void executeNodeAction(node.nodeId, "drain")}>
                       Drain
-                    </button>
-                    <button className="btn btn-xs" disabled={saving} onClick={() => void executeNodeAction(node.nodeId, "undrain")}>
+                    </PrimaryButton>
+                    <PrimaryButton
+                      className="px-2 py-1 text-xs"
+                      disabled={saving}
+                      onClick={() => void executeNodeAction(node.nodeId, "undrain")}
+                    >
                       Undrain
-                    </button>
-                    <DangerButton className="btn-xs" onClick={() => void executeNodeAction(node.nodeId, "revoke")}>
+                    </PrimaryButton>
+                    <DangerButton className="px-2 py-1 text-xs" onClick={() => void executeNodeAction(node.nodeId, "revoke")}>
                       Revoke
                     </DangerButton>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </DataTable>
       </PageCard>
 
       <PageCard title="Node Provisioning">
@@ -1736,7 +1800,7 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
 
       <PageCard title="Node Configuration Detail">
         {!selectedNode ? (
-          <div className="text-sm opacity-70">{loading ? "Loading..." : "Seleccioná un nodo para ver su configuración."}</div>
+          <div className="text-sm text-slate-500">{loading ? "Loading..." : "Seleccioná un nodo para ver su configuración."}</div>
         ) : (
           <div className="space-y-2 text-sm">
             <div>
@@ -1748,7 +1812,7 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
             <div>queue/max: {selectedNode.queueDepth}/{selectedNode.maxConcurrent}</div>
             <div>drained: {selectedNode.isDrained ? "yes" : "no"}</div>
             <div>last heartbeat: {new Date(selectedNode.lastHeartbeatAt).toLocaleString()}</div>
-            <div className="rounded-box border border-base-300 p-3">
+            <Surface>
               <div className="mb-2 font-medium">Tenant assignment</div>
               <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
                 {tenantOptions.map((tenant) => (
@@ -1768,26 +1832,26 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
                 ))}
               </div>
               <div className="mt-3">
-                <PrimaryButton className="btn-sm" type="button" onClick={() => void saveTenantAssignments()} disabled={saving}>
+                <PrimaryButton className="px-2.5 py-1.5 text-xs" type="button" onClick={() => void saveTenantAssignments()} disabled={saving}>
                   Guardar asignación
                 </PrimaryButton>
               </div>
-            </div>
+            </Surface>
             <div>
               resources:
-              <pre className="mt-1 overflow-x-auto rounded-box bg-base-200 p-2 text-xs">
+              <pre className="mt-1 overflow-x-auto rounded-lg bg-slate-100 p-2 text-xs">
                 {JSON.stringify(selectedNode.resources ?? {}, null, 2)}
               </pre>
             </div>
             <div>
               capabilities:
-              <pre className="mt-1 overflow-x-auto rounded-box bg-base-200 p-2 text-xs">
+              <pre className="mt-1 overflow-x-auto rounded-lg bg-slate-100 p-2 text-xs">
                 {JSON.stringify(selectedNode.capabilities ?? [], null, 2)}
               </pre>
             </div>
             <div>
               models:
-              <pre className="mt-1 overflow-x-auto rounded-box bg-base-200 p-2 text-xs">
+              <pre className="mt-1 overflow-x-auto rounded-lg bg-slate-100 p-2 text-xs">
                 {JSON.stringify(selectedNode.models ?? [], null, 2)}
               </pre>
             </div>
@@ -2290,8 +2354,8 @@ function NotificationsPage({ apiUrl }: { apiUrl: string }) {
   return (
     <div className="space-y-4">
       <PageCard title="Notification Channels">
-        {error && <div className="alert alert-error py-2 text-sm">{error}</div>}
-        {ok && <div className="alert alert-success py-2 text-sm">{ok}</div>}
+        {error && <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
+        {ok && <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{ok}</div>}
         {canCreate && (
           <form className="mb-4 grid grid-cols-1 gap-2 md:grid-cols-12" onSubmit={saveChannel}>
             <TextInput
@@ -2334,28 +2398,28 @@ function NotificationsPage({ apiUrl }: { apiUrl: string }) {
             </PrimaryButton>
           </form>
         )}
-        <div className="overflow-x-auto">
-          <table className="table table-zebra table-sm">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Type</th>
-                <th>Target</th>
-                <th>Active</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {channels.map((channel) => (
-                <tr key={channel.id}>
-                  <td>{channel.name}</td>
-                  <td>{channel.type}</td>
-                  <td className="text-xs font-mono">{channel.type === "webhook" ? channel.endpoint : channel.emailTo}</td>
-                  <td>{channel.isActive ? "yes" : "no"}</td>
-                  <td className="flex gap-2">
+        <DataTable>
+          <thead className="bg-slate-50 text-slate-600">
+            <tr>
+              <th className="px-3 py-2">Name</th>
+              <th className="px-3 py-2">Type</th>
+              <th className="px-3 py-2">Target</th>
+              <th className="px-3 py-2">Active</th>
+              <th className="px-3 py-2">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {channels.map((channel) => (
+              <tr key={channel.id}>
+                <td className="px-3 py-2">{channel.name}</td>
+                <td className="px-3 py-2">{channel.type}</td>
+                <td className="px-3 py-2 text-xs font-mono">{channel.type === "webhook" ? channel.endpoint : channel.emailTo}</td>
+                <td className="px-3 py-2">{channel.isActive ? "yes" : "no"}</td>
+                <td className="px-3 py-2">
+                  <div className="flex gap-2">
                     {canEdit && (
-                      <button
-                        className="btn btn-xs"
+                      <PrimaryButton
+                        className="px-2 py-1 text-xs"
                         onClick={async () => {
                           try {
                             await update({
@@ -2370,11 +2434,11 @@ function NotificationsPage({ apiUrl }: { apiUrl: string }) {
                         }}
                       >
                         {channel.isActive ? "Disable" : "Enable"}
-                      </button>
+                      </PrimaryButton>
                     )}
                     {canDelete && (
                       <DangerButton
-                        className="btn-xs"
+                        className="px-2 py-1 text-xs"
                         onClick={() => {
                           remove({ resource: "notification-channels", id: channel.id });
                           (channelsList as any).query.refetch();
@@ -2383,41 +2447,39 @@ function NotificationsPage({ apiUrl }: { apiUrl: string }) {
                         Delete
                       </DangerButton>
                     )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </DataTable>
       </PageCard>
 
       <PageCard title="Notification Deliveries (recent)">
-        <div className="overflow-x-auto">
-          <table className="table table-zebra table-sm">
-            <thead>
-              <tr>
-                <th>When</th>
-                <th>Channel</th>
-                <th>Status</th>
-                <th>Camera</th>
-                <th>Incident</th>
-                <th>Error</th>
+        <DataTable>
+          <thead className="bg-slate-50 text-slate-600">
+            <tr>
+              <th className="px-3 py-2">When</th>
+              <th className="px-3 py-2">Channel</th>
+              <th className="px-3 py-2">Status</th>
+              <th className="px-3 py-2">Camera</th>
+              <th className="px-3 py-2">Incident</th>
+              <th className="px-3 py-2">Error</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {deliveries.map((delivery) => (
+              <tr key={delivery.id}>
+                <td className="px-3 py-2">{new Date(delivery.createdAt).toLocaleString()}</td>
+                <td className="px-3 py-2">{delivery.channelType}</td>
+                <td className="px-3 py-2">{delivery.status}</td>
+                <td className="px-3 py-2 font-mono text-xs">{delivery.cameraId}</td>
+                <td className="px-3 py-2 font-mono text-xs">{delivery.incidentId}</td>
+                <td className="px-3 py-2 text-xs">{delivery.error ?? "-"}</td>
               </tr>
-            </thead>
-            <tbody>
-              {deliveries.map((delivery) => (
-                <tr key={delivery.id}>
-                  <td>{new Date(delivery.createdAt).toLocaleString()}</td>
-                  <td>{delivery.channelType}</td>
-                  <td>{delivery.status}</td>
-                  <td className="font-mono text-xs">{delivery.cameraId}</td>
-                  <td className="font-mono text-xs">{delivery.incidentId}</td>
-                  <td className="text-xs">{delivery.error ?? "-"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+            ))}
+          </tbody>
+        </DataTable>
       </PageCard>
     </div>
   );
@@ -2429,9 +2491,9 @@ function PlansPage() {
     <PageCard title="Plans">
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         {(result?.data ?? []).map((p: any) => (
-          <div key={p.id} className="rounded-box border border-base-300 p-4">
+          <Surface key={p.id} className="p-4">
             <h3 className="text-lg font-bold">{p.name}</h3>
-            <p className="text-sm opacity-70">{p.code}</p>
+            <p className="text-sm text-slate-500">{p.code}</p>
             <div className="mt-2 text-sm">Max cameras: {p.limits.maxCameras}</div>
             <div className="text-sm">Retention days: {p.limits.retentionDays}</div>
             <div className="mt-2 text-sm">
@@ -2440,7 +2502,7 @@ function PlansPage() {
                 .filter((f) => p.features[f])
                 .join(", ")}
             </div>
-          </div>
+          </Surface>
         ))}
       </div>
     </PageCard>
@@ -2473,21 +2535,21 @@ function SubscriptionPage({ apiUrl, onChanged }: { apiUrl: string; onChanged: ()
   return (
     <PageCard title="Subscription">
       {active ? (
-        <div className="mb-4 rounded-box border border-base-300 p-4">
+        <Surface className="mb-4 p-4">
           <div>Current plan: {active.plan?.name}</div>
           <div>Status: {active.status}</div>
           <div>Period end: {new Date(active.currentPeriodEnd).toLocaleDateString()}</div>
-        </div>
+        </Surface>
       ) : (
-        <div className="mb-4 alert">No active subscription</div>
+        <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">No active subscription</div>
       )}
 
       {canEdit && (
         <div className="flex flex-wrap gap-2">
           {(plans?.data ?? []).map((p: any) => (
-            <button key={p.id} className="btn" onClick={() => activate(p.id)}>
+            <PrimaryButton key={p.id} className="px-2.5 py-1.5 text-xs" onClick={() => activate(p.id)}>
               Activate {p.name}
-            </button>
+            </PrimaryButton>
           ))}
         </div>
       )}
@@ -2893,17 +2955,17 @@ function MonitorPage({ apiUrl }: { apiUrl: string }) {
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
-        <label className="label cursor-pointer gap-2">
+        <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-slate-200 px-2.5 py-2 text-sm">
           <input
             type="checkbox"
-            className="checkbox checkbox-sm"
+            className="h-4 w-4 rounded border-slate-300"
             checked={onlyActive}
             onChange={(event) => setOnlyActive(event.target.checked)}
           />
-          <span className="label-text">Solo activas</span>
+          <span>Solo activas</span>
         </label>
         <PrimaryButton
-          className="btn-sm"
+          className="px-2.5 py-1.5 text-xs"
           type="button"
           onClick={() => {
             void issueFeedTokens(cameras, { force: true });
@@ -2916,26 +2978,26 @@ function MonitorPage({ apiUrl }: { apiUrl: string }) {
       <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
         <Badge>{visibleCameras.length} visibles</Badge>
         <Badge>{cameras.length} totales</Badge>
-        {refreshingFeeds && <Badge className="badge-warning">actualizando tokens</Badge>}
+        {refreshingFeeds && <Badge className="border-amber-200 bg-amber-50 text-amber-700">actualizando tokens</Badge>}
       </div>
-      {error && <div className="alert alert-error mb-3 py-2 text-sm">{error}</div>}
-      {loading && <div className="text-sm opacity-70">Cargando cámaras y sesiones...</div>}
+      {error && <div className="mb-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
+      {loading && <div className="text-sm text-slate-500">Cargando cámaras y sesiones...</div>}
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-2 2xl:grid-cols-3">
         {visibleCameras.map((camera) => {
           const feed = feeds[camera.id];
           const health = streamHealth[camera.id];
           return (
-            <div key={camera.id} className="rounded-box border border-base-300 p-3">
+            <Surface key={camera.id}>
               <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                 <div className="font-semibold">{camera.name}</div>
                 <div className="flex items-center gap-1">
-                  <Badge className={camera.isActive ? "badge-success" : "badge-ghost"}>
+                  <Badge className={camera.isActive ? "border-emerald-200 bg-emerald-50 text-emerald-700" : ""}>
                     {camera.isActive ? "active" : "inactive"}
                   </Badge>
                   <Badge>{camera.lifecycleStatus ?? "unknown"}</Badge>
                 </div>
               </div>
-              <div className="mb-2 text-xs opacity-70">
+              <div className="mb-2 text-xs text-slate-600">
                 <div>id: {camera.id}</div>
                 <div>location: {camera.location ?? "-"}</div>
                 <div>token expira: {feed?.expiresAt ? new Date(feed.expiresAt).toLocaleTimeString() : "-"}</div>
@@ -2955,15 +3017,15 @@ function MonitorPage({ apiUrl }: { apiUrl: string }) {
               {feed?.status === "ready" && feed.playbackUrl ? (
                 <CameraFeedPlayer playbackUrl={feed.playbackUrl} cameraName={camera.name} />
               ) : (
-                <div className="flex aspect-video items-center justify-center rounded-box bg-base-200 text-sm">
+                <div className="flex aspect-video items-center justify-center rounded-lg bg-slate-100 text-sm">
                   {feed?.status === "loading" ? "Preparando stream..." : feed?.error ?? "Feed no disponible"}
                 </div>
               )}
-            </div>
+            </Surface>
           );
         })}
       </div>
-      {!loading && !visibleCameras.length && <div className="mt-3 text-sm opacity-70">No hay cámaras para mostrar.</div>}
+      {!loading && !visibleCameras.length && <div className="mt-3 text-sm text-slate-500">No hay cámaras para mostrar.</div>}
     </PageCard>
   );
 }
@@ -3122,21 +3184,21 @@ function RealtimePage({ apiUrl }: { apiUrl: string }) {
           onChange={(event) => setTopics(event.target.value)}
           placeholder="topics csv (incident,detection,stream)"
         />
-        <div className="rounded-box bg-base-200 px-3 py-2 text-sm">transport: {transport}</div>
-        <div className="rounded-box bg-base-200 px-3 py-2 text-sm">tenant: {tenantId ?? "-"}</div>
-        <div className="rounded-box bg-base-200 px-3 py-2 text-sm">status: {status}</div>
+        <Surface className="px-3 py-2 text-sm">transport: {transport}</Surface>
+        <Surface className="px-3 py-2 text-sm">tenant: {tenantId ?? "-"}</Surface>
+        <Surface className="px-3 py-2 text-sm">status: {status}</Surface>
       </div>
       <div className="space-y-2">
         {events.map((event) => (
-          <div key={event.eventId} className="rounded-box bg-base-200 p-3 text-xs">
+          <Surface key={event.eventId} className="bg-slate-100 p-3 text-xs">
             <div className="mb-1 flex items-center justify-between">
               <Badge>{event.eventType}</Badge>
               <span>{new Date(event.occurredAt).toLocaleString()}</span>
             </div>
             <pre className="overflow-x-auto whitespace-pre-wrap">{JSON.stringify(event.payload, null, 2)}</pre>
-          </div>
+          </Surface>
         ))}
-        {!events.length && <div className="text-sm opacity-70">No realtime events received yet.</div>}
+        {!events.length && <div className="text-sm text-slate-500">No realtime events received yet.</div>}
       </div>
     </PageCard>
   );

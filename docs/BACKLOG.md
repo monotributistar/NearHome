@@ -431,7 +431,7 @@ Convención de ejecución: cada item debe salir en PR chica (1 feature principal
 
 ### NH-044 (P0) - Auditoría de pantallas y matriz de prioridad
 
-- Estado: `todo`
+- Estado: `done`
 - Estimación: `1d`
 - Dependencias: ninguna.
 - Scope:
@@ -444,7 +444,7 @@ Convención de ejecución: cada item debe salir en PR chica (1 feature principal
 
 ### NH-045 (P0) - Contrato de UI base en @app/ui
 
-- Estado: `todo`
+- Estado: `done`
 - Estimación: `2d`
 - Dependencias: `NH-044`.
 - Scope:
@@ -457,7 +457,7 @@ Convención de ejecución: cada item debe salir en PR chica (1 feature principal
 
 ### NH-046 (P0) - IA/Navegación backoffice por casos de uso
 
-- Estado: `todo`
+- Estado: `done`
 - Estimación: `1d`
 - Dependencias: `NH-045`.
 - Scope:
@@ -470,7 +470,7 @@ Convención de ejecución: cada item debe salir en PR chica (1 feature principal
 
 ### NH-047 (P0) - IA/Navegación app cliente por casos de uso
 
-- Estado: `todo`
+- Estado: `done`
 - Estimación: `1d`
 - Dependencias: `NH-045`.
 - Scope:
@@ -482,7 +482,7 @@ Convención de ejecución: cada item debe salir en PR chica (1 feature principal
 
 ### NH-048 (P0) - Migración vertical Admin Operaciones (control/monitor/realtime/nodes)
 
-- Estado: `todo`
+- Estado: `done`
 - Estimación: `3d`
 - Dependencias: `NH-046`.
 - Scope:
@@ -495,7 +495,7 @@ Convención de ejecución: cada item debe salir en PR chica (1 feature principal
 
 ### NH-049 (P0) - Migración vertical Admin Recursos (cameras/notifications)
 
-- Estado: `todo`
+- Estado: `done`
 - Estimación: `3d`
 - Dependencias: `NH-048`.
 - Scope:
@@ -508,7 +508,7 @@ Convención de ejecución: cada item debe salir en PR chica (1 feature principal
 
 ### NH-050 (P0) - Migración vertical Admin Identidad (tenants/users/memberships)
 
-- Estado: `todo`
+- Estado: `done`
 - Estimación: `3d`
 - Dependencias: `NH-049`.
 - Scope:
@@ -521,7 +521,7 @@ Convención de ejecución: cada item debe salir en PR chica (1 feature principal
 
 ### NH-051 (P1) - Migración vertical Admin Comercial (plans/subscriptions)
 
-- Estado: `todo`
+- Estado: `done`
 - Estimación: `2d`
 - Dependencias: `NH-050`.
 - Scope:
@@ -533,7 +533,7 @@ Convención de ejecución: cada item debe salir en PR chica (1 feature principal
 
 ### NH-052 (P0) - Migración vertical Portal Operaciones (cameras/events/realtime)
 
-- Estado: `todo`
+- Estado: `done`
 - Estimación: `3d`
 - Dependencias: `NH-047`.
 - Scope:
@@ -545,7 +545,7 @@ Convención de ejecución: cada item debe salir en PR chica (1 feature principal
 
 ### NH-053 (P1) - Migración vertical Portal Cuenta (tenant/account)
 
-- Estado: `todo`
+- Estado: `done`
 - Estimación: `2d`
 - Dependencias: `NH-052`.
 - Scope:
@@ -557,7 +557,7 @@ Convención de ejecución: cada item debe salir en PR chica (1 feature principal
 
 ### NH-054 (P0) - QA responsive y accesibilidad mínima
 
-- Estado: `todo`
+- Estado: `done`
 - Estimación: `2d`
 - Dependencias: `NH-051`, `NH-053`.
 - Scope:
@@ -569,7 +569,7 @@ Convención de ejecución: cada item debe salir en PR chica (1 feature principal
 
 ### NH-055 (P0) - Suite de no-regresión UI (smoke)
 
-- Estado: `todo`
+- Estado: `done`
 - Estimación: `2d`
 - Dependencias: `NH-054`.
 - Scope:

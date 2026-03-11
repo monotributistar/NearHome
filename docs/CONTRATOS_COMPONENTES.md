@@ -1,6 +1,6 @@
 # Contratos por componente e interfaz
 
-Fecha de actualización: `2026-03-06`
+Fecha de actualización: `2026-03-11`
 
 ## 1) Contrato de dominio compartido (`@app/shared`)
 
@@ -219,8 +219,73 @@ Matriz mínima:
 
 ### `@app/ui`
 
-- Componentes base con clases semánticas daisyUI.
-- Primitivas complejas sin lock-in (estilo shadcn/Radix).
+- Objetivo:
+  - Ser la fuente única de composición visual para `apps/admin` y `apps/portal`.
+  - Evitar layout ad hoc por pantalla.
+- Componentes base disponibles (archivo fuente: `packages/ui/src/index.tsx`):
+  - `AppShell`: contenedor de aplicación.
+  - `WorkspaceShell`: layout estándar de workspace (header + sidebar + content).
+  - `PageCard`: bloque de contenido con título/acciones.
+  - `Surface`: contenedor plano auxiliar para secciones internas.
+  - `FormGrid`: grilla base para formularios.
+  - `FieldLabel`: etiqueta de campo.
+  - `DataTable`: wrapper estándar de tabla con scroll horizontal.
+  - `PrimaryButton`, `DangerButton`, `TextInput`, `SelectInput`, `Badge`, `Modal`.
+
+#### Contrato de layout (`WorkspaceShell`)
+
+- Input:
+  - `product: string`
+  - `subtitle?: string`
+  - `role?: ReactNode`
+  - `tenantSwitcher?: ReactNode`
+  - `onLogout?: () => void`
+  - `navigation: WorkspaceNavGroup[]`
+  - `children`
+- `WorkspaceNavGroup`:
+  - `{ title: string, items: WorkspaceNavItem[] }`
+- `WorkspaceNavItem`:
+  - `{ to: string, label: string, icon?: ReactNode }`
+- Output/Comportamiento:
+  - Header sticky con acciones globales (tenant/rol/logout).
+  - Sidebar con navegación agrupada y resaltado de ruta activa por `NavLink`.
+  - Área principal única para contenido de la pantalla.
+
+#### Reglas responsive mínimas (obligatorias)
+
+- Formularios:
+  - Base: `grid-cols-1`.
+  - Desktop: usar `FormGrid` (`md:grid-cols-2`) como default.
+  - Formularios densos: permitir `md:grid-cols-12` solo cuando exista justificación funcional.
+- Tablas:
+  - Siempre dentro de `DataTable` o contenedor con `overflow-x-auto`.
+  - No usar tablas sin estrategia de overflow.
+- Layout global:
+  - Sidebar + content en desktop.
+  - Columna única en mobile.
+
+#### Composición permitida (Do)
+
+- Usar `WorkspaceShell` en todas las pantallas autenticadas de admin/portal.
+- Usar `PageCard` para delimitar secciones funcionales.
+- Usar `FormGrid` + `FieldLabel` para formularios de alta/edición.
+- Usar `PrimaryButton`/`DangerButton` en lugar de botones con clases inline ad hoc.
+- Usar `Badge` para estados cortos y consistentes.
+
+#### Anti-patrones (Don't)
+
+- No crear navbars/sidebars locales por pantalla fuera de `WorkspaceShell`.
+- No mezclar más de un sistema de estilos para el mismo tipo de control en una misma vista.
+- No usar `table` directa sin wrapper de overflow.
+- No usar combinaciones de clases de botón/input inconsistentes entre pantallas.
+- No introducir componentes de UI externos nuevos en apps sin pasar por `@app/ui`.
+
+#### Criterio de aceptación para migraciones UI
+
+- Para cada PR de migración:
+  - `pnpm --filter @app/ui typecheck` en verde.
+  - `pnpm --filter @app/admin typecheck` y/o `pnpm --filter @app/portal typecheck` en verde según alcance.
+  - Sin regresiones visibles de solapamiento en `375`, `768`, `1024`, `1280`.
 
 ## 7) Contrato de datos semilla
 

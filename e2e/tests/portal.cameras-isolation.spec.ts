@@ -163,11 +163,11 @@ test("NH-031 e2e cameras isolation: 10 cameras split across tenants for monitor/
     await page.getByLabel("Email").fill(email);
     await page.getByLabel("Password").fill(password);
     await page.getByRole("button", { name: "Login" }).click();
-    await page.getByRole("link", { name: "Cameras" }).click();
+    await page.locator('a[href="/operations/cameras"]').click();
   };
 
   const assertTenantView = async (tenantName: string, expected: string[], forbidden: string[]) => {
-    await page.locator(".navbar select").selectOption({ label: tenantName });
+    await page.getByRole("combobox").first().selectOption({ label: tenantName });
     for (const cameraName of expected) await expect(page.getByText(cameraName)).toBeVisible();
     for (const cameraName of forbidden) await expect(page.getByText(cameraName)).toHaveCount(0);
   };
@@ -183,14 +183,14 @@ test("NH-031 e2e cameras isolation: 10 cameras split across tenants for monitor/
     [tenantBCams[0].name, tenantBCams[1].name],
     [tenantACams[0].name, tenantCCams[0].name]
   );
-  await expect(page.locator(".navbar select").getByRole("option", { name: tenants[2].name })).toHaveCount(0);
+  await expect(page.getByRole("combobox").first().getByRole("option", { name: tenants[2].name })).toHaveCount(0);
 
   await page.getByRole("button", { name: "Logout" }).click();
   await loginPortal("client@nearhome.dev", "demo1234");
-  await expect(page.locator(".navbar select").getByRole("option", { name: tenants[0].name })).toHaveCount(1);
-  await expect(page.locator(".navbar select").getByRole("option", { name: tenants[1].name })).toHaveCount(0);
-  await expect(page.locator(".navbar select").getByRole("option", { name: tenants[2].name })).toHaveCount(0);
-  await page.locator(".navbar select").selectOption({ label: tenants[0].name });
+  await expect(page.getByRole("combobox").first().getByRole("option", { name: tenants[0].name })).toHaveCount(1);
+  await expect(page.getByRole("combobox").first().getByRole("option", { name: tenants[1].name })).toHaveCount(0);
+  await expect(page.getByRole("combobox").first().getByRole("option", { name: tenants[2].name })).toHaveCount(0);
+  await page.getByRole("combobox").first().selectOption({ label: tenants[0].name });
   await expect(page.getByText(tenantACams[0].name)).toBeVisible();
   await expect(page.getByText(tenantBCams[0].name)).toHaveCount(0);
   await expect(page.getByText(tenantCCams[0].name)).toHaveCount(0);
