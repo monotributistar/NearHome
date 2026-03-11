@@ -120,6 +120,7 @@ model CameraProfile {
   homography          String?
   sceneTags           String?
   rulesProfile        String?
+  detectionProfile    String?
   status              String   @default("ready")
   lastHealthAt        DateTime?
   lastError           String?
@@ -522,6 +523,7 @@ model InferenceNodeSnapshot {
   updatedAt        DateTime @updatedAt
   tenant           Tenant?  @relation(fields: [tenantId], references: [id])
   assignments      InferenceNodeTenantAssignment[]
+  desiredConfig    InferenceNodeDesiredConfig?
 
   @@unique([nodeId])
 }
@@ -537,4 +539,41 @@ model InferenceNodeTenantAssignment {
 
   @@unique([nodeId, tenantId])
   @@index([tenantId])
+}
+
+model ModelCatalogEntry {
+  id          String   @id @default(cuid())
+  provider    String
+  taskType    String
+  quality     String
+  modelRef    String
+  displayName String
+  resources   String
+  defaults    String?
+  outputs     String?
+  status      String   @default("active")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([provider, taskType, quality, modelRef])
+  @@index([provider, taskType, quality, status])
+}
+
+model InferenceNodeDesiredConfig {
+  id               String   @id @default(cuid())
+  nodeId           String   @unique
+  runtime          String
+  transport        String
+  endpoint         String
+  desiredResources String
+  desiredModels    String
+  desiredCapabilities String
+  desiredTenantIds String
+  maxConcurrent    Int
+  contractVersion  String
+  configVersion    Int      @default(1)
+  lastAppliedAt    DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  node             InferenceNodeSnapshot @relation(fields: [nodeId], references: [nodeId], onDelete: Cascade)
 }

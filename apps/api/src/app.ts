@@ -103,6 +103,39 @@ type DetectorFlags = {
   lpr: boolean;
 };
 
+type DetectionRuntimeProvider = "yolo" | "mediapipe";
+type DetectionTaskType = "person_detection" | "object_detection" | "license_plate_detection" | "face_detection" | "pose_estimation";
+type DetectionQuality = "fast" | "balanced" | "accurate";
+
+type CameraDetectionPipeline = {
+  pipelineId: string;
+  provider: DetectionRuntimeProvider;
+  taskType: DetectionTaskType;
+  quality: DetectionQuality;
+  enabled: boolean;
+  schedule?: {
+    mode: DetectionMode;
+    frameStride: number;
+  };
+  thresholds?: Record<string, unknown>;
+  outputs?: Record<string, unknown>;
+};
+
+type CameraDetectionProfile = {
+  cameraId: string;
+  tenantId: string;
+  pipelines: CameraDetectionPipeline[];
+  configVersion: number;
+  updatedAt: string;
+};
+
+type DesiredNodeCapability = {
+  capabilityId: string;
+  taskTypes: string[];
+  qualities: DetectionQuality[];
+  modelRefs: string[];
+};
+
 type CameraRecordingPolicy = {
   mode: "continuous" | "event_only" | "hybrid" | "observe_only";
   eventClipPreSeconds: number;
@@ -184,6 +217,51 @@ const DetectionJobStatusSchema = z.enum(["queued", "running", "succeeded", "fail
 const DetectionModeSchema = z.enum(["realtime", "batch"]);
 const DetectionSourceSchema = z.enum(["snapshot", "clip", "range"]);
 const DetectionProviderSchema = z.enum(["onprem_bento", "huggingface_space", "external_http"]);
+const DetectionRuntimeProviderSchema = z.enum(["yolo", "mediapipe"]);
+const DetectionTaskTypeSchema = z.enum([
+  "person_detection",
+  "object_detection",
+  "license_plate_detection",
+  "face_detection",
+  "pose_estimation"
+]);
+const DetectionQualitySchema = z.enum(["fast", "balanced", "accurate"]);
+const DesiredNodeCapabilitySchema = z.object({
+  capabilityId: z.string(),
+  taskTypes: z.array(z.string()).default([]),
+  qualities: z.array(DetectionQualitySchema).default([]),
+  modelRefs: z.array(z.string()).default([])
+});
+const CameraDetectionPipelineSchema = z.object({
+  pipelineId: z.string().min(1),
+  provider: DetectionRuntimeProviderSchema,
+  taskType: DetectionTaskTypeSchema,
+  quality: DetectionQualitySchema,
+  enabled: z.boolean().default(true),
+  schedule: z
+    .object({
+      mode: DetectionModeSchema.default("realtime"),
+      frameStride: z.number().int().positive().default(1)
+    })
+    .optional(),
+  thresholds: z.record(z.any()).optional(),
+  outputs: z.record(z.any()).optional()
+});
+const CameraDetectionProfileInputSchema = z.object({
+  pipelines: z.array(CameraDetectionPipelineSchema).default([]),
+  configVersion: z.number().int().positive().optional()
+});
+const ModelCatalogEntryInputSchema = z.object({
+  provider: DetectionRuntimeProviderSchema,
+  taskType: DetectionTaskTypeSchema,
+  quality: DetectionQualitySchema,
+  modelRef: z.string().min(1),
+  displayName: z.string().min(1),
+  resources: z.record(z.number()).default({ cpu: 1, gpu: 0, vramMb: 0 }),
+  defaults: z.record(z.any()).optional(),
+  outputs: z.record(z.any()).optional(),
+  status: z.enum(["active", "disabled"]).default("active")
+});
 
 function canTransitionCameraLifecycle(from: CameraLifecycleStatus, to: CameraLifecycleStatus) {
   const allowed: Record<CameraLifecycleStatus, CameraLifecycleStatus[]> = {
@@ -232,9 +310,145 @@ function defaultCameraProfileData(tenantId: string, cameraId: string) {
     homography: null as string | null,
     sceneTags: JSON.stringify([] as string[]),
     rulesProfile: JSON.stringify({} as Record<string, unknown>),
+    detectionProfile: JSON.stringify(defaultCameraDetectionProfile(tenantId, cameraId)),
     status: "ready" as ProfileStatus,
     lastHealthAt: new Date(),
     lastError: null as string | null
+  };
+}
+
+function defaultCameraDetectionProfile(tenantId: string, cameraId: string): CameraDetectionProfile {
+  return {
+    cameraId,
+    tenantId,
+    pipelines: [],
+    configVersion: 1,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function parseCameraDetectionProfile(raw: string | null, tenantId: string, cameraId: string): CameraDetectionProfile {
+  const fallback = defaultCameraDetectionProfile(tenantId, cameraId);
+  if (!raw) return fallback;
+  try {
+    const parsed = CameraDetectionProfileInputSchema.partial().parse(parseJson<Record<string, unknown>>(raw));
+    return {
+      cameraId,
+      tenantId,
+      pipelines: parsed.pipelines ?? fallback.pipelines,
+      configVersion: parsed.configVersion ?? fallback.configVersion,
+      updatedAt: fallback.updatedAt
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function serializeCameraDetectionProfile(profile: CameraDetectionProfile) {
+  return JSON.stringify({
+    pipelines: profile.pipelines,
+    configVersion: profile.configVersion,
+    updatedAt: profile.updatedAt
+  });
+}
+
+function normalizeDesiredNodeCapabilities(
+  capabilities: Array<Record<string, unknown>> | DesiredNodeCapability[]
+): DesiredNodeCapability[] {
+  return capabilities.map((entry, index) => {
+    const raw = entry && typeof entry === "object" ? entry : {};
+    const parsed = DesiredNodeCapabilitySchema.safeParse(raw);
+    if (parsed.success) return parsed.data;
+    return {
+      capabilityId: typeof (raw as Record<string, unknown>).capabilityId === "string" ? String((raw as Record<string, unknown>).capabilityId) : `cap-${index}`,
+      taskTypes: [],
+      qualities: [],
+      modelRefs: []
+    };
+  });
+}
+
+function normalizeDesiredNodeConfig(args: {
+  nodeId: string;
+  runtime: string;
+  transport: string;
+  endpoint: string;
+  desiredResources: string;
+  desiredModels: string;
+  desiredCapabilities: string;
+  desiredTenantIds: string;
+  maxConcurrent: number;
+  contractVersion: string;
+  configVersion: number;
+  lastAppliedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}) {
+  return {
+    nodeId: args.nodeId,
+    runtime: args.runtime,
+    transport: args.transport,
+    endpoint: args.endpoint,
+    resources: parseJson<Record<string, number>>(args.desiredResources),
+    capabilities: normalizeDesiredNodeCapabilities(parseJson<Array<Record<string, unknown>>>(args.desiredCapabilities)),
+    models: parseJson<string[]>(args.desiredModels),
+    tenantIds: parseJson<string[]>(args.desiredTenantIds),
+    maxConcurrent: args.maxConcurrent,
+    contractVersion: args.contractVersion,
+    configVersion: args.configVersion,
+    lastAppliedAt: args.lastAppliedAt ? toISO(args.lastAppliedAt) : null,
+    createdAt: toISO(args.createdAt),
+    updatedAt: toISO(args.updatedAt)
+  };
+}
+
+function buildNodeConfigDiff(args: {
+  desired: ReturnType<typeof normalizeDesiredNodeConfig> | null;
+  observed:
+    | {
+        runtime: string;
+        transport: string;
+        endpoint: string;
+        resources: Record<string, number>;
+        capabilities: BridgeNodeCapability[];
+        models: string[];
+        assignedTenantIds: string[];
+        maxConcurrent: number;
+      }
+    | null;
+}) {
+  if (!args.desired || !args.observed) {
+    return {
+      inSync: false,
+      items: [
+        {
+          field: "presence",
+          desired: Boolean(args.desired),
+          observed: Boolean(args.observed)
+        }
+      ]
+    };
+  }
+
+  const items: Array<{ field: string; desired: unknown; observed: unknown }> = [];
+  const compare = (field: string, desired: unknown, observed: unknown) => {
+    if (JSON.stringify(desired) !== JSON.stringify(observed)) {
+      items.push({ field, desired, observed });
+    }
+  };
+
+  compare("runtime", args.desired.runtime, args.observed.runtime);
+  compare("transport", args.desired.transport, args.observed.transport);
+  compare("endpoint", args.desired.endpoint, args.observed.endpoint);
+  compare("resources", args.desired.resources, args.observed.resources);
+  compare("models", args.desired.models, args.observed.models);
+  compare("capabilities", args.desired.capabilities, args.observed.capabilities);
+  compare("tenantIds", args.desired.tenantIds, args.observed.assignedTenantIds);
+  compare("maxConcurrent", args.desired.maxConcurrent, args.observed.maxConcurrent);
+
+  return {
+    inSync: items.length === 0,
+    items
   };
 }
 
@@ -318,6 +532,7 @@ function profileResponse(profile: {
   homography: string | null;
   sceneTags: string | null;
   rulesProfile: string | null;
+  detectionProfile: string | null;
   status: string;
   lastHealthAt: Date | null;
   lastError: string | null;
@@ -339,6 +554,7 @@ function profileResponse(profile: {
     homography: profile.homography ? parseJson<Record<string, unknown>>(profile.homography) : undefined,
     sceneTags: profile.sceneTags ? parseJson<string[]>(profile.sceneTags) : undefined,
     rulesProfile: profile.rulesProfile ? parseJson<Record<string, unknown>>(profile.rulesProfile) : undefined,
+    detectionProfile: parseCameraDetectionProfile(profile.detectionProfile, profile.tenantId, profile.cameraId),
     status: profile.status as ProfileStatus,
     configComplete,
     lastHealthAt: profile.lastHealthAt ? toISO(profile.lastHealthAt) : null,
@@ -375,6 +591,7 @@ function cameraResponse(camera: {
     homography: string | null;
     sceneTags: string | null;
     rulesProfile: string | null;
+    detectionProfile: string | null;
     status: string;
     lastHealthAt: Date | null;
     lastError: string | null;
@@ -2311,6 +2528,64 @@ export async function buildApp() {
     updatedAt: row.updatedAt.toISOString()
   });
 
+  const modelCatalogEntryResponse = (row: {
+    id: string;
+    provider: string;
+    taskType: string;
+    quality: string;
+    modelRef: string;
+    displayName: string;
+    resources: string;
+    defaults: string | null;
+    outputs: string | null;
+    status: string;
+    createdAt: Date;
+    updatedAt: Date;
+  }) => ({
+    id: row.id,
+    provider: row.provider,
+    taskType: row.taskType,
+    quality: row.quality,
+    modelRef: row.modelRef,
+    displayName: row.displayName,
+    resources: parseJson<Record<string, number>>(row.resources),
+    defaults: row.defaults ? parseJson<Record<string, unknown>>(row.defaults) : undefined,
+    outputs: row.outputs ? parseJson<Record<string, unknown>>(row.outputs) : undefined,
+    status: row.status,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString()
+  });
+
+  const nodeObservedConfigResponse = (row: {
+    runtime: string;
+    transport: string;
+    endpoint: string;
+    resources: string;
+    capabilities: string;
+    models: string;
+    maxConcurrent: number;
+    assignments?: Array<{ tenantId: string }>;
+    status: string;
+    queueDepth: number;
+    isDrained: boolean;
+    lastHeartbeatAt: Date;
+    updatedAt: Date;
+  }) => ({
+    runtime: row.runtime,
+    transport: row.transport,
+    endpoint: row.endpoint,
+    resources: parseJson<Record<string, number>>(row.resources),
+    capabilities: parseJson<BridgeNodeCapability[]>(row.capabilities),
+    models: parseJson<string[]>(row.models),
+    assignedTenantIds: Array.from(new Set((row.assignments ?? []).map((assignment) => assignment.tenantId))),
+    maxConcurrent: row.maxConcurrent,
+    status: row.status,
+    queueDepth: row.queueDepth,
+    isDrained: row.isDrained,
+    lastHeartbeatAt: row.lastHeartbeatAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString()
+  });
+
   const syncInferenceNodeSnapshots = async (nodesRaw: Array<Record<string, unknown>>) => {
     const normalized = nodesRaw.map(normalizeBridgeNode).filter((item): item is BridgeNodeSnapshot => Boolean(item));
     if (!normalized.length) return;
@@ -3992,6 +4267,72 @@ export async function buildApp() {
     });
 
     return { data: profileResponse(profile) };
+  });
+
+  app.get("/cameras/:id/detection-profile", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+    const id = (request.params as { id: string }).id;
+    await assertCameraAccess({ ...ctx, cameraId: id });
+    const camera = await prisma.camera.findFirst({
+      where: { id, tenantId: ctx.tenantId, deletedAt: null }
+    });
+    if (!camera) throw app.httpErrors.notFound();
+
+    const profile = await prisma.cameraProfile.upsert({
+      where: { cameraId: id },
+      update: {},
+      create: defaultCameraProfileData(ctx.tenantId, id)
+    });
+    return { data: parseCameraDetectionProfile(profile.detectionProfile, ctx.tenantId, id) };
+  });
+
+  app.put("/cameras/:id/detection-profile", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin"]);
+    const id = (request.params as { id: string }).id;
+    const body = CameraDetectionProfileInputSchema.parse(request.body ?? {});
+
+    const camera = await prisma.camera.findFirst({
+      where: { id, tenantId: ctx.tenantId, deletedAt: null }
+    });
+    if (!camera) throw app.httpErrors.notFound();
+
+    const existing = await prisma.cameraProfile.findUnique({ where: { cameraId: id } });
+    const current = parseCameraDetectionProfile(existing?.detectionProfile ?? null, ctx.tenantId, id);
+    const nextProfile: CameraDetectionProfile = {
+      cameraId: id,
+      tenantId: ctx.tenantId,
+      pipelines: body.pipelines,
+      configVersion: body.configVersion ?? current.configVersion + 1,
+      updatedAt: new Date().toISOString()
+    };
+
+    await prisma.cameraProfile.upsert({
+      where: { cameraId: id },
+      update: {
+        detectionProfile: serializeCameraDetectionProfile(nextProfile)
+      },
+      create: {
+        ...defaultCameraProfileData(ctx.tenantId, id),
+        detectionProfile: serializeCameraDetectionProfile(nextProfile)
+      }
+    });
+
+    await appendAuditLog({
+      tenantId: ctx.tenantId,
+      actorUserId: ctx.userId,
+      resource: "camera_detection_profile",
+      action: "update",
+      resourceId: id,
+      payload: {
+        configVersion: nextProfile.configVersion,
+        pipelines: nextProfile.pipelines.length
+      },
+      context: request.ctx
+    });
+
+    return { data: nextProfile };
   });
 
   app.get("/cameras/:id/lifecycle", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {

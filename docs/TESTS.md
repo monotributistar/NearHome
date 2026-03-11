@@ -136,6 +136,7 @@ Archivos: `e2e/tests/*.spec.ts`
   - creación de solicitud `subscriptions/requests` vía cliente (API)
   - revisión/aprobación en UI admin (`/commercial/subscriptions`)
   - verificación de transición `pending_review -> approved`
+  - RBAC: `monitor` ve solicitudes pero sin acciones de review (`Aprobar/Rechazar`)
 
 - NH-031 aislamiento fuerte de cámaras multi-tenant (10 cámaras)
   - alta de 3 tenants y siembra de 10 cámaras (mock + reales opcionales por env `E2E_REAL_CAM1_RTSP`/`E2E_REAL_CAM2_RTSP`)

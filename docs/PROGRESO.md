@@ -393,6 +393,7 @@
 - Endurecimiento e2e comercial admin:
   - nueva prueba `admin.subscription-requests.spec.ts` para revisión/aprobación de solicitudes `pending_review`.
   - validación: `pnpm test:e2e -- e2e/tests/admin.subscription-requests.spec.ts` en verde.
+  - `admin.rbac.spec.ts` cubre restricción de review para `monitor` en solicitudes de suscripción.
 
 ## Próximo bloque recomendado
 

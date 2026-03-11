@@ -59,6 +59,37 @@ export const CameraSchema = z.object({
       homography: z.record(z.any()).optional(),
       sceneTags: z.array(z.string()).optional(),
       rulesProfile: z.record(z.any()).optional(),
+      detectionProfile: z
+        .object({
+          pipelines: z
+            .array(
+              z.object({
+                pipelineId: z.string(),
+                provider: z.enum(["yolo", "mediapipe"]),
+                taskType: z.enum([
+                  "person_detection",
+                  "object_detection",
+                  "license_plate_detection",
+                  "face_detection",
+                  "pose_estimation"
+                ]),
+                quality: z.enum(["fast", "balanced", "accurate"]),
+                enabled: z.boolean(),
+                schedule: z
+                  .object({
+                    mode: z.enum(["realtime", "batch"]).default("realtime"),
+                    frameStride: z.number().int().positive().default(1)
+                  })
+                  .optional(),
+                thresholds: z.record(z.any()).optional(),
+                outputs: z.record(z.any()).optional()
+              })
+            )
+            .default([]),
+          configVersion: z.number().int().positive().default(1),
+          updatedAt: z.string().optional()
+        })
+        .optional(),
       status: z.enum(["pending", "ready", "error"]),
       configComplete: z.boolean(),
       lastHealthAt: z.string().nullable().optional(),
@@ -248,6 +279,79 @@ export const NodeCapabilitySchema = z.object({
   models: z.array(z.string())
 });
 
+export const DetectionProviderRuntimeSchema = z.enum(["yolo", "mediapipe"]);
+export const DetectionTaskTypeSchema = z.enum([
+  "person_detection",
+  "object_detection",
+  "license_plate_detection",
+  "face_detection",
+  "pose_estimation"
+]);
+export const DetectionQualitySchema = z.enum(["fast", "balanced", "accurate"]);
+
+export const ModelCatalogEntrySchema = z.object({
+  id: z.string(),
+  provider: DetectionProviderRuntimeSchema,
+  taskType: DetectionTaskTypeSchema,
+  quality: DetectionQualitySchema,
+  modelRef: z.string(),
+  displayName: z.string(),
+  resources: z.record(z.number()),
+  defaults: z.record(z.any()).optional(),
+  outputs: z.record(z.any()).optional(),
+  status: z.enum(["active", "disabled"]),
+  createdAt: z.string(),
+  updatedAt: z.string()
+});
+
+export const CameraDetectionPipelineSchema = z.object({
+  pipelineId: z.string(),
+  provider: DetectionProviderRuntimeSchema,
+  taskType: DetectionTaskTypeSchema,
+  quality: DetectionQualitySchema,
+  enabled: z.boolean(),
+  schedule: z
+    .object({
+      mode: z.enum(["realtime", "batch"]).default("realtime"),
+      frameStride: z.number().int().positive().default(1)
+    })
+    .optional(),
+  thresholds: z.record(z.any()).optional(),
+  outputs: z.record(z.any()).optional()
+});
+
+export const CameraDetectionProfileSchema = z.object({
+  cameraId: z.string(),
+  tenantId: z.string(),
+  pipelines: z.array(CameraDetectionPipelineSchema).default([]),
+  configVersion: z.number().int().positive(),
+  updatedAt: z.string()
+});
+
+export const InferenceNodeDesiredConfigSchema = z.object({
+  nodeId: z.string(),
+  runtime: z.string(),
+  transport: z.enum(["http", "grpc"]),
+  endpoint: z.string(),
+  resources: z.record(z.number()),
+  capabilities: z.array(
+    z.object({
+      capabilityId: z.string(),
+      taskTypes: z.array(z.string()).default([]),
+      qualities: z.array(DetectionQualitySchema).default([]),
+      modelRefs: z.array(z.string()).default([])
+    })
+  ),
+  models: z.array(z.string()),
+  tenantIds: z.array(z.string()).default([]),
+  maxConcurrent: z.number().int().positive(),
+  contractVersion: z.string(),
+  configVersion: z.number().int().positive(),
+  lastAppliedAt: z.string().nullable().optional(),
+  createdAt: z.string(),
+  updatedAt: z.string()
+});
+
 export const InferenceNodeSchema = z.object({
   nodeId: z.string(),
   tenantId: z.string().nullable().optional(),
@@ -312,4 +416,8 @@ export type IncidentEvent = z.infer<typeof IncidentEventSchema>;
 export type IncidentEvidence = z.infer<typeof IncidentEvidenceSchema>;
 export type InferenceNode = z.infer<typeof InferenceNodeSchema>;
 export type NodeCapability = z.infer<typeof NodeCapabilitySchema>;
+export type ModelCatalogEntry = z.infer<typeof ModelCatalogEntrySchema>;
+export type CameraDetectionPipeline = z.infer<typeof CameraDetectionPipelineSchema>;
+export type CameraDetectionProfile = z.infer<typeof CameraDetectionProfileSchema>;
+export type InferenceNodeDesiredConfig = z.infer<typeof InferenceNodeDesiredConfigSchema>;
 export type EventEnvelope = z.infer<typeof EventEnvelopeSchema>;
