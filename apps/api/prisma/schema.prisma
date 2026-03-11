@@ -29,6 +29,7 @@ model Tenant {
   inferenceNodeAssignments InferenceNodeTenantAssignment[]
   notificationChannels     NotificationChannel[]
   notificationDeliveries   NotificationDelivery[]
+  cameraAssignments        CameraAssignment[]
 }
 
 model User {
@@ -40,6 +41,7 @@ model User {
   isActive     Boolean      @default(true)
   memberships  Membership[]
   streamSessions StreamSession[]
+  cameraAssignments CameraAssignment[]
 }
 
 model Membership {
@@ -80,6 +82,21 @@ model Camera {
   scenePrimitiveEvents  ScenePrimitiveEvent[]
   incidentEvents        IncidentEvent[]
   notificationDeliveries NotificationDelivery[]
+  assignments           CameraAssignment[]
+}
+
+model CameraAssignment {
+  id        String   @id @default(cuid())
+  tenantId  String
+  userId    String
+  cameraId  String
+  createdAt DateTime @default(now())
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  user      User     @relation(fields: [userId], references: [id])
+  camera    Camera   @relation(fields: [cameraId], references: [id])
+
+  @@unique([tenantId, userId, cameraId])
+  @@index([tenantId, userId])
 }
 
 model CameraProfile {

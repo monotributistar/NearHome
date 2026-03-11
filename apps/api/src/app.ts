@@ -810,6 +810,28 @@ function getTenantContext(request: FastifyRequest): { userId: string; tenantId: 
   };
 }
 
+async function getCameraScopeForUser(args: { tenantId: string; userId: string; role?: Role }) {
+  if (!args.role || !["monitor", "client_user"].includes(args.role)) return null;
+  const assignments = await prisma.cameraAssignment.findMany({
+    where: { tenantId: args.tenantId, userId: args.userId },
+    select: { cameraId: true }
+  });
+  if (!assignments.length) return null;
+  return assignments.map((assignment) => assignment.cameraId);
+}
+
+async function assertCameraAccess(args: { tenantId: string; userId: string; role?: Role; cameraId: string }) {
+  const scopedCameraIds = await getCameraScopeForUser({
+    tenantId: args.tenantId,
+    userId: args.userId,
+    role: args.role
+  });
+  if (!scopedCameraIds) return;
+  if (!scopedCameraIds.includes(args.cameraId)) {
+    throw new Error("CAMERA_NOT_FOUND");
+  }
+}
+
 async function appendLifecycleLog(args: {
   tenantId: string;
   cameraId: string;
@@ -2600,6 +2622,104 @@ export async function buildApp() {
     };
   });
 
+  app.get("/camera-assignments", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin", "monitor"]);
+    const query = request.query as Record<string, unknown>;
+    const userId = typeof query.userId === "string" && query.userId.length > 0 ? query.userId : undefined;
+    const rows = await prisma.cameraAssignment.findMany({
+      where: {
+        tenantId: ctx.tenantId,
+        ...(userId ? { userId } : {})
+      },
+      include: { camera: true, user: true },
+      orderBy: [{ userId: "asc" }, { createdAt: "asc" }]
+    });
+    const data = rows.map((row) => ({
+      id: row.id,
+      tenantId: row.tenantId,
+      userId: row.userId,
+      cameraId: row.cameraId,
+      createdAt: toISO(row.createdAt),
+      user: {
+        id: row.user.id,
+        email: row.user.email,
+        name: row.user.name
+      },
+      camera: {
+        id: row.camera.id,
+        name: row.camera.name,
+        isActive: row.camera.isActive
+      }
+    }));
+    reply.header("x-total-count", String(data.length));
+    return { data, total: data.length };
+  });
+
+  app.put("/camera-assignments/:userId", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin"]);
+    const { userId } = request.params as { userId: string };
+    const body = z.object({ cameraIds: z.array(z.string()) }).parse(request.body ?? {});
+
+    const membership = await prisma.membership.findFirst({
+      where: { tenantId: ctx.tenantId, userId },
+      select: { role: true }
+    });
+    if (!membership) {
+      throw app.httpErrors.notFound("User not found in tenant");
+    }
+    if (!["monitor", "client_user"].includes(membership.role)) {
+      throw app.httpErrors.badRequest("Camera assignment is only supported for monitor/client_user roles");
+    }
+
+    const dedupCameraIds = Array.from(new Set(body.cameraIds));
+    if (dedupCameraIds.length > 0) {
+      const existingCameras = await prisma.camera.findMany({
+        where: { tenantId: ctx.tenantId, deletedAt: null, id: { in: dedupCameraIds } },
+        select: { id: true }
+      });
+      const existingSet = new Set(existingCameras.map((camera) => camera.id));
+      const missing = dedupCameraIds.filter((cameraId) => !existingSet.has(cameraId));
+      if (missing.length > 0) {
+        throw app.httpErrors.badRequest(`Unknown camera ids: ${missing.join(", ")}`);
+      }
+    }
+
+    await prisma.cameraAssignment.deleteMany({
+      where: {
+        tenantId: ctx.tenantId,
+        userId
+      }
+    });
+    if (dedupCameraIds.length > 0) {
+      await prisma.cameraAssignment.createMany({
+        data: dedupCameraIds.map((cameraId) => ({
+          tenantId: ctx.tenantId,
+          userId,
+          cameraId
+        }))
+      });
+    }
+
+    await appendAuditLog({
+      tenantId: ctx.tenantId,
+      actorUserId: ctx.userId,
+      resource: "camera_assignment",
+      action: "replace",
+      resourceId: userId,
+      payload: { cameraIds: dedupCameraIds }
+    });
+
+    return {
+      data: {
+        tenantId: ctx.tenantId,
+        userId,
+        cameraIds: dedupCameraIds
+      }
+    };
+  });
+
   app.get("/audit-logs", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
     const ctx = getTenantContext(request);
     assertRole(request, ["tenant_admin"]);
@@ -2748,12 +2868,14 @@ export async function buildApp() {
 
     const { skip, take, sort, order } = parseListQuery(request.query as Record<string, unknown>);
     const q = request.query as Record<string, unknown>;
+    const scopedCameraIds = await getCameraScopeForUser(ctx);
 
     const where: any = {
       tenantId: ctx.tenantId,
       deletedAt: null,
       ...(q.name ? { name: { contains: String(q.name), mode: "insensitive" } } : {}),
-      ...(q.isActive !== undefined ? { isActive: String(q.isActive) === "true" } : {})
+      ...(q.isActive !== undefined ? { isActive: String(q.isActive) === "true" } : {}),
+      ...(scopedCameraIds ? { id: { in: scopedCameraIds } } : {})
     };
 
     const [rows, total] = await Promise.all([
@@ -2842,6 +2964,7 @@ export async function buildApp() {
   app.get("/cameras/:id", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
     const ctx = getTenantContext(request);
     const id = (request.params as { id: string }).id;
+    await assertCameraAccess({ ...ctx, cameraId: id });
     const camera = await prisma.camera.findFirst({
       where: { id, tenantId: ctx.tenantId, deletedAt: null },
       include: { profile: true }
@@ -2954,6 +3077,7 @@ export async function buildApp() {
     const ctx = getTenantContext(request);
     assertRole(request, ["tenant_admin", "monitor", "client_user"]);
     const id = (request.params as { id: string }).id;
+    await assertCameraAccess({ ...ctx, cameraId: id });
     const camera = await prisma.camera.findFirst({
       where: { id, tenantId: ctx.tenantId, deletedAt: null },
       include: { profile: true }
@@ -3049,6 +3173,7 @@ export async function buildApp() {
     const ctx = getTenantContext(request);
     assertRole(request, ["tenant_admin", "monitor", "client_user"]);
     const id = (request.params as { id: string }).id;
+    await assertCameraAccess({ ...ctx, cameraId: id });
     if (!streamGatewayUrl) {
       throw app.httpErrors.serviceUnavailable("STREAM_GATEWAY_URL is not configured");
     }
@@ -3106,6 +3231,7 @@ export async function buildApp() {
     const ctx = getTenantContext(request);
     assertRole(request, ["tenant_admin", "monitor"]);
     const id = (request.params as { id: string }).id;
+    await assertCameraAccess({ ...ctx, cameraId: id });
     if (!streamGatewayUrl) {
       throw app.httpErrors.serviceUnavailable("STREAM_GATEWAY_URL is not configured");
     }
@@ -3313,6 +3439,7 @@ export async function buildApp() {
     const ctx = getTenantContext(request);
     assertRole(request, ["tenant_admin", "monitor", "client_user"]);
     const id = (request.params as { id: string }).id;
+    await assertCameraAccess({ ...ctx, cameraId: id });
     const camera = await prisma.camera.findFirst({
       where: { id, tenantId: ctx.tenantId, deletedAt: null }
     });
@@ -3453,6 +3580,7 @@ export async function buildApp() {
     const ctx = getTenantContext(request);
     assertRole(request, ["tenant_admin", "monitor", "client_user"]);
     const id = (request.params as { id: string }).id;
+    await assertCameraAccess({ ...ctx, cameraId: id });
 
     const camera = await prisma.camera.findFirst({
       where: { id, tenantId: ctx.tenantId, deletedAt: null }
@@ -4028,6 +4156,7 @@ export async function buildApp() {
     const ctx = getTenantContext(request);
     assertRole(request, ["tenant_admin", "monitor", "client_user"]);
     const cameraId = (request.params as { id: string }).id;
+    await assertCameraAccess({ ...ctx, cameraId });
     const camera = await prisma.camera.findFirst({
       where: { id: cameraId, tenantId: ctx.tenantId, deletedAt: null }
     });
