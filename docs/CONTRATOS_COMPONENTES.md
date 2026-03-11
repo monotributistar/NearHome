@@ -22,6 +22,8 @@ Archivo fuente: `packages/shared/src/index.ts`
 - `Subscription { id, tenantId, planId, status, currentPeriodStart, currentPeriodEnd }`
 - `Entitlements { planCode, limits, features }`
 - `Event { id, tenantId, cameraId, type, severity, timestamp, payload? }`
+- `Household { id, tenantId, name, address?, notes?, isActive, createdByUserId?, createdAt, updatedAt }`
+- `HouseholdMember { id, tenantId, householdId, fullName, relationship, phone?, canViewCameras, canReceiveAlerts, isActive, createdByUserId?, createdAt, updatedAt }`
 
 ### Reglas
 
@@ -123,6 +125,21 @@ Versionado:
 - `GET /tenants/:id/entitlements`
   - contrato detallado en `docs/ENTITLEMENTS_CONTRACT.md`
 
+- `GET /households` (`tenant_admin|monitor|client_user`)
+  - filtros soportados: `name`, `_start`, `_end`, `_sort`, `_order`
+- `POST /households` (`tenant_admin|client_user`)
+  - in: `{ name, address?, notes?, isActive? }`
+- `PUT /households/:id` (`tenant_admin|client_user`)
+  - in parcial: `{ name?, address?, notes?, isActive? }`
+- `DELETE /households/:id` (`tenant_admin|client_user`)
+- `GET /households/:id/members` (`tenant_admin|monitor|client_user`)
+  - filtros soportados: `_start`, `_end`, `_sort`, `_order`
+- `POST /households/:id/members` (`tenant_admin|client_user`)
+  - in: `{ fullName, relationship, phone?, canViewCameras?, canReceiveAlerts?, isActive? }`
+- `PUT /household-members/:id` (`tenant_admin|client_user`)
+  - in parcial: `{ fullName?, relationship?, phone?, canViewCameras?, canReceiveAlerts?, isActive? }`
+- `DELETE /household-members/:id` (`tenant_admin|client_user`)
+
 - `POST /cameras/:id/stream-token`
   - out: `{ token, expiresAt, session, playbackUrl? }`
   - crea sesión de stream con tracking (`requested -> issued`)
@@ -197,6 +214,10 @@ Matriz mínima:
 - `audit.logs.list`: solo `tenant_admin`.
 - `plans.list`: `tenant_admin` y `monitor`.
 - `events.list`: todos los roles del tenant.
+- `households.list`: `tenant_admin|monitor|client_user`.
+- `households.create|edit|delete`: `tenant_admin|client_user`.
+- `householdMembers.list`: `tenant_admin|monitor|client_user`.
+- `householdMembers.create|edit|delete`: `tenant_admin|client_user`.
 
 ## 4) Contrato frontend-admin (`apps/admin`)
 

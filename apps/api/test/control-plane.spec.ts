@@ -892,6 +892,117 @@ describe("NH-037 role and memberships management", () => {
   });
 });
 
+describe("NH-040 customer households and members", () => {
+  it("allows client_user to manage households and members in active tenant", async () => {
+    const clientToken = await login("client@nearhome.dev");
+    const clientMe = await me(clientToken);
+    const tenantId = clientMe.memberships[0].tenantId;
+
+    const createHousehold = await app.inject({
+      method: "POST",
+      url: "/households",
+      headers: {
+        authorization: `Bearer ${clientToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        name: `Casa NH040 ${Date.now()}`,
+        address: "Calle Falsa 123",
+        notes: "Familia principal"
+      }
+    });
+    expect(createHousehold.statusCode).toBe(200);
+    const householdId = createHousehold.json<{ data: { id: string } }>().data.id;
+
+    const createMember = await app.inject({
+      method: "POST",
+      url: `/households/${householdId}/members`,
+      headers: {
+        authorization: `Bearer ${clientToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        fullName: "Integrante NH040",
+        relationship: "familia",
+        phone: "+5491112345678",
+        canViewCameras: true,
+        canReceiveAlerts: true
+      }
+    });
+    expect(createMember.statusCode).toBe(200);
+    const memberId = createMember.json<{ data: { id: string } }>().data.id;
+
+    const listMembers = await app.inject({
+      method: "GET",
+      url: `/households/${householdId}/members?_start=0&_end=20`,
+      headers: {
+        authorization: `Bearer ${clientToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+    expect(listMembers.statusCode).toBe(200);
+    expect(listMembers.json<{ data: Array<{ id: string }> }>().data.some((row) => row.id === memberId)).toBe(true);
+
+    const updateMember = await app.inject({
+      method: "PUT",
+      url: `/household-members/${memberId}`,
+      headers: {
+        authorization: `Bearer ${clientToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        canReceiveAlerts: false
+      }
+    });
+    expect(updateMember.statusCode).toBe(200);
+    expect(updateMember.json()).toMatchObject({
+      data: {
+        id: memberId,
+        canReceiveAlerts: false
+      }
+    });
+
+    const deleteMember = await app.inject({
+      method: "DELETE",
+      url: `/household-members/${memberId}`,
+      headers: {
+        authorization: `Bearer ${clientToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+    expect(deleteMember.statusCode).toBe(200);
+
+    const deleteHousehold = await app.inject({
+      method: "DELETE",
+      url: `/households/${householdId}`,
+      headers: {
+        authorization: `Bearer ${clientToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+    expect(deleteHousehold.statusCode).toBe(200);
+  });
+
+  it("denies monitor from creating households and members", async () => {
+    const monitorToken = await login("monitor@nearhome.dev");
+    const monitorMe = await me(monitorToken);
+    const tenantId = monitorMe.memberships[0].tenantId;
+
+    const createHousehold = await app.inject({
+      method: "POST",
+      url: "/households",
+      headers: {
+        authorization: `Bearer ${monitorToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        name: `Blocked Casa ${Date.now()}`
+      }
+    });
+    expect(createHousehold.statusCode).toBe(403);
+  });
+});
+
 describe("NH-015 client camera assignment subset", () => {
   it("applies allowlist to client_user only when assignments exist", async () => {
     const adminToken = await login("admin@nearhome.dev");

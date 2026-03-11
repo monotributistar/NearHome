@@ -17,6 +17,10 @@
 - NH-036/NH-037: endurecimiento de identidad multi-tenant:
   - cobertura explícita de memberships N:M para `operator/customer` y enforcement `403` fuera de membresía.
   - cobertura explícita de gestión de roles: `super_admin` cambia rol por tenant y `tenant_admin` queda limitado a su tenant.
+- NH-040: dominios de clientes para hogares y convivientes:
+  - nuevas tablas `Household` y `HouseholdMember` tenant-scoped.
+  - nuevos endpoints CRUD de domicilios y miembros para `tenant_admin|client_user`, con lectura habilitada a `monitor`.
+  - nuevas entradas de auditoría para `household` y `household_member` (`create|update|delete`).
 
 ## 2026-02-24 - v1.2.0
 

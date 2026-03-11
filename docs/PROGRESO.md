@@ -366,9 +366,13 @@
   - `playwright` smoke admin + portal en verde tras mejoras de error handling en cámaras
 - `NH-039` estado normalizado:
   - zonificación de operador ya cubierta en API (`camera-assignments`) y test dedicado `NH-039`
+- `NH-040` app cliente domicilios y miembros:
+  - API tenant-scoped para `households` y `household-members` (CRUD + auditoría).
+  - Portal: nueva vista `Cuenta > Domicilios` con alta/baja de domicilios y miembros.
+  - validación: `pnpm --filter @app/api test -- -t NH-040` en verde.
 
 ## Próximo bloque recomendado
 
-1. NH-040: app cliente domicilios y miembros.
-2. NH-041: app cliente alta cámara RTSP y monitor realtime.
-3. Endurecimiento e2e multi-tenant para concurrencia de playback (escenarios simultáneos por tenant).
+1. NH-041: app cliente alta cámara RTSP y monitor realtime.
+2. Endurecimiento e2e multi-tenant para concurrencia de playback (escenarios simultáneos por tenant).
+3. NH-042: notificaciones realtime por reglas de tenant/cámara.

@@ -41,6 +41,10 @@ Cobertura incluida:
 - NH-039 zonificación operador
   - por default `monitor` ve todas las cámaras del tenant
   - con `camera-assignments` activos, el listado/detalle se restringe a allowlist
+- NH-040 domicilios y miembros cliente
+  - `client_user` puede crear/listar/editar/eliminar `households` en su tenant activo
+  - `client_user` puede crear/listar/editar/eliminar `household-members` asociados al domicilio
+  - `monitor` no puede crear domicilios (`403`)
 - NH-025 camera internal profile
   - crear cámara activa genera `profile` interno automáticamente
   - `tenant_admin` puede configurar `PUT /cameras/:id/profile`

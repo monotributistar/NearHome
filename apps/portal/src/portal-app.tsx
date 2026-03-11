@@ -13,7 +13,7 @@ import {
   type WorkspaceNavGroup
 } from "@app/ui";
 import { Link, Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
-import { Camera, Internet, UserCircle, ViewGrid, WarningSquare } from "iconoir-react";
+import { Camera, HomeAlt, Internet, UserCircle, ViewGrid, WarningSquare } from "iconoir-react";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3001";
 const EVENT_GATEWAY_URL = import.meta.env.VITE_EVENT_GATEWAY_URL ?? "http://localhost:3011";
@@ -25,6 +25,7 @@ const PORTAL_ROUTES = {
     realtime: "/operations/realtime"
   },
   account: {
+    households: "/account/households",
     tenant: "/account/tenant",
     profile: "/account/profile"
   }
@@ -158,6 +159,7 @@ function ProtectedLayout() {
     {
       title: "Cuenta",
       items: [
+        { to: PORTAL_ROUTES.account.households, label: "Domicilios", icon: <HomeAlt width={16} height={16} /> },
         { to: PORTAL_ROUTES.account.tenant, label: "Tenant Activo", icon: <ViewGrid width={16} height={16} /> },
         { to: PORTAL_ROUTES.account.profile, label: "Perfil", icon: <UserCircle width={16} height={16} /> }
       ]
@@ -192,6 +194,7 @@ function ProtectedLayout() {
         <Route path={PORTAL_ROUTES.operations.events} element={<EventsPage api={api} />} />
         <Route path={PORTAL_ROUTES.operations.realtime} element={<RealtimePage api={api} tenantId={state.activeTenantId} />} />
 
+        <Route path={PORTAL_ROUTES.account.households} element={<HouseholdsPage api={api} />} />
         <Route path={PORTAL_ROUTES.account.tenant} element={<SelectTenantPage me={me} />} />
         <Route path={PORTAL_ROUTES.account.profile} element={<AccountPage me={me} />} />
 
@@ -199,6 +202,7 @@ function ProtectedLayout() {
         <Route path="/cameras/:id" element={<LegacyPortalCameraDetailRedirect />} />
         <Route path="/events" element={<Navigate to={PORTAL_ROUTES.operations.events} replace />} />
         <Route path="/realtime" element={<Navigate to={PORTAL_ROUTES.operations.realtime} replace />} />
+        <Route path="/households" element={<Navigate to={PORTAL_ROUTES.account.households} replace />} />
         <Route path="/select-tenant" element={<Navigate to={PORTAL_ROUTES.account.tenant} replace />} />
         <Route path="/account" element={<Navigate to={PORTAL_ROUTES.account.profile} replace />} />
       </Routes>
@@ -635,6 +639,252 @@ function RealtimePage({ api, tenantId }: { api: ApiClient; tenantId: string | nu
         ))}
         {!events.length && <div className="text-sm text-slate-500">No realtime events received yet.</div>}
       </div>
+    </PageCard>
+  );
+}
+
+function HouseholdsPage({ api }: { api: ApiClient }) {
+  const [households, setHouseholds] = useState<any[]>([]);
+  const [members, setMembers] = useState<any[]>([]);
+  const [selectedHouseholdId, setSelectedHouseholdId] = useState<string>("");
+  const [error, setError] = useState<string | null>(null);
+  const [ok, setOk] = useState<string | null>(null);
+  const [householdForm, setHouseholdForm] = useState({ name: "", address: "", notes: "" });
+  const [memberForm, setMemberForm] = useState({
+    fullName: "",
+    relationship: "",
+    phone: "",
+    canViewCameras: true,
+    canReceiveAlerts: true,
+    isActive: true
+  });
+
+  async function loadHouseholds() {
+    try {
+      const res = await api.get<any>("/households", { _start: 0, _end: 100 });
+      const rows = res.data ?? res;
+      setHouseholds(rows);
+      setError(null);
+      if (!selectedHouseholdId && rows[0]?.id) {
+        setSelectedHouseholdId(rows[0].id);
+      }
+    } catch (cause) {
+      setError(formatApiError(cause, "No se pudieron cargar domicilios"));
+    }
+  }
+
+  async function loadMembers(householdId: string) {
+    if (!householdId) {
+      setMembers([]);
+      return;
+    }
+    try {
+      const res = await api.get<any>(`/households/${householdId}/members`, { _start: 0, _end: 200 });
+      setMembers(res.data ?? res);
+      setError(null);
+    } catch (cause) {
+      setError(formatApiError(cause, "No se pudieron cargar miembros"));
+    }
+  }
+
+  useEffect(() => {
+    void loadHouseholds();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    void loadMembers(selectedHouseholdId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedHouseholdId]);
+
+  return (
+    <PageCard title="Domicilios y Miembros">
+      {error && <div className="mb-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
+      {ok && <div className="mb-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{ok}</div>}
+
+      <div className="mb-4 grid grid-cols-1 gap-2 md:grid-cols-5">
+        <TextInput
+          placeholder="Nombre del domicilio"
+          value={householdForm.name}
+          onChange={(e) => setHouseholdForm((prev) => ({ ...prev, name: e.target.value }))}
+        />
+        <TextInput
+          placeholder="Dirección"
+          value={householdForm.address}
+          onChange={(e) => setHouseholdForm((prev) => ({ ...prev, address: e.target.value }))}
+        />
+        <TextInput
+          placeholder="Notas"
+          value={householdForm.notes}
+          onChange={(e) => setHouseholdForm((prev) => ({ ...prev, notes: e.target.value }))}
+        />
+        <PrimaryButton
+          onClick={async () => {
+            try {
+              const created = await api.post<any>("/households", {
+                name: householdForm.name,
+                address: householdForm.address || null,
+                notes: householdForm.notes || null
+              });
+              const row = created.data ?? created;
+              setHouseholdForm({ name: "", address: "", notes: "" });
+              setSelectedHouseholdId(row.id);
+              setOk("Domicilio creado");
+              await loadHouseholds();
+            } catch (cause) {
+              setError(formatApiError(cause, "No se pudo crear domicilio"));
+            }
+          }}
+        >
+          Crear domicilio
+        </PrimaryButton>
+        <PrimaryButton
+          onClick={async () => {
+            if (!selectedHouseholdId) return;
+            try {
+              await api.delete(`/households/${selectedHouseholdId}`);
+              setSelectedHouseholdId("");
+              setMembers([]);
+              setOk("Domicilio eliminado");
+              await loadHouseholds();
+            } catch (cause) {
+              setError(formatApiError(cause, "No se pudo eliminar domicilio"));
+            }
+          }}
+        >
+          Eliminar domicilio
+        </PrimaryButton>
+      </div>
+
+      <div className="mb-4">
+        <SelectInput value={selectedHouseholdId} onChange={(e) => setSelectedHouseholdId(e.target.value)} className="max-w-md">
+          <option value="">Seleccionar domicilio</option>
+          {households.map((household) => (
+            <option key={household.id} value={household.id}>
+              {household.name}
+            </option>
+          ))}
+        </SelectInput>
+      </div>
+
+      {selectedHouseholdId && (
+        <>
+          <div className="mb-3 grid grid-cols-1 gap-2 md:grid-cols-7">
+            <TextInput
+              placeholder="Nombre completo"
+              value={memberForm.fullName}
+              onChange={(e) => setMemberForm((prev) => ({ ...prev, fullName: e.target.value }))}
+            />
+            <TextInput
+              placeholder="Relación (familia/empleado)"
+              value={memberForm.relationship}
+              onChange={(e) => setMemberForm((prev) => ({ ...prev, relationship: e.target.value }))}
+            />
+            <TextInput
+              placeholder="Teléfono"
+              value={memberForm.phone}
+              onChange={(e) => setMemberForm((prev) => ({ ...prev, phone: e.target.value }))}
+            />
+            <SelectInput
+              value={String(memberForm.canViewCameras)}
+              onChange={(e) => setMemberForm((prev) => ({ ...prev, canViewCameras: e.target.value === "true" }))}
+            >
+              <option value="true">Puede ver cámaras</option>
+              <option value="false">No ve cámaras</option>
+            </SelectInput>
+            <SelectInput
+              value={String(memberForm.canReceiveAlerts)}
+              onChange={(e) => setMemberForm((prev) => ({ ...prev, canReceiveAlerts: e.target.value === "true" }))}
+            >
+              <option value="true">Recibe alertas</option>
+              <option value="false">Sin alertas</option>
+            </SelectInput>
+            <SelectInput
+              value={String(memberForm.isActive)}
+              onChange={(e) => setMemberForm((prev) => ({ ...prev, isActive: e.target.value === "true" }))}
+            >
+              <option value="true">Activo</option>
+              <option value="false">Inactivo</option>
+            </SelectInput>
+            <PrimaryButton
+              onClick={async () => {
+                try {
+                  await api.post(`/households/${selectedHouseholdId}/members`, {
+                    fullName: memberForm.fullName,
+                    relationship: memberForm.relationship,
+                    phone: memberForm.phone || null,
+                    canViewCameras: memberForm.canViewCameras,
+                    canReceiveAlerts: memberForm.canReceiveAlerts,
+                    isActive: memberForm.isActive
+                  });
+                  setMemberForm({
+                    fullName: "",
+                    relationship: "",
+                    phone: "",
+                    canViewCameras: true,
+                    canReceiveAlerts: true,
+                    isActive: true
+                  });
+                  setOk("Miembro agregado");
+                  await loadMembers(selectedHouseholdId);
+                } catch (cause) {
+                  setError(formatApiError(cause, "No se pudo agregar miembro"));
+                }
+              }}
+            >
+              Agregar miembro
+            </PrimaryButton>
+          </div>
+
+          <DataTable>
+            <thead className="bg-slate-50 text-slate-600">
+              <tr>
+                <th className="px-3 py-2">Nombre</th>
+                <th className="px-3 py-2">Relación</th>
+                <th className="px-3 py-2">Permisos</th>
+                <th className="px-3 py-2">Estado</th>
+                <th className="px-3 py-2"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {members.map((member) => (
+                <tr key={member.id}>
+                  <td className="px-3 py-2">{member.fullName}</td>
+                  <td className="px-3 py-2">{member.relationship}</td>
+                  <td className="px-3 py-2 text-xs">
+                    cam:{member.canViewCameras ? "si" : "no"} | alerts:{member.canReceiveAlerts ? "si" : "no"}
+                  </td>
+                  <td className="px-3 py-2">
+                    <Badge>{member.isActive ? "active" : "inactive"}</Badge>
+                  </td>
+                  <td className="px-3 py-2">
+                    <PrimaryButton
+                      onClick={async () => {
+                        try {
+                          await api.delete(`/household-members/${member.id}`);
+                          setOk("Miembro eliminado");
+                          await loadMembers(selectedHouseholdId);
+                        } catch (cause) {
+                          setError(formatApiError(cause, "No se pudo eliminar miembro"));
+                        }
+                      }}
+                    >
+                      Eliminar
+                    </PrimaryButton>
+                  </td>
+                </tr>
+              ))}
+              {!members.length && (
+                <tr>
+                  <td colSpan={5} className="px-3 py-4 text-center text-sm text-slate-500">
+                    No hay miembros para este domicilio.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </DataTable>
+        </>
+      )}
     </PageCard>
   );
 }

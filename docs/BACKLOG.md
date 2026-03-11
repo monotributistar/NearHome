@@ -386,7 +386,7 @@ Fuente: `docs/HISTORIAS_USUARIO_RBAC_TENANTS_PANEL_APP.md`
 
 ### NH-040 (P1) - App cliente: domicilios y miembros
 
-- Estado: `todo`
+- Estado: `done`
 - Scope:
   - CRUD de domicilios/casas.
   - Gestión de miembros (familia/empleados) y permisos base.

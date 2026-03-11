@@ -30,6 +30,8 @@ model Tenant {
   notificationChannels     NotificationChannel[]
   notificationDeliveries   NotificationDelivery[]
   cameraAssignments        CameraAssignment[]
+  households               Household[]
+  householdMembers         HouseholdMember[]
 }
 
 model User {
@@ -42,6 +44,8 @@ model User {
   memberships  Membership[]
   streamSessions StreamSession[]
   cameraAssignments CameraAssignment[]
+  householdsCreated Household[]
+  householdMembersCreated HouseholdMember[]
 }
 
 model Membership {
@@ -193,6 +197,43 @@ model AuditLog {
   payload     String?
   createdAt   DateTime @default(now())
   tenant      Tenant   @relation(fields: [tenantId], references: [id])
+}
+
+model Household {
+  id              String            @id @default(cuid())
+  tenantId        String
+  name            String
+  address         String?
+  notes           String?
+  isActive        Boolean           @default(true)
+  createdByUserId String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  tenant          Tenant            @relation(fields: [tenantId], references: [id])
+  createdByUser   User?             @relation(fields: [createdByUserId], references: [id])
+  members         HouseholdMember[]
+
+  @@index([tenantId, createdAt])
+}
+
+model HouseholdMember {
+  id              String    @id @default(cuid())
+  tenantId        String
+  householdId     String
+  fullName        String
+  relationship    String
+  phone           String?
+  canViewCameras  Boolean   @default(true)
+  canReceiveAlerts Boolean  @default(true)
+  isActive        Boolean   @default(true)
+  createdByUserId String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  tenant          Tenant    @relation(fields: [tenantId], references: [id])
+  household       Household @relation(fields: [householdId], references: [id])
+  createdByUser   User?     @relation(fields: [createdByUserId], references: [id])
+
+  @@index([tenantId, householdId, createdAt])
 }
 
 model StreamSession {
