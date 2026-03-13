@@ -178,6 +178,7 @@ export const DetectionJobSchema = z.object({
   errorCode: z.string().nullable().optional(),
   errorMessage: z.string().nullable().optional(),
   options: z.record(z.any()).nullable().optional(),
+  effectiveConfig: z.lazy(() => DetectionJobEffectiveConfigSchema).optional(),
   queuedAt: z.string(),
   startedAt: z.string().nullable().optional(),
   finishedAt: z.string().nullable().optional(),
@@ -358,6 +359,25 @@ export const DetectionTaskTypeSchema = z.enum([
   "pose_estimation"
 ]);
 export const DetectionQualitySchema = z.enum(["fast", "balanced", "accurate"]);
+export const DetectionJobEffectiveConfigSchema = z.object({
+  pipelineId: z.string().optional(),
+  runtimeProvider: DetectionProviderRuntimeSchema,
+  taskType: DetectionTaskTypeSchema,
+  quality: DetectionQualitySchema,
+  modelRef: z.string(),
+  modelCatalogEntryId: z.string().optional(),
+  modelDisplayName: z.string().optional(),
+  profileConfigVersion: z.number().int().positive().optional(),
+  profileUpdatedAt: z.string().optional(),
+  schedule: z
+    .object({
+      mode: DetectionJobModeSchema,
+      frameStride: z.number().int().positive()
+    })
+    .optional(),
+  thresholds: z.record(z.any()).optional(),
+  outputs: z.record(z.any()).optional()
+});
 
 export const ModelCatalogEntrySchema = z.object({
   id: z.string(),
@@ -420,6 +440,73 @@ export const InferenceNodeDesiredConfigSchema = z.object({
   lastAppliedAt: z.string().nullable().optional(),
   createdAt: z.string(),
   updatedAt: z.string()
+});
+
+export const DetectionTopologyCandidateSchema = z.object({
+  nodeId: z.string(),
+  runtime: z.string(),
+  status: z.enum(["online", "degraded", "offline"]),
+  endpoint: z.string(),
+  maxConcurrent: z.number().int().positive(),
+  queueDepth: z.number().int().nonnegative(),
+  isDrained: z.boolean(),
+  assignedTenantIds: z.array(z.string()).default([]),
+  score: z.number(),
+  role: z.enum(["primary", "candidate", "fallback"])
+});
+
+export const DetectionTopologyPipelineSchema = z.object({
+  pipelineId: z.string(),
+  provider: DetectionProviderRuntimeSchema,
+  taskType: DetectionTaskTypeSchema,
+  quality: DetectionQualitySchema,
+  enabled: z.boolean(),
+  valid: z.boolean(),
+  runnable: z.boolean(),
+  inSync: z.boolean(),
+  resolvedModel: ModelCatalogEntrySchema.pick({
+    id: true,
+    modelRef: true,
+    displayName: true,
+    provider: true,
+    taskType: true,
+    quality: true
+  }).nullable(),
+  assignment: z.object({
+    status: z.enum(["assigned", "degraded", "unassigned", "disabled"]),
+    reason: z.string(),
+    primaryNodeId: z.string().nullable()
+  }),
+  candidates: z.array(DetectionTopologyCandidateSchema).default([]),
+  issues: z.array(
+    z.object({
+      code: z.string(),
+      severity: z.enum(["info", "warning", "error"]),
+      message: z.string()
+    })
+  )
+});
+
+export const DetectionTopologySchema = z.object({
+  cameraId: z.string(),
+  tenantId: z.string(),
+  configVersion: z.number().int().positive(),
+  updatedAt: z.string(),
+  valid: z.boolean(),
+  runnable: z.boolean(),
+  inSync: z.boolean(),
+  summary: z.object({
+    totalPipelines: z.number().int().nonnegative(),
+    enabledPipelines: z.number().int().nonnegative(),
+    validPipelines: z.number().int().nonnegative(),
+    runnablePipelines: z.number().int().nonnegative(),
+    driftedPipelines: z.number().int().nonnegative(),
+    assignedPipelines: z.number().int().nonnegative(),
+    degradedAssignments: z.number().int().nonnegative(),
+    totalCandidateNodes: z.number().int().nonnegative(),
+    activeCandidateNodes: z.number().int().nonnegative()
+  }),
+  pipelines: z.array(DetectionTopologyPipelineSchema).default([])
 });
 
 export const InferenceNodeSchema = z.object({
@@ -493,4 +580,7 @@ export type ModelCatalogEntry = z.infer<typeof ModelCatalogEntrySchema>;
 export type CameraDetectionPipeline = z.infer<typeof CameraDetectionPipelineSchema>;
 export type CameraDetectionProfile = z.infer<typeof CameraDetectionProfileSchema>;
 export type InferenceNodeDesiredConfig = z.infer<typeof InferenceNodeDesiredConfigSchema>;
+export type DetectionTopology = z.infer<typeof DetectionTopologySchema>;
+export type DetectionTopologyPipeline = z.infer<typeof DetectionTopologyPipelineSchema>;
+export type DetectionTopologyCandidate = z.infer<typeof DetectionTopologyCandidateSchema>;
 export type EventEnvelope = z.infer<typeof EventEnvelopeSchema>;

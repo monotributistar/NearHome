@@ -59,6 +59,24 @@ type LoginBucket = {
   resetAt: number;
 };
 
+type DetectionPipelineIssue = {
+  code: string;
+  severity: "info" | "warning" | "error";
+  message: string;
+};
+
+type DetectionPipelineNodeCandidate = {
+  nodeId: string;
+  runtime: string;
+  status: string;
+  endpoint: string;
+  maxConcurrent: number;
+  queueDepth: number;
+  isDrained: boolean;
+  assignedTenantIds: string[];
+  score: number;
+};
+
 function statusToCode(statusCode: number): string {
   if (statusCode === 400) return "BAD_REQUEST";
   if (statusCode === 401) return "UNAUTHORIZED";
@@ -78,6 +96,15 @@ function normalizeRoleInput(role: RoleInput): Role {
   if (role === "operator") return "monitor";
   if (role === "customer") return "client_user";
   return role;
+}
+
+function normalizeObservedCapability(raw: Record<string, unknown>, index: number) {
+  return {
+    capabilityId: typeof raw.capabilityId === "string" ? raw.capabilityId : `cap-${index}`,
+    taskTypes: Array.isArray(raw.taskTypes) ? raw.taskTypes.map(String) : [],
+    qualities: Array.isArray(raw.qualities) ? raw.qualities.map(String) : [],
+    models: Array.isArray(raw.models) ? raw.models.map(String) : Array.isArray(raw.modelRefs) ? raw.modelRefs.map(String) : []
+  };
 }
 
 function signStreamToken(payload: Record<string, unknown>, secret: string) {
@@ -128,6 +155,24 @@ type CameraDetectionProfile = {
   pipelines: CameraDetectionPipeline[];
   configVersion: number;
   updatedAt: string;
+};
+
+type DetectionJobEffectiveConfig = {
+  pipelineId?: string;
+  runtimeProvider: DetectionRuntimeProvider;
+  taskType: DetectionTaskType;
+  quality: DetectionQuality;
+  modelRef: string;
+  modelCatalogEntryId?: string;
+  modelDisplayName?: string;
+  profileConfigVersion?: number;
+  profileUpdatedAt?: string;
+  schedule?: {
+    mode: DetectionMode;
+    frameStride: number;
+  };
+  thresholds?: Record<string, unknown>;
+  outputs?: Record<string, unknown>;
 };
 
 type FaceDetectionResponse = {
@@ -287,6 +332,41 @@ const CameraDetectionProfileInputSchema = z.object({
   pipelines: z.array(CameraDetectionPipelineSchema).default([]),
   configVersion: z.number().int().positive().optional()
 });
+const DetectionJobEffectiveConfigSchema = z.object({
+  pipelineId: z.string().optional(),
+  runtimeProvider: DetectionRuntimeProviderSchema,
+  taskType: DetectionTaskTypeSchema,
+  quality: DetectionQualitySchema,
+  modelRef: z.string().min(1),
+  modelCatalogEntryId: z.string().optional(),
+  modelDisplayName: z.string().optional(),
+  profileConfigVersion: z.number().int().positive().optional(),
+  profileUpdatedAt: z.string().optional(),
+  schedule: z
+    .object({
+      mode: DetectionModeSchema,
+      frameStride: z.number().int().positive()
+    })
+    .optional(),
+  thresholds: z.record(z.any()).optional(),
+  outputs: z.record(z.any()).optional()
+});
+const DetectionJobCreateInputSchema = z.object({
+  cameraId: z.string(),
+  mode: DetectionModeSchema.default("realtime"),
+  source: DetectionSourceSchema.default("snapshot"),
+  provider: DetectionProviderSchema.default("onprem_bento"),
+  pipelineId: z.string().min(1).optional(),
+  overrides: z
+    .object({
+      quality: DetectionQualitySchema.optional(),
+      thresholds: z.record(z.any()).optional(),
+      outputs: z.record(z.any()).optional(),
+      provider: DetectionProviderSchema.optional()
+    })
+    .optional(),
+  options: z.record(z.any()).optional()
+});
 const ModelCatalogEntryInputSchema = z.object({
   provider: DetectionRuntimeProviderSchema,
   taskType: DetectionTaskTypeSchema,
@@ -387,6 +467,17 @@ function serializeCameraDetectionProfile(profile: CameraDetectionProfile) {
     configVersion: profile.configVersion,
     updatedAt: profile.updatedAt
   });
+}
+
+function normalizeRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
+function extractDetectionJobEffectiveConfig(options: Record<string, unknown> | null | undefined): DetectionJobEffectiveConfig | undefined {
+  if (!options) return undefined;
+  const parsed = DetectionJobEffectiveConfigSchema.safeParse(options.resolvedConfig);
+  return parsed.success ? parsed.data : undefined;
 }
 
 function normalizeDesiredNodeCapabilities(
@@ -793,6 +884,7 @@ function detectionJobResponse(job: {
   createdAt: Date;
   updatedAt: Date;
 }) {
+  const options = job.options ? parseJson<Record<string, unknown>>(job.options) : null;
   return {
     id: job.id,
     tenantId: job.tenantId,
@@ -805,7 +897,8 @@ function detectionJobResponse(job: {
     runId: job.runId,
     errorCode: job.errorCode,
     errorMessage: job.errorMessage,
-    options: job.options ? parseJson<Record<string, unknown>>(job.options) : null,
+    options,
+    effectiveConfig: extractDetectionJobEffectiveConfig(options ?? undefined),
     queuedAt: toISO(job.queuedAt),
     startedAt: job.startedAt ? toISO(job.startedAt) : null,
     finishedAt: job.finishedAt ? toISO(job.finishedAt) : null,
@@ -2329,6 +2422,466 @@ export async function buildApp() {
     }
 
     return updated;
+  };
+
+  const resolveCatalogModel = async (args: {
+    runtimeProvider: DetectionRuntimeProvider;
+    taskType: DetectionTaskType;
+    quality: DetectionQuality;
+  }) => {
+    return prisma.modelCatalogEntry.findFirst({
+      where: {
+        provider: args.runtimeProvider,
+        taskType: args.taskType,
+        quality: args.quality,
+        status: "active"
+      },
+      orderBy: { updatedAt: "desc" }
+    });
+  };
+
+  const resolveMatchingNodeCandidates = (args: {
+    tenantId: string;
+    pipeline: CameraDetectionPipeline;
+    modelRef: string;
+    nodes: Array<{
+      nodeId: string;
+      runtime: string;
+      status: string;
+      endpoint: string;
+      maxConcurrent: number;
+      queueDepth: number;
+      isDrained: boolean;
+      models: string;
+      capabilities: string;
+      assignments: Array<{ tenantId: string }>;
+    }>;
+  }): DetectionPipelineNodeCandidate[] => {
+    return args.nodes
+      .filter((node) => {
+        if (node.runtime !== args.pipeline.provider) return false;
+        const assignedTenantIds = Array.from(new Set(node.assignments.map((assignment) => assignment.tenantId)));
+        if (assignedTenantIds.length > 0 && !assignedTenantIds.includes(args.tenantId)) return false;
+        const models = parseJson<string[]>(node.models);
+        const capabilities = parseJson<Array<Record<string, unknown>>>(node.capabilities).map(normalizeObservedCapability);
+        const supportsModel = models.includes(args.modelRef) || capabilities.some((capability) => capability.models.includes(args.modelRef));
+        const supportsTask = capabilities.some((capability) => {
+          const taskSupported = capability.taskTypes.includes(args.pipeline.taskType);
+          const qualitySupported = capability.qualities.length === 0 || capability.qualities.includes(args.pipeline.quality);
+          const modelSupported = capability.models.length === 0 || capability.models.includes(args.modelRef);
+          return taskSupported && qualitySupported && modelSupported;
+        });
+        return supportsModel && supportsTask;
+      })
+      .map((node) => {
+        const assignedTenantIds = Array.from(new Set(node.assignments.map((assignment) => assignment.tenantId)));
+        const statusScore = node.status === "online" ? 300 : node.status === "degraded" ? 200 : 100;
+        const drainPenalty = node.isDrained ? 100 : 0;
+        const capacityScore = Math.max(node.maxConcurrent - node.queueDepth, 0);
+        return {
+          nodeId: node.nodeId,
+          runtime: node.runtime,
+          status: node.status,
+          endpoint: node.endpoint,
+          maxConcurrent: node.maxConcurrent,
+          queueDepth: node.queueDepth,
+          isDrained: node.isDrained,
+          assignedTenantIds,
+          score: statusScore + capacityScore - drainPenalty
+        };
+      })
+      .sort((left, right) => {
+        if (right.score !== left.score) return right.score - left.score;
+        if (left.queueDepth !== right.queueDepth) return left.queueDepth - right.queueDepth;
+        return left.nodeId.localeCompare(right.nodeId);
+      });
+  };
+
+  const selectPrimaryNodeCandidate = (candidates: DetectionPipelineNodeCandidate[]) =>
+    candidates.find((candidate) => !candidate.isDrained && (candidate.status === "online" || candidate.status === "degraded")) ??
+    candidates[0] ??
+    null;
+
+  const resolveDetectionJobInput = async (args: {
+    tenantId: string;
+    cameraId: string;
+    mode: DetectionMode;
+    provider: DetectionProvider;
+    pipelineId?: string;
+    overrides?: {
+      quality?: DetectionQuality;
+      thresholds?: Record<string, unknown>;
+      outputs?: Record<string, unknown>;
+      provider?: DetectionProvider;
+    };
+    options?: Record<string, unknown>;
+  }) => {
+    const baseOptions = normalizeRecord(args.options);
+    const provider = args.overrides?.provider ?? args.provider;
+
+    if (args.pipelineId) {
+      const profileRow = await prisma.cameraProfile.upsert({
+        where: { cameraId: args.cameraId },
+        update: {},
+        create: defaultCameraProfileData(args.tenantId, args.cameraId)
+      });
+      const profile = parseCameraDetectionProfile(profileRow.detectionProfile, args.tenantId, args.cameraId);
+      const pipeline = profile.pipelines.find((entry) => entry.pipelineId === args.pipelineId);
+
+      if (!pipeline) {
+        throw new ApiDomainError({
+          statusCode: 404,
+          apiCode: "DETECTION_PIPELINE_NOT_FOUND",
+          message: "Detection pipeline not found for camera",
+          details: { cameraId: args.cameraId, pipelineId: args.pipelineId }
+        });
+      }
+      if (!pipeline.enabled) {
+        throw new ApiDomainError({
+          statusCode: 409,
+          apiCode: "DETECTION_PIPELINE_DISABLED",
+          message: "Detection pipeline is disabled",
+          details: { cameraId: args.cameraId, pipelineId: args.pipelineId }
+        });
+      }
+
+      const quality = args.overrides?.quality ?? pipeline.quality;
+      const catalogEntry = await resolveCatalogModel({
+        runtimeProvider: pipeline.provider,
+        taskType: pipeline.taskType,
+        quality
+      });
+      if (!catalogEntry) {
+        throw new ApiDomainError({
+          statusCode: 409,
+          apiCode: "DETECTION_MODEL_NOT_CONFIGURED",
+          message: "No active model catalog entry matches the requested detection pipeline",
+          details: {
+            cameraId: args.cameraId,
+            pipelineId: args.pipelineId,
+            provider: pipeline.provider,
+            taskType: pipeline.taskType,
+            quality
+          }
+        });
+      }
+
+      const defaultThresholds = catalogEntry.defaults ? normalizeRecord(parseJson<unknown>(catalogEntry.defaults)) : {};
+      const thresholds = {
+        ...defaultThresholds,
+        ...normalizeRecord(pipeline.thresholds),
+        ...normalizeRecord(args.overrides?.thresholds),
+        ...normalizeRecord(baseOptions.thresholds)
+      };
+      const outputs = {
+        ...normalizeRecord(pipeline.outputs),
+        ...normalizeRecord(args.overrides?.outputs),
+        ...normalizeRecord(baseOptions.outputs)
+      };
+      const schedule = pipeline.schedule ?? { mode: args.mode, frameStride: 1 };
+      const effectiveConfig: DetectionJobEffectiveConfig = {
+        pipelineId: pipeline.pipelineId,
+        runtimeProvider: pipeline.provider,
+        taskType: pipeline.taskType,
+        quality,
+        modelRef: catalogEntry.modelRef,
+        modelCatalogEntryId: catalogEntry.id,
+        modelDisplayName: catalogEntry.displayName,
+        profileConfigVersion: profile.configVersion,
+        profileUpdatedAt: profile.updatedAt,
+        schedule,
+        thresholds,
+        outputs
+      };
+
+      return {
+        provider,
+        mode: schedule.mode,
+        options: {
+          ...baseOptions,
+          pipelineId: pipeline.pipelineId,
+          runtimeProvider: pipeline.provider,
+          taskType: pipeline.taskType,
+          quality,
+          modelRef: catalogEntry.modelRef,
+          schedule,
+          thresholds,
+          outputs,
+          resolvedConfig: effectiveConfig
+        }
+      };
+    }
+
+    const runtimeProvider = baseOptions.runtimeProvider;
+    const taskType = baseOptions.taskType;
+    const quality = baseOptions.quality;
+    const modelRef = baseOptions.modelRef;
+    if (
+      typeof runtimeProvider === "string" &&
+      typeof taskType === "string" &&
+      typeof quality === "string" &&
+      typeof modelRef !== "string"
+    ) {
+      const parsedRuntimeProvider = DetectionRuntimeProviderSchema.safeParse(runtimeProvider);
+      const parsedTaskType = DetectionTaskTypeSchema.safeParse(taskType);
+      const parsedQuality = DetectionQualitySchema.safeParse(quality);
+      if (parsedRuntimeProvider.success && parsedTaskType.success && parsedQuality.success) {
+        const catalogEntry = await resolveCatalogModel({
+          runtimeProvider: parsedRuntimeProvider.data,
+          taskType: parsedTaskType.data,
+          quality: parsedQuality.data
+        });
+        if (!catalogEntry) {
+          throw new ApiDomainError({
+            statusCode: 409,
+            apiCode: "DETECTION_MODEL_NOT_CONFIGURED",
+            message: "No active model catalog entry matches the requested detection configuration",
+            details: {
+              cameraId: args.cameraId,
+              provider: parsedRuntimeProvider.data,
+              taskType: parsedTaskType.data,
+              quality: parsedQuality.data
+            }
+          });
+        }
+
+        const effectiveConfig: DetectionJobEffectiveConfig = {
+          runtimeProvider: parsedRuntimeProvider.data,
+          taskType: parsedTaskType.data,
+          quality: parsedQuality.data,
+          modelRef: catalogEntry.modelRef,
+          modelCatalogEntryId: catalogEntry.id,
+          modelDisplayName: catalogEntry.displayName,
+          thresholds: normalizeRecord(baseOptions.thresholds),
+          outputs: normalizeRecord(baseOptions.outputs)
+        };
+
+        return {
+          provider,
+          mode: args.mode,
+          options: {
+            ...baseOptions,
+            modelRef: catalogEntry.modelRef,
+            resolvedConfig: effectiveConfig
+          }
+        };
+      }
+    }
+
+    return {
+      provider,
+      mode: args.mode,
+      options: baseOptions
+    };
+  };
+
+  const resolveDetectionProfileValidation = async (args: { tenantId: string; cameraId: string }) => {
+    const profileRow = await prisma.cameraProfile.upsert({
+      where: { cameraId: args.cameraId },
+      update: {},
+      create: defaultCameraProfileData(args.tenantId, args.cameraId)
+    });
+    const profile = parseCameraDetectionProfile(profileRow.detectionProfile, args.tenantId, args.cameraId);
+    const nodes = await prisma.inferenceNodeSnapshot.findMany({
+      include: { assignments: { select: { tenantId: true }, orderBy: { tenantId: "asc" } } },
+      orderBy: [{ status: "asc" }, { updatedAt: "desc" }]
+    });
+
+    const pipelineChecks = await Promise.all(
+      profile.pipelines.map(async (pipeline) => {
+        if (!pipeline.enabled) {
+          return {
+            pipelineId: pipeline.pipelineId,
+            provider: pipeline.provider,
+            taskType: pipeline.taskType,
+            quality: pipeline.quality,
+            enabled: false,
+            valid: true,
+            runnable: false,
+            inSync: true,
+            issues: [] as DetectionPipelineIssue[],
+            resolvedModel: null as null | Record<string, unknown>,
+            matchingNodes: [] as DetectionPipelineNodeCandidate[],
+            primaryNode: null as DetectionPipelineNodeCandidate | null
+          };
+        }
+
+        const catalogEntry = await resolveCatalogModel({
+          runtimeProvider: pipeline.provider,
+          taskType: pipeline.taskType,
+          quality: pipeline.quality
+        });
+        if (!catalogEntry) {
+          return {
+            pipelineId: pipeline.pipelineId,
+            provider: pipeline.provider,
+            taskType: pipeline.taskType,
+            quality: pipeline.quality,
+            enabled: true,
+            valid: false,
+            runnable: false,
+            inSync: false,
+            issues: [
+              {
+                code: "MODEL_NOT_CONFIGURED",
+                severity: "error" as const,
+                message: "No active model catalog entry matches this pipeline"
+              }
+            ],
+            resolvedModel: null,
+            matchingNodes: [] as DetectionPipelineNodeCandidate[],
+            primaryNode: null as DetectionPipelineNodeCandidate | null
+          };
+        }
+
+        const matchingNodes = resolveMatchingNodeCandidates({
+          tenantId: args.tenantId,
+          pipeline,
+          modelRef: catalogEntry.modelRef,
+          nodes
+        });
+
+        const runnableNodes = matchingNodes.filter(
+          (node) => !node.isDrained && (node.status === "online" || node.status === "degraded")
+        );
+
+        const issues: DetectionPipelineIssue[] = [];
+        if (matchingNodes.length === 0) {
+          issues.push({
+            code: "NO_COMPATIBLE_NODE",
+            severity: "warning",
+            message: "No observed node advertises compatibility for this pipeline"
+          });
+        } else if (runnableNodes.length === 0) {
+          issues.push({
+            code: "NO_ACTIVE_NODE",
+            severity: "warning",
+            message: "Compatible nodes exist, but none are currently runnable"
+          });
+        }
+
+        return {
+          pipelineId: pipeline.pipelineId,
+          provider: pipeline.provider,
+          taskType: pipeline.taskType,
+          quality: pipeline.quality,
+          enabled: true,
+          valid: true,
+          runnable: runnableNodes.length > 0,
+          inSync: runnableNodes.length > 0,
+          issues,
+          resolvedModel: {
+            id: catalogEntry.id,
+            modelRef: catalogEntry.modelRef,
+            displayName: catalogEntry.displayName,
+            provider: catalogEntry.provider,
+            taskType: catalogEntry.taskType,
+            quality: catalogEntry.quality
+          },
+          matchingNodes,
+          primaryNode: selectPrimaryNodeCandidate(matchingNodes)
+        };
+      })
+    );
+
+    const enabledPipelines = pipelineChecks.filter((pipeline) => pipeline.enabled);
+    const validPipelines = enabledPipelines.filter((pipeline) => pipeline.valid);
+    const runnablePipelines = enabledPipelines.filter((pipeline) => pipeline.runnable);
+    const driftedPipelines = enabledPipelines.filter((pipeline) => !pipeline.inSync);
+
+    return {
+      cameraId: args.cameraId,
+      tenantId: args.tenantId,
+      configVersion: profile.configVersion,
+      updatedAt: profile.updatedAt,
+      valid: enabledPipelines.every((pipeline) => pipeline.valid),
+      runnable: enabledPipelines.every((pipeline) => pipeline.runnable),
+      inSync: enabledPipelines.every((pipeline) => pipeline.inSync),
+      summary: {
+        totalPipelines: profile.pipelines.length,
+        enabledPipelines: enabledPipelines.length,
+        validPipelines: validPipelines.length,
+        runnablePipelines: runnablePipelines.length,
+        driftedPipelines: driftedPipelines.length
+      },
+      pipelines: pipelineChecks
+    };
+  };
+
+  const resolveDetectionTopology = async (args: { tenantId: string; cameraId: string }) => {
+    const validation = await resolveDetectionProfileValidation(args);
+    const pipelines = validation.pipelines.map((pipeline) => {
+      const assignmentStatus = !pipeline.enabled
+        ? "disabled"
+        : pipeline.primaryNode && pipeline.runnable
+          ? "assigned"
+          : pipeline.primaryNode
+            ? "degraded"
+            : "unassigned";
+      const assignmentReason =
+        assignmentStatus === "assigned"
+          ? "Pipeline mapped to a runnable compatible node"
+          : assignmentStatus === "degraded"
+            ? "Compatible node found, but it is not currently runnable"
+            : assignmentStatus === "disabled"
+              ? "Pipeline is disabled in the camera profile"
+              : "No compatible node available for this pipeline";
+
+      return {
+        pipelineId: pipeline.pipelineId,
+        provider: pipeline.provider,
+        taskType: pipeline.taskType,
+        quality: pipeline.quality,
+        enabled: pipeline.enabled,
+        valid: pipeline.valid,
+        runnable: pipeline.runnable,
+        inSync: pipeline.inSync,
+        resolvedModel: pipeline.resolvedModel,
+        assignment: {
+          status: assignmentStatus,
+          reason: assignmentReason,
+          primaryNodeId: pipeline.primaryNode?.nodeId ?? null
+        },
+        candidates: pipeline.matchingNodes.map((node, index) => ({
+          ...node,
+          role: pipeline.primaryNode?.nodeId === node.nodeId ? "primary" : index === 0 ? "candidate" : "fallback"
+        })),
+        issues: pipeline.issues
+      };
+    });
+
+    const assignedPipelines = pipelines.filter((pipeline) => pipeline.assignment.status === "assigned");
+    const degradedPipelines = pipelines.filter((pipeline) => pipeline.assignment.status === "degraded");
+    const candidateNodeIds = Array.from(
+      new Set(pipelines.flatMap((pipeline) => pipeline.candidates.map((candidate) => candidate.nodeId)))
+    );
+    const activeCandidateNodeIds = Array.from(
+      new Set(
+        pipelines.flatMap((pipeline) =>
+          pipeline.candidates
+            .filter((candidate) => !candidate.isDrained && (candidate.status === "online" || candidate.status === "degraded"))
+            .map((candidate) => candidate.nodeId)
+        )
+      )
+    );
+
+    return {
+      cameraId: validation.cameraId,
+      tenantId: validation.tenantId,
+      configVersion: validation.configVersion,
+      updatedAt: validation.updatedAt,
+      valid: validation.valid,
+      runnable: validation.runnable,
+      inSync: validation.inSync,
+      summary: {
+        ...validation.summary,
+        assignedPipelines: assignedPipelines.length,
+        degradedAssignments: degradedPipelines.length,
+        totalCandidateNodes: candidateNodeIds.length,
+        activeCandidateNodes: activeCandidateNodeIds.length
+      },
+      pipelines
+    };
   };
 
   const runDetectionJobPipeline = async (jobId: string) => {
@@ -4734,6 +5287,33 @@ export async function buildApp() {
     return { data: nextProfile };
   });
 
+  app.post("/cameras/:id/detection-profile/validate", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin"]);
+    const id = (request.params as { id: string }).id;
+
+    const camera = await prisma.camera.findFirst({
+      where: { id, tenantId: ctx.tenantId, deletedAt: null }
+    });
+    if (!camera) throw app.httpErrors.notFound();
+
+    return { data: await resolveDetectionProfileValidation({ tenantId: ctx.tenantId, cameraId: id }) };
+  });
+
+  app.get("/cameras/:id/detection-topology", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+    const id = (request.params as { id: string }).id;
+    await assertCameraAccess({ ...ctx, cameraId: id });
+
+    const camera = await prisma.camera.findFirst({
+      where: { id, tenantId: ctx.tenantId, deletedAt: null }
+    });
+    if (!camera) throw app.httpErrors.notFound();
+
+    return { data: await resolveDetectionTopology({ tenantId: ctx.tenantId, cameraId: id }) };
+  });
+
   app.get("/cameras/:id/lifecycle", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
     const ctx = getTenantContext(request);
     assertRole(request, ["tenant_admin", "monitor", "client_user"]);
@@ -5335,30 +5915,32 @@ export async function buildApp() {
     const ctx = getTenantContext(request);
     assertRole(request, ["tenant_admin", "monitor"]);
 
-    const body = z
-      .object({
-        cameraId: z.string(),
-        mode: DetectionModeSchema.default("realtime"),
-        source: DetectionSourceSchema.default("snapshot"),
-        provider: DetectionProviderSchema.default("onprem_bento"),
-        options: z.record(z.any()).optional()
-      })
-      .parse(request.body);
+    const body = DetectionJobCreateInputSchema.parse(request.body ?? {});
 
     const camera = await prisma.camera.findFirst({
       where: { id: body.cameraId, tenantId: ctx.tenantId, deletedAt: null }
     });
     if (!camera) throw app.httpErrors.notFound();
 
+    const resolved = await resolveDetectionJobInput({
+      tenantId: ctx.tenantId,
+      cameraId: camera.id,
+      mode: body.mode,
+      provider: body.provider,
+      pipelineId: body.pipelineId,
+      overrides: body.overrides,
+      options: body.options
+    });
+
     const job = await prisma.detectionJob.create({
       data: {
         tenantId: ctx.tenantId,
         cameraId: camera.id,
-        mode: body.mode,
+        mode: resolved.mode,
         source: body.source,
-        provider: body.provider,
+        provider: resolved.provider,
         status: "queued",
-        options: body.options ? JSON.stringify(body.options) : null,
+        options: JSON.stringify(resolved.options),
         createdByUserId: ctx.userId
       }
     });
@@ -5373,7 +5955,9 @@ export async function buildApp() {
         cameraId: job.cameraId,
         mode: job.mode,
         source: job.source,
-        provider: job.provider
+        provider: job.provider,
+        pipelineId: body.pipelineId ?? null,
+        effectiveConfig: extractDetectionJobEffectiveConfig(resolved.options)
       },
       context: request.ctx
     });
@@ -5421,7 +6005,7 @@ export async function buildApp() {
     ]);
 
     reply.header("x-total-count", String(total));
-    return { data: rows.map(detectionObservationResponse), total };
+    return { data: rows.map(detectionObservationResponse), total, job: detectionJobResponse(job) };
   });
 
   app.post("/detections/jobs/:id/cancel", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
@@ -6357,6 +6941,63 @@ export async function buildApp() {
     });
 
     return { data: normalizeDesiredNodeConfig(row) };
+  });
+
+  app.post("/ops/nodes/:nodeId/config/apply", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
+    if (!request.ctx?.isSuperuser) throw app.httpErrors.forbidden("Only superuser can apply node config");
+    const { nodeId } = request.params as { nodeId: string };
+    const body = z
+      .object({
+        syncBridgeTenantAssignments: z.boolean().default(false)
+      })
+      .parse(request.body ?? {});
+
+    const desiredRow = await prisma.inferenceNodeDesiredConfig.findUnique({ where: { nodeId } });
+    if (!desiredRow) throw app.httpErrors.notFound("Node desired config not found");
+
+    const desiredConfig = normalizeDesiredNodeConfig(desiredRow);
+    if (body.syncBridgeTenantAssignments) {
+      await syncNodeTenantsInBridge(nodeId, desiredConfig.tenantIds);
+    }
+
+    const appliedAt = new Date();
+    const updatedRow = await prisma.inferenceNodeDesiredConfig.update({
+      where: { nodeId },
+      data: { lastAppliedAt: appliedAt }
+    });
+
+    const observedRow = await prisma.inferenceNodeSnapshot.findUnique({
+      where: { nodeId },
+      include: { assignments: { select: { tenantId: true }, orderBy: { tenantId: "asc" } } }
+    });
+    const observed = observedRow ? nodeObservedConfigResponse(observedRow) : null;
+    const desired = normalizeDesiredNodeConfig(updatedRow);
+    const diff = buildNodeConfigDiff({
+      desired,
+      observed: observed
+        ? {
+            runtime: observed.runtime,
+            transport: observed.transport,
+            endpoint: observed.endpoint,
+            resources: observed.resources,
+            capabilities: observed.capabilities,
+            models: observed.models,
+            assignedTenantIds: observed.assignedTenantIds,
+            maxConcurrent: observed.maxConcurrent
+          }
+        : null
+    });
+
+    return {
+      data: {
+        nodeId,
+        desiredConfig: desired,
+        observedConfig: observed,
+        diff,
+        appliedAt: appliedAt.toISOString(),
+        syncedBridgeTenantAssignments: body.syncBridgeTenantAssignments
+      }
+    };
   });
 
   app.get("/ops/nodes", { preHandler: authPreHandler }, async (request: FastifyRequest) => {

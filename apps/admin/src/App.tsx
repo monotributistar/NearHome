@@ -107,6 +107,165 @@ type OpsNodeSnapshot = {
   updatedAt: string;
 };
 
+type OpsNodeDesiredConfig = {
+  nodeId: string;
+  runtime: string;
+  transport: "http" | "grpc";
+  endpoint: string;
+  resources: Record<string, number>;
+  capabilities: Array<{ capabilityId: string; taskTypes: string[]; qualities?: string[]; modelRefs?: string[] }>;
+  models: string[];
+  tenantIds: string[];
+  maxConcurrent: number;
+  contractVersion: string;
+  configVersion: number;
+  lastAppliedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type OpsNodeObservedConfig = {
+  runtime: string;
+  transport: "http" | "grpc";
+  endpoint: string;
+  resources: Record<string, number>;
+  capabilities: Array<{ capabilityId?: string; taskTypes?: string[]; qualities?: string[]; models?: string[]; modelRefs?: string[] }>;
+  models: string[];
+  assignedTenantIds: string[];
+  maxConcurrent: number;
+  status: string;
+  queueDepth: number;
+  isDrained: boolean;
+  lastHeartbeatAt: string;
+  updatedAt: string;
+};
+
+type OpsNodeConfigDiff = {
+  fields?: string[];
+  inSync?: boolean;
+} & Record<string, unknown>;
+
+type OpsNodeConfigEnvelope = {
+  nodeId: string;
+  desiredConfig: OpsNodeDesiredConfig | null;
+  observedConfig: OpsNodeObservedConfig | null;
+  diff: OpsNodeConfigDiff | null;
+  appliedAt?: string;
+  syncedBridgeTenantAssignments?: boolean;
+};
+
+type DetectionProviderRuntime = "yolo" | "mediapipe";
+type DetectionTaskType = "person_detection" | "object_detection" | "license_plate_detection" | "face_detection" | "pose_estimation";
+type DetectionQuality = "fast" | "balanced" | "accurate";
+
+type CameraDetectionPipeline = {
+  pipelineId: string;
+  provider: DetectionProviderRuntime;
+  taskType: DetectionTaskType;
+  quality: DetectionQuality;
+  enabled: boolean;
+  schedule?: {
+    mode: "realtime" | "batch";
+    frameStride: number;
+  };
+  thresholds?: Record<string, unknown>;
+  outputs?: Record<string, unknown>;
+};
+
+type CameraDetectionProfile = {
+  cameraId: string;
+  tenantId: string;
+  pipelines: CameraDetectionPipeline[];
+  configVersion: number;
+  updatedAt: string;
+};
+
+type ModelCatalogEntry = {
+  id: string;
+  provider: DetectionProviderRuntime;
+  taskType: DetectionTaskType;
+  quality: DetectionQuality;
+  modelRef: string;
+  displayName: string;
+  resources: Record<string, number>;
+  defaults?: Record<string, unknown>;
+  outputs?: Record<string, unknown>;
+  status: "active" | "disabled";
+  createdAt: string;
+  updatedAt: string;
+};
+
+type DetectionTopologyCandidate = {
+  nodeId: string;
+  runtime: string;
+  status: "online" | "degraded" | "offline";
+  endpoint: string;
+  maxConcurrent: number;
+  queueDepth: number;
+  isDrained: boolean;
+  assignedTenantIds: string[];
+  score: number;
+  role: "primary" | "candidate" | "fallback";
+};
+
+type DetectionTopologyPipeline = {
+  pipelineId: string;
+  provider: DetectionProviderRuntime;
+  taskType: DetectionTaskType;
+  quality: DetectionQuality;
+  enabled: boolean;
+  valid: boolean;
+  runnable: boolean;
+  inSync: boolean;
+  resolvedModel: {
+    id: string;
+    modelRef: string;
+    displayName: string;
+    provider: DetectionProviderRuntime;
+    taskType: DetectionTaskType;
+    quality: DetectionQuality;
+  } | null;
+  assignment: {
+    status: "assigned" | "degraded" | "unassigned" | "disabled";
+    reason: string;
+    primaryNodeId: string | null;
+  };
+  candidates: DetectionTopologyCandidate[];
+  issues: Array<{ code: string; severity: "info" | "warning" | "error"; message: string }>;
+};
+
+type DetectionTopology = {
+  cameraId: string;
+  tenantId: string;
+  configVersion: number;
+  updatedAt: string;
+  valid: boolean;
+  runnable: boolean;
+  inSync: boolean;
+  summary: {
+    totalPipelines: number;
+    enabledPipelines: number;
+    validPipelines: number;
+    runnablePipelines: number;
+    driftedPipelines: number;
+    assignedPipelines: number;
+    degradedAssignments: number;
+    totalCandidateNodes: number;
+    activeCandidateNodes: number;
+  };
+  pipelines: DetectionTopologyPipeline[];
+};
+
+const DETECTION_PROVIDER_OPTIONS: DetectionProviderRuntime[] = ["yolo", "mediapipe"];
+const DETECTION_TASK_OPTIONS: DetectionTaskType[] = [
+  "person_detection",
+  "object_detection",
+  "license_plate_detection",
+  "face_detection",
+  "pose_estimation"
+];
+const DETECTION_QUALITY_OPTIONS: DetectionQuality[] = ["fast", "balanced", "accurate"];
+
 type DeploymentStatusData = {
   generatedAt: string;
   overallOk: boolean;
@@ -203,6 +362,18 @@ function getTenantId() {
 
 function getImpersonateRole() {
   return localStorage.getItem("nearhome_impersonate_role");
+}
+
+function safeJsonParse<T>(raw: string, fallback: T): T {
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function prettyJson(value: unknown) {
+  return JSON.stringify(value ?? {}, null, 2);
 }
 
 function hasBackofficeAccess(me: any) {
@@ -1508,9 +1679,12 @@ function CamerasPage() {
 
 function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
   const [nodes, setNodes] = useState<OpsNodeSnapshot[]>([]);
+  const [nodeConfig, setNodeConfig] = useState<OpsNodeConfigEnvelope | null>(null);
+  const [catalog, setCatalog] = useState<ModelCatalogEntry[]>([]);
   const [tenantOptions, setTenantOptions] = useState<Array<{ id: string; name: string }>>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string>("");
   const [loading, setLoading] = useState(true);
+  const [loadingNodeConfig, setLoadingNodeConfig] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
@@ -1549,6 +1723,21 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
     }
   }
 
+  async function loadCatalog() {
+    const token = getToken();
+    if (!token) return;
+    try {
+      const response = await fetch(`${apiUrl}/ops/model-catalog`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!response.ok) throw new Error(`catalog ${response.status}`);
+      const body = (await response.json()) as { data?: ModelCatalogEntry[] };
+      setCatalog(body.data ?? []);
+    } catch (loadError) {
+      setError(summarizeApiError(loadError, "No se pudo cargar el catálogo de modelos"));
+    }
+  }
+
   async function loadNodes(sync = true) {
     const token = getToken();
     if (!token) {
@@ -1577,8 +1766,31 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
     }
   }
 
+  async function loadNodeConfig(nodeId: string) {
+    const token = getToken();
+    if (!token || !nodeId) {
+      setNodeConfig(null);
+      return;
+    }
+    setLoadingNodeConfig(true);
+    try {
+      const res = await fetch(`${apiUrl}/ops/nodes/${encodeURIComponent(nodeId)}/config`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error(`node config ${res.status}`);
+      const body = (await res.json()) as { data?: OpsNodeConfigEnvelope };
+      setNodeConfig(body.data ?? null);
+    } catch (loadError) {
+      setNodeConfig(null);
+      setError(summarizeApiError(loadError, "No se pudo cargar la configuración del nodo"));
+    } finally {
+      setLoadingNodeConfig(false);
+    }
+  }
+
   useEffect(() => {
     void loadTenants();
+    void loadCatalog();
     void loadNodes(true);
     const id = window.setInterval(() => {
       void loadNodes(true);
@@ -1586,6 +1798,15 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
     return () => window.clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiUrl]);
+
+  useEffect(() => {
+    if (!selectedNodeId) {
+      setNodeConfig(null);
+      return;
+    }
+    void loadNodeConfig(selectedNodeId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedNodeId]);
 
   async function executeNodeAction(nodeId: string, action: "drain" | "undrain" | "revoke") {
     const token = getToken();
@@ -1703,6 +1924,44 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
       await loadNodes(true);
     } catch (saveError) {
       setError(summarizeApiError(saveError, "No se pudo guardar asignación de tenants"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function applyNodeConfig(syncBridgeTenantAssignments: boolean) {
+    if (!selectedNode) return;
+    const token = getToken();
+    if (!token) {
+      setError("Missing auth token");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    setOk(null);
+    try {
+      const res = await fetch(`${apiUrl}/ops/nodes/${encodeURIComponent(selectedNode.nodeId)}/config/apply`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({ syncBridgeTenantAssignments })
+      });
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(`node apply ${res.status}: ${body}`);
+      }
+      const body = (await res.json()) as { data?: OpsNodeConfigEnvelope };
+      setNodeConfig(body.data ?? null);
+      setOk(
+        syncBridgeTenantAssignments
+          ? `Configuración aplicada y tenant assignments sincronizados para ${selectedNode.nodeId}`
+          : `Configuración aplicada para ${selectedNode.nodeId}`
+      );
+      await loadNodes(true);
+    } catch (applyError) {
+      setError(summarizeApiError(applyError, "No se pudo aplicar la configuración del nodo"));
     } finally {
       setSaving(false);
     }
@@ -1879,16 +2138,46 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
         {!selectedNode ? (
           <div className="text-sm text-slate-500">{loading ? "Loading..." : "Seleccioná un nodo para ver su configuración."}</div>
         ) : (
-          <div className="space-y-2 text-sm">
-            <div>
-              <strong>{selectedNode.nodeId}</strong> | status: {selectedNode.status} | contract: {selectedNode.contractVersion}
+          <div className="space-y-3 text-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <strong>{selectedNode.nodeId}</strong>
+              <Badge>{selectedNode.status}</Badge>
+              <Badge>{selectedNode.runtime}</Badge>
+              <Badge>contract {selectedNode.contractVersion}</Badge>
+              <Badge>
+                queue {selectedNode.queueDepth}/{selectedNode.maxConcurrent}
+              </Badge>
+              <Badge>{selectedNode.isDrained ? "drained" : "active"}</Badge>
             </div>
             <div>endpoint: {selectedNode.endpoint}</div>
-            <div>runtime: {selectedNode.runtime}</div>
             <div>tenant(s): {(selectedNode.assignedTenantIds ?? []).join(", ") || selectedNode.tenantId || "*"}</div>
-            <div>queue/max: {selectedNode.queueDepth}/{selectedNode.maxConcurrent}</div>
-            <div>drained: {selectedNode.isDrained ? "yes" : "no"}</div>
             <div>last heartbeat: {new Date(selectedNode.lastHeartbeatAt).toLocaleString()}</div>
+            <div className="flex flex-wrap gap-2">
+              <PrimaryButton
+                className="px-2.5 py-1.5 text-xs"
+                type="button"
+                onClick={() => void loadNodeConfig(selectedNode.nodeId)}
+                disabled={saving || loadingNodeConfig}
+              >
+                {loadingNodeConfig ? "Refreshing..." : "Refresh config"}
+              </PrimaryButton>
+              <PrimaryButton
+                className="px-2.5 py-1.5 text-xs"
+                type="button"
+                onClick={() => void applyNodeConfig(false)}
+                disabled={saving}
+              >
+                Apply desired config
+              </PrimaryButton>
+              <PrimaryButton
+                className="px-2.5 py-1.5 text-xs"
+                type="button"
+                onClick={() => void applyNodeConfig(true)}
+                disabled={saving}
+              >
+                Apply + sync tenants
+              </PrimaryButton>
+            </div>
             <Surface>
               <div className="mb-2 font-medium">Tenant assignment</div>
               <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
@@ -1914,6 +2203,43 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
                 </PrimaryButton>
               </div>
             </Surface>
+            <Surface>
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <div className="font-medium">Desired vs observed</div>
+                <Badge className={nodeConfig?.diff?.inSync ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}>
+                  {nodeConfig?.diff?.inSync ? "in sync" : "drift detected"}
+                </Badge>
+                {nodeConfig?.desiredConfig?.lastAppliedAt ? (
+                  <span className="text-xs text-slate-500">
+                    last applied {new Date(nodeConfig.desiredConfig.lastAppliedAt).toLocaleString()}
+                  </span>
+                ) : null}
+              </div>
+              {loadingNodeConfig ? (
+                <div className="text-xs text-slate-500">Loading config snapshot...</div>
+              ) : (
+                <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+                  <div>
+                    <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Desired</div>
+                    <pre className="overflow-x-auto rounded-lg bg-slate-100 p-2 text-xs">
+                      {prettyJson(nodeConfig?.desiredConfig ?? null)}
+                    </pre>
+                  </div>
+                  <div>
+                    <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Observed</div>
+                    <pre className="overflow-x-auto rounded-lg bg-slate-100 p-2 text-xs">
+                      {prettyJson(nodeConfig?.observedConfig ?? null)}
+                    </pre>
+                  </div>
+                  <div>
+                    <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Diff</div>
+                    <pre className="overflow-x-auto rounded-lg bg-slate-100 p-2 text-xs">
+                      {prettyJson(nodeConfig?.diff ?? null)}
+                    </pre>
+                  </div>
+                </div>
+              )}
+            </Surface>
             <div>
               resources:
               <pre className="mt-1 overflow-x-auto rounded-lg bg-slate-100 p-2 text-xs">
@@ -1935,6 +2261,50 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
           </div>
         )}
       </PageCard>
+
+      <PageCard title="Model Catalog Snapshot">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <div className="text-sm text-slate-600">Modelos activos para resolver perfiles y jobs.</div>
+          <PrimaryButton className="px-2.5 py-1.5 text-xs" type="button" onClick={() => void loadCatalog()} disabled={loading || saving}>
+            Refresh catalog
+          </PrimaryButton>
+        </div>
+        <DataTable>
+          <thead className="bg-slate-50 text-slate-600">
+            <tr>
+              <th className="px-3 py-2">Provider</th>
+              <th className="px-3 py-2">Task</th>
+              <th className="px-3 py-2">Quality</th>
+              <th className="px-3 py-2">Model</th>
+              <th className="px-3 py-2">Status</th>
+              <th className="px-3 py-2">Resources</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {catalog.map((entry) => (
+              <tr key={entry.id}>
+                <td className="px-3 py-2">{entry.provider}</td>
+                <td className="px-3 py-2">{entry.taskType}</td>
+                <td className="px-3 py-2">{entry.quality}</td>
+                <td className="px-3 py-2 text-xs text-slate-600">{entry.modelRef}</td>
+                <td className="px-3 py-2">
+                  <Badge className={entry.status === "active" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : ""}>
+                    {entry.status}
+                  </Badge>
+                </td>
+                <td className="px-3 py-2 text-xs text-slate-600">{entry.resources.cpu ?? 0} CPU / {entry.resources.gpu ?? 0} GPU</td>
+              </tr>
+            ))}
+            {catalog.length === 0 ? (
+              <tr>
+                <td className="px-3 py-6 text-center text-sm text-slate-500" colSpan={6}>
+                  No hay modelos en catálogo todavía.
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </DataTable>
+      </PageCard>
     </div>
   );
 }
@@ -1951,6 +2321,13 @@ function CameraShow() {
   const [loadingLifecycle, setLoadingLifecycle] = useState(true);
   const [lifecycleMessage, setLifecycleMessage] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [detectionProfile, setDetectionProfile] = useState<CameraDetectionProfile | null>(null);
+  const [loadingDetectionProfile, setLoadingDetectionProfile] = useState(true);
+  const [topology, setTopology] = useState<DetectionTopology | null>(null);
+  const [loadingTopology, setLoadingTopology] = useState(true);
+  const [detectionSaved, setDetectionSaved] = useState(false);
+  const [validationMessage, setValidationMessage] = useState<string | null>(null);
+  const [catalog, setCatalog] = useState<ModelCatalogEntry[]>([]);
 
   function normalizeNotificationRule(raw: any) {
     const base = raw && typeof raw === "object" ? raw : {};
@@ -1966,6 +2343,95 @@ function CameraShow() {
         email: channels.email === true
       }
     };
+  }
+
+  function createEmptyPipeline(index: number): CameraDetectionPipeline {
+    return {
+      pipelineId: `pipeline-${index + 1}`,
+      provider: "yolo",
+      taskType: "person_detection",
+      quality: "balanced",
+      enabled: true,
+      schedule: {
+        mode: "realtime",
+        frameStride: 1
+      },
+      thresholds: {},
+      outputs: {}
+    };
+  }
+
+  async function loadModelCatalog() {
+    const token = getToken();
+    if (!token) return;
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL ?? "http://localhost:3001"}/ops/model-catalog`, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      if (!res.ok) throw new Error(`model catalog ${res.status}`);
+      const body = (await res.json()) as { data?: ModelCatalogEntry[] };
+      setCatalog(body.data ?? []);
+    } catch (loadError) {
+      setActionError(summarizeApiError(loadError, "No se pudo cargar el catálogo de modelos"));
+    }
+  }
+
+  async function loadDetectionProfile() {
+    const cameraId = id;
+    if (!cameraId) return;
+    const token = getToken();
+    const tenantId = getTenantId();
+    if (!token || !tenantId) {
+      setActionError("Missing auth context");
+      return;
+    }
+    setLoadingDetectionProfile(true);
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL ?? "http://localhost:3001"}/cameras/${cameraId}/detection-profile`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "X-Tenant-Id": tenantId
+        }
+      });
+      if (!res.ok) {
+        setActionError(await summarizeApiErrorResponse(res, "No se pudo cargar detection profile"));
+        return;
+      }
+      const body = (await res.json()) as { data?: CameraDetectionProfile };
+      setDetectionProfile(body.data ?? null);
+    } finally {
+      setLoadingDetectionProfile(false);
+    }
+  }
+
+  async function loadDetectionTopology() {
+    const cameraId = id;
+    if (!cameraId) return;
+    const token = getToken();
+    const tenantId = getTenantId();
+    if (!token || !tenantId) {
+      setActionError("Missing auth context");
+      return;
+    }
+    setLoadingTopology(true);
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL ?? "http://localhost:3001"}/cameras/${cameraId}/detection-topology`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "X-Tenant-Id": tenantId
+        }
+      });
+      if (!res.ok) {
+        setActionError(await summarizeApiErrorResponse(res, "No se pudo cargar la topología de detección"));
+        return;
+      }
+      const body = (await res.json()) as { data?: DetectionTopology };
+      setTopology(body.data ?? null);
+    } finally {
+      setLoadingTopology(false);
+    }
   }
 
   async function loadCamera() {
@@ -2023,6 +2489,9 @@ function CameraShow() {
   useEffect(() => {
     loadCamera();
     loadLifecycle();
+    void loadDetectionProfile();
+    void loadDetectionTopology();
+    void loadModelCatalog();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -2116,6 +2585,80 @@ function CameraShow() {
       setTimeout(() => setProfileSaved(false), 1200);
     } else {
       setActionError(await summarizeApiErrorResponse(res, "No se pudo guardar profile interno"));
+    }
+  }
+
+  async function saveDetectionProfile(e: FormEvent) {
+    e.preventDefault();
+    if (!id || !detectionProfile) return;
+    const token = getToken();
+    const tenantId = getTenantId();
+    if (!token || !tenantId) {
+      setActionError("Missing auth context");
+      return;
+    }
+    setActionError(null);
+
+    const payload = {
+      pipelines: detectionProfile.pipelines.map((pipeline) => ({
+        ...pipeline,
+        schedule: {
+          mode: pipeline.schedule?.mode ?? "realtime",
+          frameStride: Number(pipeline.schedule?.frameStride ?? 1)
+        },
+        thresholds: pipeline.thresholds ?? {},
+        outputs: pipeline.outputs ?? {}
+      }))
+    };
+
+    const res = await fetch(`${import.meta.env.VITE_API_URL ?? "http://localhost:3001"}/cameras/${id}/detection-profile`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        "X-Tenant-Id": tenantId
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (res.ok) {
+      const body = (await res.json()) as { data?: CameraDetectionProfile };
+      setDetectionProfile(body.data ?? null);
+      setDetectionSaved(true);
+      setTimeout(() => setDetectionSaved(false), 1200);
+      await loadDetectionTopology();
+    } else {
+      setActionError(await summarizeApiErrorResponse(res, "No se pudo guardar el detection profile"));
+    }
+  }
+
+  async function validateDetectionProfile() {
+    if (!id) return;
+    const token = getToken();
+    const tenantId = getTenantId();
+    if (!token || !tenantId) {
+      setActionError("Missing auth context");
+      return;
+    }
+    setActionError(null);
+
+    const res = await fetch(`${import.meta.env.VITE_API_URL ?? "http://localhost:3001"}/cameras/${id}/detection-profile/validate`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "X-Tenant-Id": tenantId
+      }
+    });
+
+    if (res.ok) {
+      const body = (await res.json()) as { data?: { valid?: boolean; runnable?: boolean; inSync?: boolean } };
+      await loadDetectionTopology();
+      setValidationMessage(
+        `valid=${String(body.data?.valid)} runnable=${String(body.data?.runnable)} inSync=${String(body.data?.inSync)}`
+      );
+      setTimeout(() => setValidationMessage(null), 2500);
+    } else {
+      setActionError(await summarizeApiErrorResponse(res, "No se pudo validar el detection profile"));
     }
   }
 
@@ -2395,6 +2938,393 @@ function CameraShow() {
           )}
           {profileSaved && <div className="text-sm text-success md:col-span-2">Profile saved</div>}
         </form>
+      )}
+
+      <div className="divider">Detection Profile</div>
+      {loadingDetectionProfile && <div className="text-sm opacity-70">Loading detection profile...</div>}
+      {!loadingDetectionProfile && detectionProfile && (
+        <form className="space-y-4" onSubmit={saveDetectionProfile}>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge>config v{detectionProfile.configVersion}</Badge>
+            <Badge>updated {new Date(detectionProfile.updatedAt).toLocaleString()}</Badge>
+            <PrimaryButton className="px-2.5 py-1.5 text-xs" type="button" onClick={() => void loadDetectionProfile()}>
+              Reload profile
+            </PrimaryButton>
+            <PrimaryButton className="px-2.5 py-1.5 text-xs" type="button" onClick={() => void validateDetectionProfile()}>
+              Validate against nodes
+            </PrimaryButton>
+            {canEdit ? (
+              <PrimaryButton className="px-2.5 py-1.5 text-xs" type="submit">
+                Save detection profile
+              </PrimaryButton>
+            ) : null}
+            {canEdit ? (
+              <PrimaryButton
+                className="px-2.5 py-1.5 text-xs"
+                type="button"
+                onClick={() =>
+                  setDetectionProfile((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          pipelines: [...prev.pipelines, createEmptyPipeline(prev.pipelines.length)],
+                          configVersion: prev.configVersion + 1
+                        }
+                      : prev
+                  )
+                }
+              >
+                Add pipeline
+              </PrimaryButton>
+            ) : null}
+          </div>
+          {validationMessage ? <div className="text-sm text-emerald-700">{validationMessage}</div> : null}
+          {detectionSaved ? <div className="text-sm text-emerald-700">Detection profile saved</div> : null}
+          <div className="space-y-3">
+            {detectionProfile.pipelines.map((pipeline, index) => {
+              const compatibleModels = catalog.filter(
+                (entry) =>
+                  entry.status === "active" &&
+                  entry.provider === pipeline.provider &&
+                  entry.taskType === pipeline.taskType &&
+                  entry.quality === pipeline.quality
+              );
+              return (
+                <Surface key={pipeline.pipelineId} className="space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="font-medium">{pipeline.pipelineId || `pipeline-${index + 1}`}</div>
+                    <div className="flex flex-wrap gap-2">
+                      <Badge>{pipeline.provider}</Badge>
+                      <Badge>{pipeline.taskType}</Badge>
+                      <Badge>{pipeline.quality}</Badge>
+                      <Badge className={pipeline.enabled ? "border-emerald-200 bg-emerald-50 text-emerald-700" : ""}>
+                        {pipeline.enabled ? "enabled" : "disabled"}
+                      </Badge>
+                      {canEdit ? (
+                        <DangerButton
+                          className="px-2 py-1 text-xs"
+                          type="button"
+                          onClick={() =>
+                            setDetectionProfile((prev) =>
+                              prev
+                                ? {
+                                    ...prev,
+                                    pipelines: prev.pipelines.filter((entry) => entry.pipelineId !== pipeline.pipelineId),
+                                    configVersion: prev.configVersion + 1
+                                  }
+                                : prev
+                            )
+                          }
+                        >
+                          Remove
+                        </DangerButton>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 gap-2 md:grid-cols-6">
+                    <TextInput
+                      value={pipeline.pipelineId}
+                      disabled={!canEdit}
+                      onChange={(e) =>
+                        setDetectionProfile((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                pipelines: prev.pipelines.map((entry, entryIndex) =>
+                                  entryIndex === index ? { ...entry, pipelineId: e.target.value } : entry
+                                )
+                              }
+                            : prev
+                        )
+                      }
+                    />
+                    <SelectInput
+                      value={pipeline.provider}
+                      disabled={!canEdit}
+                      onChange={(e) =>
+                        setDetectionProfile((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                pipelines: prev.pipelines.map((entry, entryIndex) =>
+                                  entryIndex === index
+                                    ? { ...entry, provider: e.target.value as DetectionProviderRuntime }
+                                    : entry
+                                )
+                              }
+                            : prev
+                        )
+                      }
+                    >
+                      {DETECTION_PROVIDER_OPTIONS.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </SelectInput>
+                    <SelectInput
+                      value={pipeline.taskType}
+                      disabled={!canEdit}
+                      onChange={(e) =>
+                        setDetectionProfile((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                pipelines: prev.pipelines.map((entry, entryIndex) =>
+                                  entryIndex === index ? { ...entry, taskType: e.target.value as DetectionTaskType } : entry
+                                )
+                              }
+                            : prev
+                        )
+                      }
+                    >
+                      {DETECTION_TASK_OPTIONS.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </SelectInput>
+                    <SelectInput
+                      value={pipeline.quality}
+                      disabled={!canEdit}
+                      onChange={(e) =>
+                        setDetectionProfile((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                pipelines: prev.pipelines.map((entry, entryIndex) =>
+                                  entryIndex === index ? { ...entry, quality: e.target.value as DetectionQuality } : entry
+                                )
+                              }
+                            : prev
+                        )
+                      }
+                    >
+                      {DETECTION_QUALITY_OPTIONS.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </SelectInput>
+                    <SelectInput
+                      value={pipeline.schedule?.mode ?? "realtime"}
+                      disabled={!canEdit}
+                      onChange={(e) =>
+                        setDetectionProfile((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                pipelines: prev.pipelines.map((entry, entryIndex) =>
+                                  entryIndex === index
+                                    ? {
+                                        ...entry,
+                                        schedule: {
+                                          mode: e.target.value as "realtime" | "batch",
+                                          frameStride: entry.schedule?.frameStride ?? 1
+                                        }
+                                      }
+                                    : entry
+                                )
+                              }
+                            : prev
+                        )
+                      }
+                    >
+                      <option value="realtime">realtime</option>
+                      <option value="batch">batch</option>
+                    </SelectInput>
+                    <TextInput
+                      value={String(pipeline.schedule?.frameStride ?? 1)}
+                      disabled={!canEdit}
+                      onChange={(e) =>
+                        setDetectionProfile((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                pipelines: prev.pipelines.map((entry, entryIndex) =>
+                                  entryIndex === index
+                                    ? {
+                                        ...entry,
+                                        schedule: {
+                                          mode: entry.schedule?.mode ?? "realtime",
+                                          frameStride: Number(e.target.value || 1)
+                                        }
+                                      }
+                                    : entry
+                                )
+                              }
+                            : prev
+                        )
+                      }
+                    />
+                  </div>
+                  <div className="grid grid-cols-1 gap-2 md:grid-cols-[160px_minmax(0,1fr)_minmax(0,1fr)]">
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={pipeline.enabled}
+                        disabled={!canEdit}
+                        onChange={(e) =>
+                          setDetectionProfile((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  pipelines: prev.pipelines.map((entry, entryIndex) =>
+                                    entryIndex === index ? { ...entry, enabled: e.target.checked } : entry
+                                  )
+                                }
+                              : prev
+                          )
+                        }
+                      />
+                      enabled
+                    </label>
+                    <textarea
+                      className="min-h-28 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+                      value={prettyJson(pipeline.thresholds)}
+                      disabled={!canEdit}
+                      onChange={(e) =>
+                        setDetectionProfile((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                pipelines: prev.pipelines.map((entry, entryIndex) =>
+                                  entryIndex === index ? { ...entry, thresholds: safeJsonParse(e.target.value, {}) } : entry
+                                )
+                              }
+                            : prev
+                        )
+                      }
+                    />
+                    <textarea
+                      className="min-h-28 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+                      value={prettyJson(pipeline.outputs)}
+                      disabled={!canEdit}
+                      onChange={(e) =>
+                        setDetectionProfile((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                pipelines: prev.pipelines.map((entry, entryIndex) =>
+                                  entryIndex === index ? { ...entry, outputs: safeJsonParse(e.target.value, {}) } : entry
+                                )
+                              }
+                            : prev
+                        )
+                      }
+                    />
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    matching models: {compatibleModels.map((entry) => entry.displayName).join(", ") || "none in catalog"}
+                  </div>
+                </Surface>
+              );
+            })}
+            {detectionProfile.pipelines.length === 0 ? (
+              <Surface>
+                <div className="text-sm text-slate-500">No hay pipelines configurados para esta cámara.</div>
+              </Surface>
+            ) : null}
+          </div>
+        </form>
+      )}
+
+      <div className="divider">Detection Topology</div>
+      {loadingTopology && <div className="text-sm opacity-70">Loading detection topology...</div>}
+      {!loadingTopology && topology && (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge className={topology.valid ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-rose-200 bg-rose-50 text-rose-700"}>
+              valid {String(topology.valid)}
+            </Badge>
+            <Badge className={topology.runnable ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}>
+              runnable {String(topology.runnable)}
+            </Badge>
+            <Badge className={topology.inSync ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}>
+              in sync {String(topology.inSync)}
+            </Badge>
+            <Badge>pipelines {topology.summary.totalPipelines}</Badge>
+            <Badge>assigned {topology.summary.assignedPipelines}</Badge>
+            <Badge>candidate nodes {topology.summary.totalCandidateNodes}</Badge>
+            <PrimaryButton className="px-2.5 py-1.5 text-xs" type="button" onClick={() => void loadDetectionTopology()}>
+              Refresh topology
+            </PrimaryButton>
+          </div>
+          <div className="space-y-3">
+            {topology.pipelines.map((pipeline) => (
+              <Surface key={pipeline.pipelineId} className="space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="font-medium">{pipeline.pipelineId}</div>
+                  <Badge>{pipeline.provider}</Badge>
+                  <Badge>{pipeline.taskType}</Badge>
+                  <Badge>{pipeline.quality}</Badge>
+                  <Badge
+                    className={
+                      pipeline.assignment.status === "assigned"
+                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                        : pipeline.assignment.status === "degraded"
+                          ? "border-amber-200 bg-amber-50 text-amber-700"
+                          : "border-rose-200 bg-rose-50 text-rose-700"
+                    }
+                  >
+                    {pipeline.assignment.status}
+                  </Badge>
+                  {pipeline.resolvedModel ? <Badge>{pipeline.resolvedModel.displayName}</Badge> : null}
+                </div>
+                <div className="text-sm text-slate-600">{pipeline.assignment.reason}</div>
+                {pipeline.issues.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {pipeline.issues.map((issue) => (
+                      <Badge
+                        key={`${pipeline.pipelineId}-${issue.code}`}
+                        className={
+                          issue.severity === "error"
+                            ? "border-rose-200 bg-rose-50 text-rose-700"
+                            : issue.severity === "warning"
+                              ? "border-amber-200 bg-amber-50 text-amber-700"
+                              : ""
+                        }
+                      >
+                        {issue.code}
+                      </Badge>
+                    ))}
+                  </div>
+                ) : null}
+                <DataTable>
+                  <thead className="bg-slate-50 text-slate-600">
+                    <tr>
+                      <th className="px-3 py-2">Node</th>
+                      <th className="px-3 py-2">Role</th>
+                      <th className="px-3 py-2">Status</th>
+                      <th className="px-3 py-2">Queue</th>
+                      <th className="px-3 py-2">Endpoint</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {pipeline.candidates.map((candidate) => (
+                      <tr key={`${pipeline.pipelineId}-${candidate.nodeId}`}>
+                        <td className="px-3 py-2">{candidate.nodeId}</td>
+                        <td className="px-3 py-2">{candidate.role}</td>
+                        <td className="px-3 py-2">{candidate.status}</td>
+                        <td className="px-3 py-2">
+                          {candidate.queueDepth}/{candidate.maxConcurrent}
+                        </td>
+                        <td className="px-3 py-2 text-xs text-slate-600">{candidate.endpoint}</td>
+                      </tr>
+                    ))}
+                    {pipeline.candidates.length === 0 ? (
+                      <tr>
+                        <td className="px-3 py-4 text-sm text-slate-500" colSpan={5}>
+                          No hay nodos candidatos para este pipeline.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </DataTable>
+              </Surface>
+            ))}
+          </div>
+        </div>
       )}
     </PageCard>
   );
