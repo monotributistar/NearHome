@@ -278,6 +278,19 @@ export const FaceIdentitySchema = z.object({
   faces: z.array(FaceDetectionSchema).optional()
 });
 
+export const FaceSimilarityMatchSchema = z.object({
+  similarityScore: z.number(),
+  sameCamera: z.boolean(),
+  face: FaceDetectionSchema
+});
+
+export const FaceSimilaritySearchSchema = z.object({
+  sourceFaceId: z.string(),
+  tenantId: z.string(),
+  total: z.number(),
+  matches: z.array(FaceSimilarityMatchSchema)
+});
+
 export const TrackSchema = z.object({
   id: z.string(),
   jobId: z.string().nullable().optional(),

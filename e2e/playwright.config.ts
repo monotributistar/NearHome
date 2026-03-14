@@ -21,7 +21,7 @@ export default defineConfig({
   webServer: [
     {
       command:
-        `pnpm --filter @app/api build && PORT=${apiPort} CORS_ORIGIN_ADMIN=http://localhost:${adminPort} CORS_ORIGIN_PORTAL=http://localhost:${portalPort} pnpm --filter @app/api start`,
+        `pnpm --filter @app/api build && PORT=${apiPort} LOGIN_RATE_LIMIT_MAX=500 CORS_ORIGIN_ADMIN=http://localhost:${adminPort} CORS_ORIGIN_PORTAL=http://localhost:${portalPort} pnpm --filter @app/api start`,
       url: `http://localhost:${apiPort}/health`,
       reuseExistingServer: false,
       timeout: 120_000

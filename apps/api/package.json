@@ -14,6 +14,7 @@
     "prisma:generate:postgres": "pnpm run prisma:render:postgres && prisma generate --schema prisma/schema.postgres.prisma",
     "db:push:postgres": "pnpm run prisma:render:postgres && prisma db push --schema prisma/schema.postgres.prisma",
     "test": "vitest run",
+    "test:e2e": "pnpm run db:reset && vitest run test/control-plane.spec.ts test/stream-health-sync.scheduler.spec.ts",
     "lint": "eslint ."
   },
   "dependencies": {

@@ -210,6 +210,12 @@ type FaceDetectionResponse = {
   };
 };
 
+type FaceSimilarityMatchResponse = {
+  similarityScore: number;
+  sameCamera: boolean;
+  face: FaceDetectionResponse;
+};
+
 type DesiredNodeCapability = {
   capabilityId: string;
   taskTypes: string[];
@@ -6130,6 +6136,93 @@ export async function buildApp() {
 
     reply.header("x-total-count", String(total));
     return { data: rows.map(faceDetectionResponse), total };
+  });
+
+  app.get("/faces/detections/:id/similar", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+    const id = (request.params as { id: string }).id;
+    const query = request.query as Record<string, unknown>;
+    const { skip, take } = parseListQuery(query);
+    const minSimilarity = Math.max(-1, Math.min(1, Number(query.minSimilarity ?? 0.7)));
+    const sameCameraOnly = String(query.sameCameraOnly ?? "false").toLowerCase() === "true";
+
+    const sourceFace = await prismaUnsafe.faceDetection.findFirst({
+      where: { id, tenantId: ctx.tenantId },
+      include: {
+        embedding: true,
+        clusterMembership: { include: { cluster: true } },
+        identityMembership: { include: { identity: true } }
+      }
+    });
+    if (!sourceFace) throw app.httpErrors.notFound();
+    if (!sourceFace.embedding?.embeddingVector) {
+      throw new ApiDomainError({
+        statusCode: 409,
+        apiCode: "FACE_SIMILARITY_UNAVAILABLE",
+        message: "The requested face does not have a stored embedding vector",
+        details: { faceDetectionId: id }
+      });
+    }
+
+    const sourceVector = parseEmbeddingCandidate(parseJson<unknown>(sourceFace.embedding.embeddingVector));
+    if (!sourceVector) {
+      throw new ApiDomainError({
+        statusCode: 409,
+        apiCode: "FACE_SIMILARITY_UNAVAILABLE",
+        message: "The requested face embedding vector is invalid",
+        details: { faceDetectionId: id }
+      });
+    }
+
+    const candidateRows = await prismaUnsafe.faceDetection.findMany({
+      where: {
+        tenantId: ctx.tenantId,
+        id: { not: id },
+        ...(sameCameraOnly ? { cameraId: sourceFace.cameraId } : {}),
+        embedding: {
+          embeddingVector: {
+            not: null
+          }
+        }
+      },
+      include: {
+        embedding: true,
+        clusterMembership: { include: { cluster: true } },
+        identityMembership: { include: { identity: true } }
+      }
+    });
+
+    const rankedMatches = (candidateRows as Array<any>).reduce((acc: FaceSimilarityMatchResponse[], candidate: any) => {
+        const rawVector = candidate.embedding?.embeddingVector;
+        if (!rawVector) return acc;
+        const candidateVector = parseEmbeddingCandidate(parseJson<unknown>(rawVector));
+        if (!candidateVector) return acc;
+        const similarityScore = cosineSimilarity(sourceVector, candidateVector);
+        if (similarityScore < minSimilarity) return acc;
+        const face = faceDetectionResponse(candidate);
+        acc.push({
+          similarityScore,
+          sameCamera: candidate.cameraId === sourceFace.cameraId,
+          face
+        });
+        return acc;
+      }, [] as FaceSimilarityMatchResponse[])
+      .sort((left: FaceSimilarityMatchResponse, right: FaceSimilarityMatchResponse) => {
+        if (right.similarityScore !== left.similarityScore) return right.similarityScore - left.similarityScore;
+        return right.face.frameTs.localeCompare(left.face.frameTs);
+      });
+
+    const pagedMatches = rankedMatches.slice(skip, skip + take);
+    reply.header("x-total-count", String(rankedMatches.length));
+    return {
+      data: {
+        sourceFaceId: sourceFace.id,
+        tenantId: ctx.tenantId,
+        total: rankedMatches.length,
+        matches: pagedMatches
+      }
+    };
   });
 
   app.get("/faces/clusters", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {

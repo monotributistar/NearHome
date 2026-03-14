@@ -2,6 +2,14 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { PrismaClient } from "@prisma/client";
 import { buildApp } from "../src/app";
+import { seedFixtures } from "../prisma/seed-fixtures.js";
+import {
+  clearDetectionStateForCamera,
+  getSeedDetectionJobsFixture,
+  getSeedDetectionTopologyFixture,
+  getSeedDetectionValidationFixture,
+  getSeedFacesFixture
+} from "./seed-test-helpers";
 
 let app: FastifyInstance;
 const prisma = new PrismaClient();
@@ -3897,68 +3905,12 @@ describe("NH-DP-18 model catalog operations", () => {
 describe("NH-DP-20 detection jobs resolved from camera pipeline", () => {
   it("creates jobs from pipelineId and resolves effective model config from catalog", async () => {
     const adminToken = await login("admin@nearhome.dev");
-    const { tenantId } = await createTenantFixture(adminToken, `NHDP20 ${Date.now()}`);
-
-    const createCameraResponse = await app.inject({
-      method: "POST",
-      url: "/cameras",
-      headers: {
-        authorization: `Bearer ${adminToken}`,
-        "x-tenant-id": tenantId
-      },
-      payload: {
-        name: `NHDP20 Cam ${Date.now()}`,
-        rtspUrl: `rtsp://demo/nhdp20-${Date.now()}`,
-        isActive: true
-      }
+    const { tenantId, cameraId, modelRef, pipelineId } = await getSeedDetectionJobsFixture(prisma);
+    const modelEntry = await prisma.modelCatalogEntry.findFirst({
+      where: { modelRef },
+      select: { id: true, modelRef: true }
     });
-    expect(createCameraResponse.statusCode).toBe(200);
-    const cameraId = createCameraResponse.json<{ data: { id: string } }>().data.id;
-
-    const createModelResponse = await app.inject({
-      method: "POST",
-      url: "/ops/model-catalog",
-      headers: {
-        authorization: `Bearer ${adminToken}`
-      },
-      payload: {
-        provider: "yolo",
-        taskType: "face_detection",
-        quality: "balanced",
-        modelRef: `yolo26-face-s@${Date.now()}`,
-        displayName: "YOLO Face Balanced",
-        resources: { cpu: 2, gpu: 0, vramMb: 0 },
-        defaults: { minConfidence: 0.55, nmsIoU: 0.45 },
-        outputs: { bbox: true, crop: true },
-        status: "active"
-      }
-    });
-    expect(createModelResponse.statusCode).toBe(200);
-    const modelEntry = createModelResponse.json<{ data: { id: string; modelRef: string } }>().data;
-
-    const updateProfileResponse = await app.inject({
-      method: "PUT",
-      url: `/cameras/${cameraId}/detection-profile`,
-      headers: {
-        authorization: `Bearer ${adminToken}`,
-        "x-tenant-id": tenantId
-      },
-      payload: {
-        pipelines: [
-          {
-            pipelineId: "faces-main",
-            provider: "yolo",
-            taskType: "face_detection",
-            quality: "balanced",
-            enabled: true,
-            schedule: { mode: "realtime", frameStride: 12 },
-            thresholds: { minConfidence: 0.7 },
-            outputs: { storeFaceCrops: true, storeEmbeddings: true }
-          }
-        ]
-      }
-    });
-    expect(updateProfileResponse.statusCode).toBe(200);
+    expect(modelEntry).toBeTruthy();
 
     const createJobResponse = await app.inject({
       method: "POST",
@@ -3969,7 +3921,7 @@ describe("NH-DP-20 detection jobs resolved from camera pipeline", () => {
       },
       payload: {
         cameraId,
-        pipelineId: "faces-main",
+        pipelineId,
         source: "snapshot",
         provider: "onprem_bento"
       }
@@ -3980,19 +3932,19 @@ describe("NH-DP-20 detection jobs resolved from camera pipeline", () => {
         cameraId,
         provider: "onprem_bento",
         options: {
-          pipelineId: "faces-main",
+          pipelineId,
           runtimeProvider: "yolo",
           taskType: "face_detection",
           quality: "balanced",
-          modelRef: modelEntry.modelRef
+          modelRef: modelEntry!.modelRef
         },
         effectiveConfig: {
-          pipelineId: "faces-main",
+          pipelineId,
           runtimeProvider: "yolo",
           taskType: "face_detection",
           quality: "balanced",
-          modelRef: modelEntry.modelRef,
-          modelCatalogEntryId: modelEntry.id,
+          modelRef: modelEntry!.modelRef,
+          modelCatalogEntryId: modelEntry!.id,
           schedule: {
             mode: "realtime",
             frameStride: 12
@@ -4023,10 +3975,247 @@ describe("NH-DP-20 detection jobs resolved from camera pipeline", () => {
       data: {
         id: jobId,
         effectiveConfig: {
-          pipelineId: "faces-main",
-          modelRef: modelEntry.modelRef
+          pipelineId,
+          modelRef: modelEntry!.modelRef
         }
       }
+    });
+  });
+
+  it("rejects jobs when the requested pipeline does not exist on the camera profile", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const { tenantId, cameraId } = await getSeedDetectionJobsFixture(prisma);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/detections/jobs",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        cameraId,
+        pipelineId: "missing-pipeline",
+        source: "snapshot",
+        provider: "onprem_bento"
+      }
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toMatchObject({
+      code: "DETECTION_PIPELINE_NOT_FOUND"
+    });
+  });
+
+  it("rejects jobs when the requested pipeline is disabled", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const { tenantId, cameraId, pipelineId } = await getSeedDetectionJobsFixture(prisma);
+    const profile = await prisma.cameraProfile.findUniqueOrThrow({ where: { cameraId } });
+    const previousProfile = profile.detectionProfile;
+    const parsed = JSON.parse(profile.detectionProfile) as {
+      pipelines: Array<Record<string, unknown>>;
+    };
+
+    parsed.pipelines = parsed.pipelines.map((entry) => (entry.pipelineId === pipelineId ? { ...entry, enabled: false } : entry));
+
+    await prisma.cameraProfile.update({
+      where: { cameraId },
+      data: { detectionProfile: JSON.stringify(parsed) }
+    });
+
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: "/detections/jobs",
+        headers: {
+          authorization: `Bearer ${adminToken}`,
+          "x-tenant-id": tenantId
+        },
+        payload: {
+          cameraId,
+          pipelineId,
+          source: "snapshot",
+          provider: "onprem_bento"
+        }
+      });
+
+      expect(response.statusCode).toBe(409);
+      expect(response.json()).toMatchObject({
+        code: "DETECTION_PIPELINE_DISABLED"
+      });
+    } finally {
+      await prisma.cameraProfile.update({
+        where: { cameraId },
+        data: { detectionProfile: previousProfile }
+      });
+    }
+  });
+
+  it("rejects jobs when the pipeline model is not active in the catalog", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const { tenantId, cameraId, modelRef, pipelineId } = await getSeedDetectionJobsFixture(prisma);
+
+    await prisma.modelCatalogEntry.updateMany({
+      where: { modelRef },
+      data: { status: "inactive" }
+    });
+
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: "/detections/jobs",
+        headers: {
+          authorization: `Bearer ${adminToken}`,
+          "x-tenant-id": tenantId
+        },
+        payload: {
+          cameraId,
+          pipelineId,
+          source: "snapshot",
+          provider: "onprem_bento"
+        }
+      });
+
+      expect(response.statusCode).toBe(409);
+      expect(response.json()).toMatchObject({
+        code: "DETECTION_MODEL_NOT_CONFIGURED"
+      });
+    } finally {
+      await prisma.modelCatalogEntry.updateMany({
+        where: { modelRef },
+        data: { status: "active" }
+      });
+    }
+  });
+
+  it("resolves jobs directly from runtimeProvider, taskType and quality when pipelineId is omitted", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const { tenantId, cameraId, modelRef } = await getSeedDetectionJobsFixture(prisma);
+    const modelEntry = await prisma.modelCatalogEntry.findFirstOrThrow({
+      where: { modelRef },
+      select: { id: true, modelRef: true }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/detections/jobs",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        cameraId,
+        source: "snapshot",
+        provider: "onprem_bento",
+        options: {
+          runtimeProvider: "yolo",
+          taskType: "face_detection",
+          quality: "balanced",
+          thresholds: {
+            minConfidence: 0.82
+          },
+          outputs: {
+            storeFaceCrops: true
+          }
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      data: {
+        cameraId,
+        options: {
+          runtimeProvider: "yolo",
+          taskType: "face_detection",
+          quality: "balanced",
+          modelRef: modelEntry.modelRef,
+          resolvedConfig: {
+            runtimeProvider: "yolo",
+            taskType: "face_detection",
+            quality: "balanced",
+            modelRef: modelEntry.modelRef,
+            modelCatalogEntryId: modelEntry.id,
+            thresholds: {
+              minConfidence: 0.82
+            },
+            outputs: {
+              storeFaceCrops: true
+            }
+          }
+        },
+        effectiveConfig: {
+          runtimeProvider: "yolo",
+          taskType: "face_detection",
+          quality: "balanced",
+          modelRef: modelEntry.modelRef,
+          modelCatalogEntryId: modelEntry.id,
+          thresholds: {
+            minConfidence: 0.82
+          },
+          outputs: {
+            storeFaceCrops: true
+          }
+        }
+      }
+    });
+  });
+
+  it("rejects direct resolution when the requested quality has no active catalog entry", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const { tenantId, cameraId } = await getSeedDetectionJobsFixture(prisma);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/detections/jobs",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        cameraId,
+        source: "snapshot",
+        provider: "onprem_bento",
+        options: {
+          runtimeProvider: "yolo",
+          taskType: "face_detection",
+          quality: "accurate"
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({
+      code: "DETECTION_MODEL_NOT_CONFIGURED"
+    });
+  });
+
+  it("rejects direct resolution when the requested taskType has no active catalog entry", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const { tenantId, cameraId } = await getSeedDetectionJobsFixture(prisma);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/detections/jobs",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        cameraId,
+        source: "snapshot",
+        provider: "onprem_bento",
+        options: {
+          runtimeProvider: "yolo",
+          taskType: "object_detection",
+          quality: "balanced"
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({
+      code: "DETECTION_MODEL_NOT_CONFIGURED"
     });
   });
 });
@@ -4034,92 +4223,7 @@ describe("NH-DP-20 detection jobs resolved from camera pipeline", () => {
 describe("NH-DP-21 detection profile validation", () => {
   it("validates catalog resolution and node runtime compatibility for camera pipelines", async () => {
     const adminToken = await login("admin@nearhome.dev");
-    const { tenantId } = await createTenantFixture(adminToken, `NHDP21 ${Date.now()}`);
-
-    const createCameraResponse = await app.inject({
-      method: "POST",
-      url: "/cameras",
-      headers: {
-        authorization: `Bearer ${adminToken}`,
-        "x-tenant-id": tenantId
-      },
-      payload: {
-        name: `NHDP21 Cam ${Date.now()}`,
-        rtspUrl: `rtsp://demo/nhdp21-${Date.now()}`,
-        isActive: true
-      }
-    });
-    expect(createCameraResponse.statusCode).toBe(200);
-    const cameraId = createCameraResponse.json<{ data: { id: string } }>().data.id;
-
-    const createModelResponse = await app.inject({
-      method: "POST",
-      url: "/ops/model-catalog",
-      headers: {
-        authorization: `Bearer ${adminToken}`
-      },
-      payload: {
-        provider: "yolo",
-        taskType: "face_detection",
-        quality: "balanced",
-        modelRef: `yolo26-face-s@${Date.now()}`,
-        displayName: "YOLO Face Balanced",
-        resources: { cpu: 2, gpu: 0, vramMb: 0 },
-        status: "active"
-      }
-    });
-    expect(createModelResponse.statusCode).toBe(200);
-    const modelEntry = createModelResponse.json<{ data: { modelRef: string } }>().data;
-
-    const updateProfileResponse = await app.inject({
-      method: "PUT",
-      url: `/cameras/${cameraId}/detection-profile`,
-      headers: {
-        authorization: `Bearer ${adminToken}`,
-        "x-tenant-id": tenantId
-      },
-      payload: {
-        pipelines: [
-          {
-            pipelineId: "faces-main",
-            provider: "yolo",
-            taskType: "face_detection",
-            quality: "balanced",
-            enabled: true,
-            schedule: { mode: "realtime", frameStride: 10 }
-          }
-        ]
-      }
-    });
-    expect(updateProfileResponse.statusCode).toBe(200);
-
-    const nodeId = `node-nhdp21-${Date.now()}`;
-    const createNodeConfigResponse = await app.inject({
-      method: "PUT",
-      url: `/ops/nodes/${nodeId}/config`,
-      headers: {
-        authorization: `Bearer ${adminToken}`
-      },
-      payload: {
-        runtime: "yolo",
-        transport: "http",
-        endpoint: `http://${nodeId}:8091`,
-        resources: { cpu: 4, gpu: 0, vramMb: 0 },
-        capabilities: [
-          {
-            capabilityId: "faces",
-            taskTypes: ["face_detection"],
-            qualities: ["balanced"],
-            modelRefs: [modelEntry.modelRef]
-          }
-        ],
-        models: [modelEntry.modelRef],
-        tenantIds: [tenantId],
-        maxConcurrent: 2,
-        contractVersion: "1.0"
-      }
-    });
-    expect(createNodeConfigResponse.statusCode).toBe(200);
+    const { tenantId, cameraId, modelRef, pipelineId, nodeId } = await getSeedDetectionValidationFixture(prisma);
 
     const validateResponse = await app.inject({
       method: "POST",
@@ -4146,12 +4250,12 @@ describe("NH-DP-21 detection profile validation", () => {
         },
         pipelines: [
           {
-            pipelineId: "faces-main",
+            pipelineId,
             valid: true,
             runnable: false,
             inSync: false,
             resolvedModel: {
-              modelRef: modelEntry.modelRef
+              modelRef
             },
             matchingNodes: [
               {
@@ -4171,109 +4275,63 @@ describe("NH-DP-21 detection profile validation", () => {
     });
   });
 
-  it("builds an operational topology with a preferred node assignment and allows applying node config", async () => {
+  it("marks pipelines invalid when the matching catalog entry is inactive", async () => {
     const adminToken = await login("admin@nearhome.dev");
-    const { tenantId } = await createTenantFixture(adminToken, `NHDP21 topology ${Date.now()}`);
+    const { tenantId, cameraId, modelRef, pipelineId } = await getSeedDetectionValidationFixture(prisma);
 
-    const createCameraResponse = await app.inject({
-      method: "POST",
-      url: "/cameras",
-      headers: {
-        authorization: `Bearer ${adminToken}`,
-        "x-tenant-id": tenantId
-      },
-      payload: {
-        name: `NHDP21 Topology Cam ${Date.now()}`,
-        rtspUrl: `rtsp://demo/nhdp21-topology-${Date.now()}`,
-        isActive: true
-      }
+    await prisma.modelCatalogEntry.updateMany({
+      where: { modelRef },
+      data: { status: "inactive" }
     });
-    expect(createCameraResponse.statusCode).toBe(200);
-    const cameraId = createCameraResponse.json<{ data: { id: string } }>().data.id;
 
-    const createModelResponse = await app.inject({
-      method: "POST",
-      url: "/ops/model-catalog",
-      headers: {
-        authorization: `Bearer ${adminToken}`
-      },
-      payload: {
-        provider: "yolo",
-        taskType: "person_detection",
-        quality: "balanced",
-        modelRef: `yolo26-person-s@${Date.now()}`,
-        displayName: "YOLO Person Balanced",
-        resources: { cpu: 2, gpu: 0, vramMb: 0 },
-        status: "active"
-      }
-    });
-    expect(createModelResponse.statusCode).toBe(200);
-    const modelRef = createModelResponse.json<{ data: { modelRef: string } }>().data.modelRef;
-
-    const updateProfileResponse = await app.inject({
-      method: "PUT",
-      url: `/cameras/${cameraId}/detection-profile`,
-      headers: {
-        authorization: `Bearer ${adminToken}`,
-        "x-tenant-id": tenantId
-      },
-      payload: {
-        pipelines: [
-          {
-            pipelineId: "people-main",
-            provider: "yolo",
-            taskType: "person_detection",
-            quality: "balanced",
-            enabled: true,
-            schedule: { mode: "realtime", frameStride: 6 }
-          }
-        ]
-      }
-    });
-    expect(updateProfileResponse.statusCode).toBe(200);
-
-    const preferredNodeId = `node-nhdp21-topology-primary-${Date.now()}`;
-    const fallbackNodeId = `node-nhdp21-topology-fallback-${Date.now()}`;
-    for (const [nodeId, status, queueDepth] of [
-      [preferredNodeId, "online", 0],
-      [fallbackNodeId, "degraded", 2]
-    ] as const) {
-      const createNodeConfigResponse = await app.inject({
-        method: "PUT",
-        url: `/ops/nodes/${nodeId}/config`,
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: `/cameras/${cameraId}/detection-profile/validate`,
         headers: {
-          authorization: `Bearer ${adminToken}`
-        },
-        payload: {
-          runtime: "yolo",
-          transport: "http",
-          endpoint: `http://${nodeId}:8091`,
-          resources: { cpu: 4, gpu: 0, vramMb: 0 },
-          capabilities: [
-            {
-              capabilityId: "people",
-              taskTypes: ["person_detection"],
-              qualities: ["balanced"],
-              modelRefs: [modelRef]
-            }
-          ],
-          models: [modelRef],
-          tenantIds: [tenantId],
-          maxConcurrent: 4,
-          contractVersion: "1.0"
+          authorization: `Bearer ${adminToken}`,
+          "x-tenant-id": tenantId
         }
       });
-      expect(createNodeConfigResponse.statusCode).toBe(200);
 
-      await prisma.inferenceNodeSnapshot.update({
-        where: { nodeId },
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
         data: {
-          status,
-          queueDepth,
-          lastHeartbeatAt: new Date()
+          cameraId,
+          tenantId,
+          valid: false,
+          runnable: false,
+          inSync: false,
+          summary: {
+            totalPipelines: 1,
+            enabledPipelines: 1,
+            validPipelines: 0,
+            runnablePipelines: 0,
+            driftedPipelines: 1
+          },
+          pipelines: [
+            {
+              pipelineId,
+              valid: false,
+              runnable: false,
+              inSync: false,
+              resolvedModel: null,
+              issues: [{ code: "MODEL_NOT_CONFIGURED" }]
+            }
+          ]
         }
+      });
+    } finally {
+      await prisma.modelCatalogEntry.updateMany({
+        where: { modelRef },
+        data: { status: "active" }
       });
     }
+  });
+
+  it("builds an operational topology with a preferred node assignment and allows applying node config", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const { tenantId, cameraId, modelRef, pipelineId, preferredNodeId, fallbackNodeId } = await getSeedDetectionTopologyFixture(prisma);
 
     const topologyResponse = await app.inject({
       method: "GET",
@@ -4299,7 +4357,7 @@ describe("NH-DP-21 detection profile validation", () => {
         },
         pipelines: [
           {
-            pipelineId: "people-main",
+            pipelineId,
             assignment: {
               status: "assigned",
               primaryNodeId: preferredNodeId
@@ -4344,40 +4402,798 @@ describe("NH-DP-21 detection profile validation", () => {
     });
     expect(applyResponse.json<{ data: { appliedAt: string } }>().data.appliedAt).toBeTruthy();
   });
-});
 
-describe("NH-DP-19 face clustering and identity management", () => {
-  it("stores face detections, auto-clusters similar faces and allows identity confirmation and merge", async () => {
+  it("returns an unassigned topology when compatible nodes are no longer assigned to the tenant", async () => {
     const adminToken = await login("admin@nearhome.dev");
-    await me(adminToken);
-    const createTenantResponse = await app.inject({
-      method: "POST",
-      url: "/tenants",
-      headers: {
-        authorization: `Bearer ${adminToken}`
-      },
-      payload: {
-        name: `Faces Tenant ${Date.now()}`
+    const { tenantId, cameraId, pipelineId, preferredNodeId, fallbackNodeId } = await getSeedDetectionTopologyFixture(prisma);
+    const foreignTenant = await prisma.tenant.findFirstOrThrow({
+      where: { name: seedFixtures.tenants.detectionJobs },
+      select: { id: true }
+    });
+
+    await prisma.inferenceNodeTenantAssignment.deleteMany({
+      where: {
+        nodeId: { in: [preferredNodeId, fallbackNodeId] },
+        tenantId: { in: [tenantId, foreignTenant.id] }
       }
     });
-    expect(createTenantResponse.statusCode).toBe(200);
-    const tenantId = createTenantResponse.json<{ data: { id: string } }>().data.id;
+    await prisma.inferenceNodeTenantAssignment.createMany({
+      data: [
+        { nodeId: preferredNodeId, tenantId: foreignTenant.id },
+        { nodeId: fallbackNodeId, tenantId: foreignTenant.id }
+      ]
+    });
 
-    const createCameraResponse = await app.inject({
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: `/cameras/${cameraId}/detection-topology`,
+        headers: {
+          authorization: `Bearer ${adminToken}`,
+          "x-tenant-id": tenantId
+        }
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        data: {
+          cameraId,
+          tenantId,
+          valid: true,
+          runnable: false,
+          inSync: false,
+          summary: {
+            totalPipelines: 1,
+            enabledPipelines: 1,
+            validPipelines: 1,
+            runnablePipelines: 0,
+            driftedPipelines: 1,
+            assignedPipelines: 0,
+            totalCandidateNodes: 0,
+            activeCandidateNodes: 0
+          },
+          pipelines: [
+            {
+              pipelineId,
+              assignment: {
+                status: "unassigned",
+                primaryNodeId: null
+              },
+              candidates: [],
+              issues: [{ code: "NO_COMPATIBLE_NODE" }]
+            }
+          ]
+        }
+      });
+    } finally {
+      await prisma.inferenceNodeTenantAssignment.deleteMany({
+        where: {
+          nodeId: { in: [preferredNodeId, fallbackNodeId] },
+          tenantId: { in: [tenantId, foreignTenant.id] }
+        }
+      });
+      await prisma.inferenceNodeTenantAssignment.createMany({
+        data: [
+          { nodeId: preferredNodeId, tenantId },
+          { nodeId: fallbackNodeId, tenantId }
+        ]
+      });
+    }
+  });
+
+  it("returns a degraded topology when compatible nodes exist but none are currently runnable", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const { tenantId, cameraId, pipelineId, preferredNodeId, fallbackNodeId } = await getSeedDetectionTopologyFixture(prisma);
+    const originalSnapshots = await prisma.inferenceNodeSnapshot.findMany({
+      where: {
+        nodeId: { in: [preferredNodeId, fallbackNodeId] }
+      },
+      select: {
+        nodeId: true,
+        status: true,
+        isDrained: true
+      }
+    });
+
+    await prisma.inferenceNodeSnapshot.updateMany({
+      where: { nodeId: { in: [preferredNodeId, fallbackNodeId] } },
+      data: {
+        status: "offline",
+        isDrained: false
+      }
+    });
+
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: `/cameras/${cameraId}/detection-topology`,
+        headers: {
+          authorization: `Bearer ${adminToken}`,
+          "x-tenant-id": tenantId
+        }
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        data: {
+          cameraId,
+          tenantId,
+          valid: true,
+          runnable: false,
+          inSync: false,
+          summary: {
+            totalPipelines: 1,
+            enabledPipelines: 1,
+            validPipelines: 1,
+            runnablePipelines: 0,
+            driftedPipelines: 1,
+            assignedPipelines: 0,
+            degradedAssignments: 1,
+            totalCandidateNodes: 2,
+            activeCandidateNodes: 0
+          },
+          pipelines: [
+            {
+              pipelineId,
+              assignment: {
+                status: "degraded",
+                primaryNodeId: preferredNodeId
+              },
+              candidates: [
+                {
+                  nodeId: preferredNodeId,
+                  role: "primary",
+                  status: "offline"
+                },
+                {
+                  nodeId: fallbackNodeId,
+                  role: "fallback",
+                  status: "offline"
+                }
+              ],
+              issues: [{ code: "NO_ACTIVE_NODE" }]
+            }
+          ]
+        }
+      });
+    } finally {
+      for (const snapshot of originalSnapshots) {
+        await prisma.inferenceNodeSnapshot.update({
+          where: { nodeId: snapshot.nodeId },
+          data: {
+            status: snapshot.status,
+            isDrained: snapshot.isDrained
+          }
+        });
+      }
+    }
+  });
+});
+
+describe("NH-DP-22 detection callback idempotency", () => {
+  it("ignores duplicate completion callbacks once the job has already succeeded", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const { tenantId, cameraId } = await getSeedFacesFixture(prisma);
+    await clearDetectionStateForCamera(prisma, tenantId, cameraId);
+
+    const createJobResponse = await app.inject({
       method: "POST",
-      url: "/cameras",
+      url: "/detections/jobs",
       headers: {
         authorization: `Bearer ${adminToken}`,
         "x-tenant-id": tenantId
       },
       payload: {
-        name: `Faces Cam ${Date.now()}`,
-        rtspUrl: `rtsp://demo/faces-${Date.now()}`,
-        isActive: true
+        cameraId,
+        mode: "realtime",
+        source: "snapshot",
+        provider: "onprem_bento",
+        options: {
+          runtimeProvider: "yolo",
+          taskType: "face_detection",
+          quality: "balanced"
+        }
       }
     });
-    expect(createCameraResponse.statusCode).toBe(200);
-    const cameraId = createCameraResponse.json<{ data: { id: string } }>().data.id;
+    expect(createJobResponse.statusCode).toBe(200);
+    const jobId = createJobResponse.json<{ data: { id: string } }>().data.id;
+
+    const callbackPayload = {
+      detections: [
+        {
+          label: "face",
+          confidence: 0.97,
+          bbox: { x: 0.1, y: 0.1, w: 0.15, h: 0.15 },
+          attributes: {
+            embedding: [0.91, 0.09, 0, 0],
+            cropStorageKey: "s3://nearhome/faces/idempotent-1.jpg"
+          }
+        }
+      ],
+      providerMeta: {
+        taskType: "face_detection",
+        nodeId: "seed-node-idempotent"
+      }
+    };
+
+    const firstResponse = await app.inject({
+      method: "POST",
+      url: `/internal/detections/jobs/${jobId}/complete`,
+      headers: {
+        "x-detection-callback-secret": "dev-detection-callback-secret"
+      },
+      payload: callbackPayload
+    });
+    expect(firstResponse.statusCode).toBe(200);
+
+    const countsAfterFirst = await Promise.all([
+      prisma.detectionObservation.count({ where: { jobId } }),
+      (prisma as any).faceDetection.count({ where: { tenantId, cameraId } }),
+      (prisma as any).faceEmbedding.count({ where: { tenantId } })
+    ]);
+
+    const secondResponse = await app.inject({
+      method: "POST",
+      url: `/internal/detections/jobs/${jobId}/complete`,
+      headers: {
+        "x-detection-callback-secret": "dev-detection-callback-secret"
+      },
+      payload: callbackPayload
+    });
+    expect(secondResponse.statusCode).toBe(200);
+    expect(secondResponse.json<{ data: { status: string } }>().data.status).toBe("succeeded");
+
+    const countsAfterSecond = await Promise.all([
+      prisma.detectionObservation.count({ where: { jobId } }),
+      (prisma as any).faceDetection.count({ where: { tenantId, cameraId } }),
+      (prisma as any).faceEmbedding.count({ where: { tenantId } })
+    ]);
+
+    expect(countsAfterSecond).toEqual(countsAfterFirst);
+  });
+});
+
+describe("NH-DP-23 detection rbac and tenant isolation", () => {
+  it("allows client_user to read detection views but forbids profile validation and updates", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const clientToken = await login("client@nearhome.dev");
+    const { tenantId, cameraId } = await getSeedFacesFixture(prisma);
+    await clearDetectionStateForCamera(prisma, tenantId, cameraId);
+
+    const clientUser = await prisma.user.findUniqueOrThrow({
+      where: { email: "client@nearhome.dev" },
+      select: { id: true }
+    });
+    await prisma.membership.upsert({
+      where: {
+        tenantId_userId: {
+          tenantId,
+          userId: clientUser.id
+        }
+      },
+      update: { role: "client_user" },
+      create: {
+        tenantId,
+        userId: clientUser.id,
+        role: "client_user"
+      }
+    });
+
+    const createJobResponse = await app.inject({
+      method: "POST",
+      url: "/detections/jobs",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        cameraId,
+        mode: "realtime",
+        source: "snapshot",
+        provider: "onprem_bento",
+        options: {
+          runtimeProvider: "yolo",
+          taskType: "face_detection",
+          quality: "balanced"
+        }
+      }
+    });
+    expect(createJobResponse.statusCode).toBe(200);
+    const jobId = createJobResponse.json<{ data: { id: string } }>().data.id;
+
+    const completeResponse = await app.inject({
+      method: "POST",
+      url: `/internal/detections/jobs/${jobId}/complete`,
+      headers: {
+        "x-detection-callback-secret": "dev-detection-callback-secret"
+      },
+      payload: {
+        detections: [
+          {
+            label: "face",
+            confidence: 0.96,
+            bbox: { x: 0.12, y: 0.12, w: 0.15, h: 0.15 },
+            attributes: {
+              embedding: [0.88, 0.12, 0, 0],
+              cropStorageKey: "s3://nearhome/faces/rbac-1.jpg"
+            }
+          }
+        ],
+        providerMeta: {
+          taskType: "face_detection",
+          nodeId: "seed-node-rbac"
+        }
+      }
+    });
+    expect(completeResponse.statusCode).toBe(200);
+
+    const readProfile = await app.inject({
+      method: "GET",
+      url: `/cameras/${cameraId}/detection-profile`,
+      headers: {
+        authorization: `Bearer ${clientToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+    expect(readProfile.statusCode).toBe(200);
+
+    const readTopology = await app.inject({
+      method: "GET",
+      url: `/cameras/${cameraId}/detection-topology`,
+      headers: {
+        authorization: `Bearer ${clientToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+    expect(readTopology.statusCode).toBe(200);
+
+    const readFaces = await app.inject({
+      method: "GET",
+      url: `/cameras/${cameraId}/faces`,
+      headers: {
+        authorization: `Bearer ${clientToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+    expect(readFaces.statusCode).toBe(200);
+    expect(readFaces.json<{ total: number }>().total).toBe(1);
+
+    const validateProfile = await app.inject({
+      method: "POST",
+      url: `/cameras/${cameraId}/detection-profile/validate`,
+      headers: {
+        authorization: `Bearer ${clientToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+    expect(validateProfile.statusCode).toBe(403);
+
+    const updateProfile = await app.inject({
+      method: "PUT",
+      url: `/cameras/${cameraId}/detection-profile`,
+      headers: {
+        authorization: `Bearer ${clientToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        pipelines: []
+      }
+    });
+    expect(updateProfile.statusCode).toBe(403);
+  });
+
+  it("forbids client_user face identity confirmation and merge actions", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const clientToken = await login("client@nearhome.dev");
+    const { tenantId, cameraId } = await getSeedFacesFixture(prisma);
+    await clearDetectionStateForCamera(prisma, tenantId, cameraId);
+
+    const clientUser = await prisma.user.findUniqueOrThrow({
+      where: { email: "client@nearhome.dev" },
+      select: { id: true }
+    });
+    await prisma.membership.upsert({
+      where: {
+        tenantId_userId: {
+          tenantId,
+          userId: clientUser.id
+        }
+      },
+      update: { role: "client_user" },
+      create: {
+        tenantId,
+        userId: clientUser.id,
+        role: "client_user"
+      }
+    });
+
+    const createJobResponse = await app.inject({
+      method: "POST",
+      url: "/detections/jobs",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        cameraId,
+        mode: "realtime",
+        source: "snapshot",
+        provider: "onprem_bento",
+        options: {
+          taskType: "face_detection"
+        }
+      }
+    });
+    expect(createJobResponse.statusCode).toBe(200);
+    const jobId = createJobResponse.json<{ data: { id: string } }>().data.id;
+
+    const completeResponse = await app.inject({
+      method: "POST",
+      url: `/internal/detections/jobs/${jobId}/complete`,
+      headers: {
+        "x-detection-callback-secret": "dev-detection-callback-secret"
+      },
+      payload: {
+        detections: [
+          {
+            label: "face",
+            confidence: 0.98,
+            bbox: { x: 0.1, y: 0.1, w: 0.15, h: 0.15 },
+            attributes: {
+              embedding: [0.9, 0.1, 0, 0],
+              cropStorageKey: "s3://nearhome/faces/rbac-a-1.jpg"
+            }
+          },
+          {
+            label: "face",
+            confidence: 0.97,
+            bbox: { x: 0.5, y: 0.2, w: 0.15, h: 0.15 },
+            attributes: {
+              embedding: [0, 0, 0.95, 0.05],
+              cropStorageKey: "s3://nearhome/faces/rbac-b-1.jpg"
+            }
+          }
+        ],
+        providerMeta: { taskType: "face_detection", nodeId: "seed-node-rbac-2" }
+      }
+    });
+    expect(completeResponse.statusCode).toBe(200);
+
+    const clustersResponse = await app.inject({
+      method: "GET",
+      url: "/faces/clusters",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+    expect(clustersResponse.statusCode).toBe(200);
+    const clusters = clustersResponse.json<{ data: Array<{ id: string }> }>().data;
+    expect(clusters.length).toBeGreaterThanOrEqual(2);
+
+    const confirmAsClient = await app.inject({
+      method: "POST",
+      url: `/faces/clusters/${clusters[0]!.id}/confirm-identity`,
+      headers: {
+        authorization: `Bearer ${clientToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        displayName: "No permitido"
+      }
+    });
+    expect(confirmAsClient.statusCode).toBe(403);
+
+    const confirmedA = await app.inject({
+      method: "POST",
+      url: `/faces/clusters/${clusters[0]!.id}/confirm-identity`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        displayName: "Persona RBAC A"
+      }
+    });
+    expect(confirmedA.statusCode).toBe(200);
+    const targetIdentityId = confirmedA.json<{ data: { id: string } }>().data.id;
+
+    const confirmedB = await app.inject({
+      method: "POST",
+      url: `/faces/clusters/${clusters[1]!.id}/confirm-identity`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        displayName: "Persona RBAC B"
+      }
+    });
+    expect(confirmedB.statusCode).toBe(200);
+    const sourceIdentityId = confirmedB.json<{ data: { id: string } }>().data.id;
+
+    const mergeAsClient = await app.inject({
+      method: "POST",
+      url: `/faces/identities/${targetIdentityId}/merge`,
+      headers: {
+        authorization: `Bearer ${clientToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        sourceIdentityId
+      }
+    });
+    expect(mergeAsClient.statusCode).toBe(403);
+  });
+
+  it("keeps detection topology and face data isolated across tenants", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const monitorToken = await login("monitor@nearhome.dev");
+    const { tenantId, cameraId } = await getSeedFacesFixture(prisma);
+    const monitorMe = await me(monitorToken);
+    const foreignTenantId = monitorMe.memberships.find((membership) => membership.tenantId !== tenantId)?.tenantId;
+    expect(foreignTenantId).toBeTruthy();
+
+    await clearDetectionStateForCamera(prisma, tenantId, cameraId);
+
+    const createJobResponse = await app.inject({
+      method: "POST",
+      url: "/detections/jobs",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        cameraId,
+        mode: "realtime",
+        source: "snapshot",
+        provider: "onprem_bento",
+        options: {
+          runtimeProvider: "yolo",
+          taskType: "face_detection",
+          quality: "balanced"
+        }
+      }
+    });
+    expect(createJobResponse.statusCode).toBe(200);
+    const jobId = createJobResponse.json<{ data: { id: string } }>().data.id;
+
+    const completeResponse = await app.inject({
+      method: "POST",
+      url: `/internal/detections/jobs/${jobId}/complete`,
+      headers: {
+        "x-detection-callback-secret": "dev-detection-callback-secret"
+      },
+      payload: {
+        detections: [
+          {
+            label: "face",
+            confidence: 0.95,
+            bbox: { x: 0.2, y: 0.2, w: 0.15, h: 0.15 },
+            attributes: {
+              embedding: [0.93, 0.07, 0, 0],
+              cropStorageKey: "s3://nearhome/faces/isolation-1.jpg"
+            }
+          }
+        ]
+      }
+    });
+    expect(completeResponse.statusCode).toBe(200);
+
+    const topologyAsForeignMonitor = await app.inject({
+      method: "GET",
+      url: `/cameras/${cameraId}/detection-topology`,
+      headers: {
+        authorization: `Bearer ${monitorToken}`,
+        "x-tenant-id": foreignTenantId!
+      }
+    });
+    expect(topologyAsForeignMonitor.statusCode).toBe(404);
+
+    const facesAsForeignMonitor = await app.inject({
+      method: "GET",
+      url: `/cameras/${cameraId}/faces`,
+      headers: {
+        authorization: `Bearer ${monitorToken}`,
+        "x-tenant-id": foreignTenantId!
+      }
+    });
+    expect(facesAsForeignMonitor.statusCode).toBe(404);
+  });
+});
+
+describe("NH-DP-24 face similarity search", () => {
+  it("returns similar faces ranked by embedding similarity", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const { tenantId, cameraId } = await getSeedFacesFixture(prisma);
+    await clearDetectionStateForCamera(prisma, tenantId, cameraId);
+
+    const createJobResponse = await app.inject({
+      method: "POST",
+      url: "/detections/jobs",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        cameraId,
+        mode: "realtime",
+        source: "snapshot",
+        provider: "onprem_bento",
+        options: {
+          runtimeProvider: "yolo",
+          taskType: "face_detection",
+          quality: "balanced"
+        }
+      }
+    });
+    expect(createJobResponse.statusCode).toBe(200);
+    const jobId = createJobResponse.json<{ data: { id: string } }>().data.id;
+
+    const completeResponse = await app.inject({
+      method: "POST",
+      url: `/internal/detections/jobs/${jobId}/complete`,
+      headers: {
+        "x-detection-callback-secret": "dev-detection-callback-secret"
+      },
+      payload: {
+        detections: [
+          {
+            label: "face",
+            confidence: 0.98,
+            bbox: { x: 0.1, y: 0.1, w: 0.15, h: 0.15 },
+            attributes: {
+              embedding: [0.9, 0.1, 0, 0],
+              cropStorageKey: "s3://nearhome/faces/sim-a.jpg"
+            }
+          },
+          {
+            label: "face",
+            confidence: 0.97,
+            bbox: { x: 0.12, y: 0.11, w: 0.15, h: 0.15 },
+            attributes: {
+              embedding: [0.89, 0.11, 0, 0],
+              cropStorageKey: "s3://nearhome/faces/sim-b.jpg"
+            }
+          },
+          {
+            label: "face",
+            confidence: 0.95,
+            bbox: { x: 0.5, y: 0.2, w: 0.15, h: 0.15 },
+            attributes: {
+              embedding: [0, 0, 0.95, 0.05],
+              cropStorageKey: "s3://nearhome/faces/sim-c.jpg"
+            }
+          }
+        ]
+      }
+    });
+    expect(completeResponse.statusCode).toBe(200);
+
+    const facesResponse = await app.inject({
+      method: "GET",
+      url: `/cameras/${cameraId}/faces`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+    expect(facesResponse.statusCode).toBe(200);
+    const faces = facesResponse.json<{ data: Array<{ id: string; cropStorageKey?: string | null }> }>().data;
+    const sourceFace = faces.find((face) => face.cropStorageKey === "s3://nearhome/faces/sim-a.jpg");
+    expect(sourceFace).toBeTruthy();
+
+    const similarResponse = await app.inject({
+      method: "GET",
+      url: `/faces/detections/${sourceFace!.id}/similar?_start=0&_end=10&minSimilarity=0.5`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+    expect(similarResponse.statusCode).toBe(200);
+    expect(similarResponse.json()).toMatchObject({
+      data: {
+        sourceFaceId: sourceFace!.id,
+        tenantId,
+        total: 1,
+        matches: [
+          {
+            sameCamera: true,
+            face: {
+              cropStorageKey: "s3://nearhome/faces/sim-b.jpg"
+            }
+          }
+        ]
+      }
+    });
+    const similarityBody = similarResponse.json<{
+      data: {
+        matches: Array<{ similarityScore: number; face: { cropStorageKey?: string | null } }>;
+      };
+    }>().data;
+    expect(similarityBody.matches[0]!.similarityScore).toBeGreaterThan(0.99);
+  });
+
+  it("rejects similarity search when the source face has no stored embedding vector", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const { tenantId, cameraId } = await getSeedFacesFixture(prisma);
+    await clearDetectionStateForCamera(prisma, tenantId, cameraId);
+
+    const createJobResponse = await app.inject({
+      method: "POST",
+      url: "/detections/jobs",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      },
+      payload: {
+        cameraId,
+        mode: "realtime",
+        source: "snapshot",
+        provider: "onprem_bento",
+        options: {
+          runtimeProvider: "yolo",
+          taskType: "face_detection",
+          quality: "balanced"
+        }
+      }
+    });
+    expect(createJobResponse.statusCode).toBe(200);
+    const jobId = createJobResponse.json<{ data: { id: string } }>().data.id;
+
+    const completeResponse = await app.inject({
+      method: "POST",
+      url: `/internal/detections/jobs/${jobId}/complete`,
+      headers: {
+        "x-detection-callback-secret": "dev-detection-callback-secret"
+      },
+      payload: {
+        detections: [
+          {
+            label: "face",
+            confidence: 0.94,
+            bbox: { x: 0.2, y: 0.2, w: 0.15, h: 0.15 },
+            attributes: {
+              cropStorageKey: "s3://nearhome/faces/no-embedding.jpg"
+            }
+          }
+        ]
+      }
+    });
+    expect(completeResponse.statusCode).toBe(200);
+
+    const facesResponse = await app.inject({
+      method: "GET",
+      url: `/cameras/${cameraId}/faces`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+    expect(facesResponse.statusCode).toBe(200);
+    const faceId = facesResponse.json<{ data: Array<{ id: string }> }>().data[0]!.id;
+
+    const similarResponse = await app.inject({
+      method: "GET",
+      url: `/faces/detections/${faceId}/similar`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+    expect(similarResponse.statusCode).toBe(409);
+    expect(similarResponse.json()).toMatchObject({
+      code: "FACE_SIMILARITY_UNAVAILABLE"
+    });
+  });
+});
+
+describe("NH-DP-19 face clustering and identity management", () => {
+  it("stores face detections, auto-clusters similar faces and allows identity confirmation and merge", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const { tenantId, cameraId } = await getSeedFacesFixture(prisma);
+    await clearDetectionStateForCamera(prisma, tenantId, cameraId);
 
     const createJobResponse = await app.inject({
       method: "POST",

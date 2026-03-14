@@ -37,6 +37,7 @@ const ADMIN_ROUTES = {
     nodes: "/operations/nodes"
   },
   resources: {
+    clientOverview: "/resources/client-overview",
     cameras: "/resources/cameras",
     cameraDetail: (id: string) => `/resources/cameras/${id}`,
     notifications: "/resources/notifications"
@@ -283,6 +284,59 @@ type DeploymentStatusData = {
   };
 };
 
+type FaceDetectionItem = {
+  id: string;
+  tenantId: string;
+  cameraId: string;
+  observationId: string;
+  detectorProvider: string;
+  detectorTaskType: string;
+  cropStorageKey?: string | null;
+  qualityScore?: number | null;
+  bbox: {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  };
+  frameTs: string;
+  createdAt: string;
+  updatedAt: string;
+  embedding?: {
+    id: string;
+    embeddingRef?: string | null;
+    embeddingModelRef?: string | null;
+    embeddingVersion?: string | null;
+    qualityScore?: number | null;
+    vectorNorm?: number | null;
+    dimensions?: number | null;
+  };
+  cluster?: {
+    id: string;
+    status: string;
+    displayName?: string | null;
+    similarityScore?: number | null;
+  };
+  identity?: {
+    id: string;
+    displayName?: string | null;
+    status: string;
+  };
+};
+
+type FaceSimilarityMatch = {
+  similarityScore: number;
+  sameCamera: boolean;
+  face: FaceDetectionItem;
+};
+
+type FaceSimilaritySearchResult = {
+  sourceFaceId: string;
+  tenantId: string;
+  total: number;
+  matches: FaceSimilarityMatch[];
+};
+
 type CameraMonitorItem = {
   id: string;
   name: string;
@@ -303,6 +357,16 @@ type CameraStreamHealth = {
   message: string;
   liveEdgeLagMs?: number | null;
   checkedAt?: string | null;
+};
+
+type ClientOverviewCameraRow = {
+  id: string;
+  name: string;
+  location?: string | null;
+  lifecycleStatus?: string | null;
+  isActive: boolean;
+  topology: DetectionTopology | null;
+  topologyError?: string | null;
 };
 
 function toPlaybackPublicUrl(rawPlaybackUrl: string) {
@@ -364,6 +428,24 @@ function getImpersonateRole() {
   return localStorage.getItem("nearhome_impersonate_role");
 }
 
+function getEffectiveRoleFromStorage() {
+  const meRaw = localStorage.getItem("nearhome_me");
+  if (!meRaw) return null;
+  try {
+    const me = JSON.parse(meRaw) as {
+      context?: { effectiveRole?: string | null };
+      user?: { isSuperuser?: boolean };
+      memberships?: Array<{ tenantId: string; role: string }>;
+    };
+    if (me.context?.effectiveRole) return me.context.effectiveRole;
+    if (me.user?.isSuperuser) return getImpersonateRole() ?? "super_admin";
+    const activeTenant = getTenantId();
+    return me.memberships?.find((membership) => membership.tenantId === activeTenant)?.role ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function safeJsonParse<T>(raw: string, fallback: T): T {
   try {
     return JSON.parse(raw) as T;
@@ -374,6 +456,94 @@ function safeJsonParse<T>(raw: string, fallback: T): T {
 
 function prettyJson(value: unknown) {
   return JSON.stringify(value ?? {}, null, 2);
+}
+
+function formatDetectionTask(taskType: DetectionTaskType) {
+  switch (taskType) {
+    case "person_detection":
+      return "Personas";
+    case "object_detection":
+      return "Objetos";
+    case "license_plate_detection":
+      return "Patentes";
+    case "face_detection":
+      return "Caras";
+    case "pose_estimation":
+      return "Postura";
+    default:
+      return taskType;
+  }
+}
+
+function formatDetectionQuality(quality: DetectionQuality) {
+  switch (quality) {
+    case "fast":
+      return "Rápida";
+    case "balanced":
+      return "Balanceada";
+    case "accurate":
+      return "Precisa";
+    default:
+      return quality;
+  }
+}
+
+function describePipelineAudienceState(pipeline: DetectionTopologyPipeline) {
+  if (!pipeline.enabled) {
+    return {
+      tone: "neutral",
+      label: "Desactivado",
+      detail: "Este análisis está configurado pero hoy no corre sobre la cámara."
+    } as const;
+  }
+  if (pipeline.assignment.status === "assigned" && pipeline.valid && pipeline.runnable && pipeline.inSync) {
+    return {
+      tone: "good",
+      label: "Operativo",
+      detail: pipeline.assignment.primaryNodeId
+        ? `Corriendo sobre ${pipeline.assignment.primaryNodeId} con ${formatDetectionQuality(pipeline.quality).toLowerCase()}.`
+        : "La detección está resuelta y lista para producción."
+    } as const;
+  }
+  if (pipeline.assignment.status === "degraded" || !pipeline.inSync) {
+    return {
+      tone: "warn",
+      label: "Con riesgo",
+      detail: pipeline.assignment.reason || "Hay drift entre configuración y nodos disponibles."
+    } as const;
+  }
+  return {
+    tone: "bad",
+    label: "Sin cobertura",
+    detail: pipeline.assignment.reason || "No hay capacidad compatible para este pipeline."
+  } as const;
+}
+
+function getAudienceToneClasses(tone: "good" | "warn" | "bad" | "neutral") {
+  if (tone === "good") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (tone === "warn") return "border-amber-200 bg-amber-50 text-amber-700";
+  if (tone === "bad") return "border-rose-200 bg-rose-50 text-rose-700";
+  return "border-slate-200 bg-slate-50 text-slate-700";
+}
+
+function summarizeFaceLabel(face: FaceDetectionItem) {
+  const cropKey = face.cropStorageKey?.split("/").pop();
+  if (cropKey) return cropKey;
+  return `face-${face.id.slice(0, 8)}`;
+}
+
+function summarizeTopologyRisks(topology: DetectionTopology) {
+  const items: string[] = [];
+  if (topology.summary.driftedPipelines > 0) {
+    items.push(`${topology.summary.driftedPipelines} pipeline${topology.summary.driftedPipelines === 1 ? "" : "s"} con drift de configuración`);
+  }
+  if (topology.summary.degradedAssignments > 0) {
+    items.push(`${topology.summary.degradedAssignments} pipeline${topology.summary.degradedAssignments === 1 ? "" : "s"} operando con degradación`);
+  }
+  if (!topology.runnable) {
+    items.push("la cámara no tiene cobertura completa con los nodos actuales");
+  }
+  return items;
 }
 
 function hasBackofficeAccess(me: any) {
@@ -568,40 +738,53 @@ function Layout({ apiUrl }: { apiUrl: string }) {
   const role =
     me?.context?.effectiveRole ??
     (me?.user?.isSuperuser ? (persistedImpersonationRole ?? "super_admin") : me.memberships?.find((m: any) => m.tenantId === activeTenant)?.role);
-  const navigation: WorkspaceNavGroup[] = [
-    {
-      title: "Operaciones",
-      items: [
-        { to: ADMIN_ROUTES.operations.control, label: "Control Operativo", icon: <HomeAlt width={16} height={16} /> },
-        { to: ADMIN_ROUTES.operations.monitor, label: "Monitor", icon: <MediaImageList width={16} height={16} /> },
-        { to: ADMIN_ROUTES.operations.realtime, label: "Tiempo Real", icon: <Internet width={16} height={16} /> },
-        { to: ADMIN_ROUTES.operations.nodes, label: "Nodos", icon: <Settings width={16} height={16} /> }
+  const isClientRole = role === "client_user";
+  const navigation: WorkspaceNavGroup[] = isClientRole
+    ? [
+        {
+          title: "Seguimiento",
+          items: [
+            { to: ADMIN_ROUTES.resources.clientOverview, label: "Resumen Cliente", icon: <HomeAlt width={16} height={16} /> },
+            { to: ADMIN_ROUTES.resources.cameras, label: "Cámaras", icon: <Camera width={16} height={16} /> },
+            { to: ADMIN_ROUTES.resources.notifications, label: "Notificaciones", icon: <BellNotification width={16} height={16} /> }
+          ]
+        }
       ]
-    },
-    {
-      title: "Recursos",
-      items: [
-        { to: ADMIN_ROUTES.resources.cameras, label: "Cámaras", icon: <Camera width={16} height={16} /> },
-        { to: ADMIN_ROUTES.resources.notifications, label: "Notificaciones", icon: <BellNotification width={16} height={16} /> }
-      ]
-    },
-    {
-      title: "Identidad y Acceso",
-      items: [
-        { to: ADMIN_ROUTES.identity.tenants, label: "Tenants", icon: <Group width={16} height={16} /> },
-        { to: ADMIN_ROUTES.identity.users, label: "Usuarios", icon: <User width={16} height={16} /> },
-        { to: ADMIN_ROUTES.identity.memberships, label: "Membresías", icon: <Group width={16} height={16} /> },
-        { to: ADMIN_ROUTES.identity.cameraAssignments, label: "Scope Cámaras", icon: <Camera width={16} height={16} /> }
-      ]
-    },
-    {
-      title: "Comercial",
-      items: [
-        { to: ADMIN_ROUTES.commercial.plans, label: "Planes", icon: <Planimetry width={16} height={16} /> },
-        { to: ADMIN_ROUTES.commercial.subscriptions, label: "Suscripciones", icon: <Planimetry width={16} height={16} /> }
-      ]
-    }
-  ];
+    : [
+        {
+          title: "Operaciones",
+          items: [
+            { to: ADMIN_ROUTES.operations.control, label: "Control Operativo", icon: <HomeAlt width={16} height={16} /> },
+            { to: ADMIN_ROUTES.operations.monitor, label: "Monitor", icon: <MediaImageList width={16} height={16} /> },
+            { to: ADMIN_ROUTES.operations.realtime, label: "Tiempo Real", icon: <Internet width={16} height={16} /> },
+            { to: ADMIN_ROUTES.operations.nodes, label: "Nodos", icon: <Settings width={16} height={16} /> }
+          ]
+        },
+        {
+          title: "Recursos",
+          items: [
+            { to: ADMIN_ROUTES.resources.clientOverview, label: "Resumen Cliente", icon: <HomeAlt width={16} height={16} /> },
+            { to: ADMIN_ROUTES.resources.cameras, label: "Cámaras", icon: <Camera width={16} height={16} /> },
+            { to: ADMIN_ROUTES.resources.notifications, label: "Notificaciones", icon: <BellNotification width={16} height={16} /> }
+          ]
+        },
+        {
+          title: "Identidad y Acceso",
+          items: [
+            { to: ADMIN_ROUTES.identity.tenants, label: "Tenants", icon: <Group width={16} height={16} /> },
+            { to: ADMIN_ROUTES.identity.users, label: "Usuarios", icon: <User width={16} height={16} /> },
+            { to: ADMIN_ROUTES.identity.memberships, label: "Membresías", icon: <Group width={16} height={16} /> },
+            { to: ADMIN_ROUTES.identity.cameraAssignments, label: "Scope Cámaras", icon: <Camera width={16} height={16} /> }
+          ]
+        },
+        {
+          title: "Comercial",
+          items: [
+            { to: ADMIN_ROUTES.commercial.plans, label: "Planes", icon: <Planimetry width={16} height={16} /> },
+            { to: ADMIN_ROUTES.commercial.subscriptions, label: "Suscripciones", icon: <Planimetry width={16} height={16} /> }
+          ]
+        }
+      ];
 
   return (
     <WorkspaceShell
@@ -655,13 +838,14 @@ function Layout({ apiUrl }: { apiUrl: string }) {
       navigation={navigation}
     >
       <Routes>
-        <Route path="/" element={<Navigate to={ADMIN_ROUTES.operations.control} replace />} />
+        <Route path="/" element={<Navigate to={isClientRole ? ADMIN_ROUTES.resources.clientOverview : ADMIN_ROUTES.operations.control} replace />} />
 
         <Route path={ADMIN_ROUTES.operations.control} element={<ControlPanelPage apiUrl={apiUrl} />} />
         <Route path={ADMIN_ROUTES.operations.monitor} element={<MonitorPage apiUrl={apiUrl} />} />
         <Route path={ADMIN_ROUTES.operations.nodes} element={<DetectionNodesPage apiUrl={apiUrl} />} />
         <Route path={ADMIN_ROUTES.operations.realtime} element={<RealtimePage apiUrl={apiUrl} />} />
 
+        <Route path={ADMIN_ROUTES.resources.clientOverview} element={<ClientOverviewPage apiUrl={apiUrl} />} />
         <Route path={ADMIN_ROUTES.resources.cameras} element={<CamerasPage />} />
         <Route path="/resources/cameras/:id" element={<CameraShow />} />
         <Route path={ADMIN_ROUTES.resources.notifications} element={<NotificationsPage apiUrl={apiUrl} />} />
@@ -678,6 +862,7 @@ function Layout({ apiUrl }: { apiUrl: string }) {
         <Route path="/monitor" element={<Navigate to={ADMIN_ROUTES.operations.monitor} replace />} />
         <Route path="/nodes" element={<Navigate to={ADMIN_ROUTES.operations.nodes} replace />} />
         <Route path="/realtime" element={<Navigate to={ADMIN_ROUTES.operations.realtime} replace />} />
+        <Route path="/client-overview" element={<Navigate to={ADMIN_ROUTES.resources.clientOverview} replace />} />
         <Route path="/cameras" element={<Navigate to={ADMIN_ROUTES.resources.cameras} replace />} />
         <Route path="/cameras/:id" element={<LegacyCameraDetailRedirect />} />
         <Route path="/notifications" element={<Navigate to={ADMIN_ROUTES.resources.notifications} replace />} />
@@ -1441,6 +1626,251 @@ function CameraAssignmentsPage({ apiUrl }: { apiUrl: string }) {
   );
 }
 
+function ClientOverviewPage({ apiUrl }: { apiUrl: string }) {
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [rows, setRows] = useState<ClientOverviewCameraRow[]>([]);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "ready" | "attention" | "not_configured">("all");
+
+  async function loadOverview() {
+    const token = getToken();
+    const tenantId = getTenantId();
+    if (!token || !tenantId) {
+      setError("Missing auth context");
+      setLoading(false);
+      return;
+    }
+
+    setRefreshing(true);
+    setError(null);
+    try {
+      const camerasResponse = await fetch(`${apiUrl}/cameras?_start=0&_end=100&_sort=createdAt&_order=DESC`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "X-Tenant-Id": tenantId
+        }
+      });
+      if (!camerasResponse.ok) {
+        throw new Error(await summarizeApiErrorResponse(camerasResponse, "No se pudo cargar el resumen de cámaras"));
+      }
+      const cameraBody = (await camerasResponse.json()) as { data?: any[] };
+      const cameras = cameraBody.data ?? [];
+
+      const topologyResults = await Promise.all(
+        cameras.map(async (camera: any) => {
+          try {
+            const topologyResponse = await fetch(`${apiUrl}/cameras/${camera.id}/detection-topology`, {
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "X-Tenant-Id": tenantId
+              }
+            });
+            if (!topologyResponse.ok) {
+              return {
+                id: camera.id,
+                name: camera.name,
+                location: camera.location,
+                lifecycleStatus: camera.lifecycleStatus,
+                isActive: Boolean(camera.isActive),
+                topology: null,
+                topologyError: await summarizeApiErrorResponse(topologyResponse, "No se pudo cargar topología")
+              } satisfies ClientOverviewCameraRow;
+            }
+            const topologyBody = (await topologyResponse.json()) as { data?: DetectionTopology };
+            return {
+              id: camera.id,
+              name: camera.name,
+              location: camera.location,
+              lifecycleStatus: camera.lifecycleStatus,
+              isActive: Boolean(camera.isActive),
+              topology: topologyBody.data ?? null,
+              topologyError: null
+            } satisfies ClientOverviewCameraRow;
+          } catch (cause) {
+            return {
+              id: camera.id,
+              name: camera.name,
+              location: camera.location,
+              lifecycleStatus: camera.lifecycleStatus,
+              isActive: Boolean(camera.isActive),
+              topology: null,
+              topologyError: summarizeApiError(cause, "No se pudo cargar topología")
+            } satisfies ClientOverviewCameraRow;
+          }
+        })
+      );
+
+      setRows(topologyResults);
+    } catch (cause) {
+      setError(summarizeApiError(cause, "No se pudo cargar el resumen cliente"));
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadOverview();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiUrl]);
+
+  const filteredRows = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return rows.filter((row) => {
+      const matchesSearch =
+        query.length === 0 ||
+        row.name.toLowerCase().includes(query) ||
+        (row.location ?? "").toLowerCase().includes(query) ||
+        (row.topology?.pipelines ?? []).some((pipeline) => formatDetectionTask(pipeline.taskType).toLowerCase().includes(query));
+
+      const state = !row.topology || row.topology.summary.totalPipelines === 0
+        ? "not_configured"
+        : row.topology.runnable && row.topology.inSync
+          ? "ready"
+          : "attention";
+
+      const matchesStatus = statusFilter === "all" || state === statusFilter;
+      return matchesSearch && matchesStatus;
+    });
+  }, [rows, search, statusFilter]);
+
+  const summary = useMemo(() => {
+    let ready = 0;
+    let attention = 0;
+    let notConfigured = 0;
+    const detections = new Set<string>();
+    for (const row of rows) {
+      if (!row.topology || row.topology.summary.totalPipelines === 0) {
+        notConfigured += 1;
+        continue;
+      }
+      if (row.topology.runnable && row.topology.inSync) ready += 1;
+      else attention += 1;
+      for (const pipeline of row.topology.pipelines) {
+        if (pipeline.enabled) detections.add(formatDetectionTask(pipeline.taskType));
+      }
+    }
+    return {
+      total: rows.length,
+      ready,
+      attention,
+      notConfigured,
+      detections: Array.from(detections)
+    };
+  }, [rows]);
+
+  return (
+    <div className="space-y-4">
+      <PageCard title="Resumen Cliente">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="text-sm text-slate-600">Vista resumida por tenant para seguir cobertura, capacidad y riesgos sin entrar al detalle técnico.</div>
+            <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-600">
+              {summary.detections.map((detection) => (
+                <Badge key={detection}>{detection}</Badge>
+              ))}
+              {summary.detections.length === 0 ? <Badge>Sin detecciones activas</Badge> : null}
+            </div>
+          </div>
+          <PrimaryButton className="px-2.5 py-1.5 text-xs" type="button" onClick={() => void loadOverview()} disabled={refreshing}>
+            {refreshing ? "Refreshing..." : "Refresh"}
+          </PrimaryButton>
+        </div>
+        {error ? <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div> : null}
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+          <Surface className="border border-slate-200 bg-slate-50">
+            <div className="text-xs uppercase tracking-wide text-slate-500">Cámaras</div>
+            <div className="mt-1 text-2xl font-semibold text-slate-900">{summary.total}</div>
+            <div className="text-xs text-slate-500">Cantidad total visible para este tenant</div>
+          </Surface>
+          <Surface className="border border-emerald-200 bg-emerald-50">
+            <div className="text-xs uppercase tracking-wide text-emerald-700">Listas</div>
+            <div className="mt-1 text-2xl font-semibold text-emerald-900">{summary.ready}</div>
+            <div className="text-xs text-emerald-700">Cobertura consistente y capacidad disponible</div>
+          </Surface>
+          <Surface className="border border-amber-200 bg-amber-50">
+            <div className="text-xs uppercase tracking-wide text-amber-700">Con atención</div>
+            <div className="mt-1 text-2xl font-semibold text-amber-900">{summary.attention}</div>
+            <div className="text-xs text-amber-700">Hay drift, degradación o cobertura parcial</div>
+          </Surface>
+          <Surface className="border border-slate-200 bg-slate-50">
+            <div className="text-xs uppercase tracking-wide text-slate-500">Sin configurar</div>
+            <div className="mt-1 text-2xl font-semibold text-slate-900">{summary.notConfigured}</div>
+            <div className="text-xs text-slate-500">No tienen pipelines de detección activos</div>
+          </Surface>
+        </div>
+      </PageCard>
+
+      <PageCard title="Cámaras del Tenant">
+        <div className="mb-3 grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1fr)_220px]">
+          <TextInput placeholder="Buscar por cámara, ubicación o detección" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <SelectInput value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}>
+            <option value="all">todos los estados</option>
+            <option value="ready">listas</option>
+            <option value="attention">con atención</option>
+            <option value="not_configured">sin configurar</option>
+          </SelectInput>
+        </div>
+        {loading ? (
+          <div className="text-sm text-slate-500">Cargando resumen del tenant...</div>
+        ) : (
+          <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+            {filteredRows.map((row) => {
+              const state = !row.topology || row.topology.summary.totalPipelines === 0
+                ? { label: "Sin configurar", tone: "neutral" as const, detail: "Todavía no hay pipelines activos para esta cámara." }
+                : row.topology.runnable && row.topology.inSync
+                  ? { label: "Lista", tone: "good" as const, detail: "La cobertura actual es consistente y tiene capacidad disponible." }
+                  : { label: "Con atención", tone: "warn" as const, detail: summarizeTopologyRisks(row.topology).join("; ") || "Requiere revisión operativa." };
+              const detections = Array.from(
+                new Set((row.topology?.pipelines ?? []).filter((pipeline) => pipeline.enabled).map((pipeline) => formatDetectionTask(pipeline.taskType)))
+              );
+              const primaryPipelines = (row.topology?.pipelines ?? []).filter((pipeline) => pipeline.assignment.primaryNodeId);
+
+              return (
+                <Surface key={row.id} className="space-y-3 border border-slate-200">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="text-lg font-semibold text-slate-900">{row.name}</div>
+                      <div className="text-sm text-slate-600">{row.location || "Sin ubicación declarada"}</div>
+                      <div className="mt-1 text-xs text-slate-500">Lifecycle {row.lifecycleStatus ?? "-"} · {row.isActive ? "Activa" : "Inactiva"}</div>
+                    </div>
+                    <Badge className={getAudienceToneClasses(state.tone)}>{state.label}</Badge>
+                  </div>
+                  <div className="text-sm text-slate-700">{row.topologyError ?? state.detail}</div>
+                  <div className="flex flex-wrap gap-2">
+                    {detections.map((detection) => (
+                      <Badge key={`${row.id}-${detection}`}>{detection}</Badge>
+                    ))}
+                    {detections.length === 0 ? <Badge>Sin detecciones activas</Badge> : null}
+                    {row.topology ? <Badge>{row.topology.summary.assignedPipelines}/{row.topology.summary.enabledPipelines} asignados</Badge> : null}
+                  </div>
+                  {primaryPipelines.length > 0 ? (
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                      Nodos primarios: {primaryPipelines.map((pipeline) => pipeline.assignment.primaryNodeId).filter(Boolean).join(", ")}
+                    </div>
+                  ) : null}
+                  <div className="flex flex-wrap gap-2">
+                    <Link className="text-sm font-medium text-slate-700 underline underline-offset-2" to={ADMIN_ROUTES.resources.cameraDetail(row.id)}>
+                      Ver detalle de cámara
+                    </Link>
+                  </div>
+                </Surface>
+              );
+            })}
+            {filteredRows.length === 0 ? (
+              <Surface className="border border-slate-200 bg-slate-50">
+                <div className="text-sm text-slate-600">No hay cámaras que coincidan con los filtros actuales.</div>
+              </Surface>
+            ) : null}
+          </div>
+        )}
+      </PageCard>
+    </div>
+  );
+}
+
 function CamerasPage() {
   const [page, setPage] = useState(1);
   const [q, setQ] = useState("");
@@ -1683,13 +2113,20 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
   const [catalog, setCatalog] = useState<ModelCatalogEntry[]>([]);
   const [tenantOptions, setTenantOptions] = useState<Array<{ id: string; name: string }>>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string>("");
+  const [nodeSearch, setNodeSearch] = useState("");
+  const [runtimeFilter, setRuntimeFilter] = useState<"all" | DetectionProviderRuntime>("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "online" | "degraded" | "offline">("all");
   const [loading, setLoading] = useState(true);
   const [loadingNodeConfig, setLoadingNodeConfig] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [catalogSaving, setCatalogSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
   const [enrollmentToken, setEnrollmentToken] = useState<string | null>(null);
   const [assignmentDraft, setAssignmentDraft] = useState<string[]>([]);
+  const [catalogSearch, setCatalogSearch] = useState("");
+  const [catalogProviderFilter, setCatalogProviderFilter] = useState<"all" | DetectionProviderRuntime>("all");
+  const [editingCatalogId, setEditingCatalogId] = useState<string | null>(null);
   const [form, setForm] = useState({
     nodeId: "",
     tenantScope: "*",
@@ -1703,8 +2140,61 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
     gpu: 0,
     vramMb: 0
   });
+  const [catalogForm, setCatalogForm] = useState<{
+    provider: DetectionProviderRuntime;
+    taskType: DetectionTaskType;
+    quality: DetectionQuality;
+    modelRef: string;
+    displayName: string;
+    cpu: number;
+    gpu: number;
+    vramMb: number;
+    defaults: string;
+    outputs: string;
+    status: "active" | "disabled";
+  }>({
+    provider: "yolo",
+    taskType: "person_detection",
+    quality: "balanced",
+    modelRef: "",
+    displayName: "",
+    cpu: 2,
+    gpu: 0,
+    vramMb: 0,
+    defaults: "{}",
+    outputs: "{}",
+    status: "active"
+  });
 
   const selectedNode = useMemo(() => nodes.find((node) => node.nodeId === selectedNodeId) ?? null, [nodes, selectedNodeId]);
+  const filteredNodes = useMemo(
+    () =>
+      nodes.filter((node) => {
+        const matchesSearch =
+          nodeSearch.trim().length === 0 ||
+          node.nodeId.toLowerCase().includes(nodeSearch.toLowerCase()) ||
+          node.endpoint.toLowerCase().includes(nodeSearch.toLowerCase()) ||
+          node.models.some((model) => model.toLowerCase().includes(nodeSearch.toLowerCase()));
+        const matchesRuntime = runtimeFilter === "all" || node.runtime === runtimeFilter;
+        const matchesStatus = statusFilter === "all" || node.status === statusFilter;
+        return matchesSearch && matchesRuntime && matchesStatus;
+      }),
+    [nodeSearch, nodes, runtimeFilter, statusFilter]
+  );
+  const filteredCatalog = useMemo(
+    () =>
+      catalog.filter((entry) => {
+        const matchesProvider = catalogProviderFilter === "all" || entry.provider === catalogProviderFilter;
+        const needle = catalogSearch.trim().toLowerCase();
+        const matchesSearch =
+          needle.length === 0 ||
+          entry.displayName.toLowerCase().includes(needle) ||
+          entry.modelRef.toLowerCase().includes(needle) ||
+          entry.taskType.toLowerCase().includes(needle);
+        return matchesProvider && matchesSearch;
+      }),
+    [catalog, catalogProviderFilter, catalogSearch]
+  );
 
   useEffect(() => {
     setAssignmentDraft(selectedNode?.assignedTenantIds ?? []);
@@ -1735,6 +2225,91 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
       setCatalog(body.data ?? []);
     } catch (loadError) {
       setError(summarizeApiError(loadError, "No se pudo cargar el catálogo de modelos"));
+    }
+  }
+
+  function resetCatalogForm() {
+    setEditingCatalogId(null);
+    setCatalogForm({
+      provider: "yolo",
+      taskType: "person_detection",
+      quality: "balanced",
+      modelRef: "",
+      displayName: "",
+      cpu: 2,
+      gpu: 0,
+      vramMb: 0,
+      defaults: "{}",
+      outputs: "{}",
+      status: "active"
+    });
+  }
+
+  function startEditingCatalog(entry: ModelCatalogEntry) {
+    setEditingCatalogId(entry.id);
+    setCatalogForm({
+      provider: entry.provider,
+      taskType: entry.taskType,
+      quality: entry.quality,
+      modelRef: entry.modelRef,
+      displayName: entry.displayName,
+      cpu: entry.resources.cpu ?? 0,
+      gpu: entry.resources.gpu ?? 0,
+      vramMb: entry.resources.vramMb ?? 0,
+      defaults: prettyJson(entry.defaults ?? {}),
+      outputs: prettyJson(entry.outputs ?? {}),
+      status: entry.status
+    });
+  }
+
+  async function saveCatalogEntry(e: FormEvent) {
+    e.preventDefault();
+    const token = getToken();
+    if (!token) {
+      setError("Missing auth token");
+      return;
+    }
+    setCatalogSaving(true);
+    setError(null);
+    setOk(null);
+    try {
+      const payload = {
+        provider: catalogForm.provider,
+        taskType: catalogForm.taskType,
+        quality: catalogForm.quality,
+        modelRef: catalogForm.modelRef,
+        displayName: catalogForm.displayName,
+        resources: {
+          cpu: Number(catalogForm.cpu),
+          gpu: Number(catalogForm.gpu),
+          vramMb: Number(catalogForm.vramMb)
+        },
+        defaults: safeJsonParse<Record<string, unknown>>(catalogForm.defaults, {}),
+        outputs: safeJsonParse<Record<string, unknown>>(catalogForm.outputs, {}),
+        status: catalogForm.status
+      };
+      const res = await fetch(
+        editingCatalogId ? `${apiUrl}/ops/model-catalog/${encodeURIComponent(editingCatalogId)}` : `${apiUrl}/ops/model-catalog`,
+        {
+          method: editingCatalogId ? "PUT" : "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "content-type": "application/json"
+          },
+          body: JSON.stringify(payload)
+        }
+      );
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(`catalog save ${res.status}: ${body}`);
+      }
+      setOk(editingCatalogId ? "Modelo actualizado" : "Modelo creado");
+      resetCatalogForm();
+      await loadCatalog();
+    } catch (saveError) {
+      setError(summarizeApiError(saveError, "No se pudo guardar la entrada del catálogo"));
+    } finally {
+      setCatalogSaving(false);
     }
   }
 
@@ -1978,6 +2553,24 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
             Reload cache
           </PrimaryButton>
           <Badge>total: {nodes.length}</Badge>
+          <Badge>visible: {filteredNodes.length}</Badge>
+        </div>
+        <div className="mb-3 grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1fr)_180px_180px]">
+          <TextInput placeholder="Buscar por nodeId, endpoint o modelRef" value={nodeSearch} onChange={(e) => setNodeSearch(e.target.value)} />
+          <SelectInput value={runtimeFilter} onChange={(e) => setRuntimeFilter(e.target.value as "all" | DetectionProviderRuntime)}>
+            <option value="all">all runtimes</option>
+            {DETECTION_PROVIDER_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </SelectInput>
+          <SelectInput value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as "all" | "online" | "degraded" | "offline")}>
+            <option value="all">all statuses</option>
+            <option value="online">online</option>
+            <option value="degraded">degraded</option>
+            <option value="offline">offline</option>
+          </SelectInput>
         </div>
         {error && <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
         {ok && <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{ok}</div>}
@@ -2001,7 +2594,7 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {nodes.map((node) => (
+            {filteredNodes.map((node) => (
               <tr key={node.nodeId} className={selectedNodeId === node.nodeId ? "bg-slate-50" : ""}>
                 <td className="px-3 py-2">
                   <button
@@ -2056,6 +2649,13 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
                 </td>
               </tr>
             ))}
+            {filteredNodes.length === 0 ? (
+              <tr>
+                <td className="px-3 py-6 text-center text-sm text-slate-500" colSpan={9}>
+                  No hay nodos que coincidan con los filtros actuales.
+                </td>
+              </tr>
+            ) : null}
           </tbody>
         </DataTable>
       </PageCard>
@@ -2263,11 +2863,122 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
       </PageCard>
 
       <PageCard title="Model Catalog Snapshot">
-        <div className="mb-2 flex items-center justify-between gap-2">
-          <div className="text-sm text-slate-600">Modelos activos para resolver perfiles y jobs.</div>
-          <PrimaryButton className="px-2.5 py-1.5 text-xs" type="button" onClick={() => void loadCatalog()} disabled={loading || saving}>
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <div className="text-sm text-slate-600">Modelos usados para resolver perfiles, jobs y topología.</div>
+          <PrimaryButton className="px-2.5 py-1.5 text-xs" type="button" onClick={() => void loadCatalog()} disabled={loading || saving || catalogSaving}>
             Refresh catalog
           </PrimaryButton>
+        </div>
+        <form className="mb-4 grid grid-cols-1 gap-2 md:grid-cols-12" onSubmit={saveCatalogEntry}>
+          <SelectInput
+            className="md:col-span-2"
+            value={catalogForm.provider}
+            onChange={(e) => setCatalogForm((prev) => ({ ...prev, provider: e.target.value as DetectionProviderRuntime }))}
+          >
+            {DETECTION_PROVIDER_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </SelectInput>
+          <SelectInput
+            className="md:col-span-2"
+            value={catalogForm.taskType}
+            onChange={(e) => setCatalogForm((prev) => ({ ...prev, taskType: e.target.value as DetectionTaskType }))}
+          >
+            {DETECTION_TASK_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </SelectInput>
+          <SelectInput
+            className="md:col-span-2"
+            value={catalogForm.quality}
+            onChange={(e) => setCatalogForm((prev) => ({ ...prev, quality: e.target.value as DetectionQuality }))}
+          >
+            {DETECTION_QUALITY_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </SelectInput>
+          <SelectInput
+            className="md:col-span-2"
+            value={catalogForm.status}
+            onChange={(e) => setCatalogForm((prev) => ({ ...prev, status: e.target.value as "active" | "disabled" }))}
+          >
+            <option value="active">active</option>
+            <option value="disabled">disabled</option>
+          </SelectInput>
+          <TextInput
+            className="md:col-span-4"
+            placeholder="Display name"
+            value={catalogForm.displayName}
+            onChange={(e) => setCatalogForm((prev) => ({ ...prev, displayName: e.target.value }))}
+          />
+          <TextInput
+            className="font-mono md:col-span-5"
+            placeholder="modelRef"
+            value={catalogForm.modelRef}
+            onChange={(e) => setCatalogForm((prev) => ({ ...prev, modelRef: e.target.value }))}
+          />
+          <TextInput
+            className="md:col-span-1"
+            placeholder="cpu"
+            value={String(catalogForm.cpu)}
+            onChange={(e) => setCatalogForm((prev) => ({ ...prev, cpu: Number(e.target.value || 0) }))}
+          />
+          <TextInput
+            className="md:col-span-1"
+            placeholder="gpu"
+            value={String(catalogForm.gpu)}
+            onChange={(e) => setCatalogForm((prev) => ({ ...prev, gpu: Number(e.target.value || 0) }))}
+          />
+          <TextInput
+            className="md:col-span-1"
+            placeholder="vram"
+            value={String(catalogForm.vramMb)}
+            onChange={(e) => setCatalogForm((prev) => ({ ...prev, vramMb: Number(e.target.value || 0) }))}
+          />
+          <textarea
+            className="min-h-24 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200 md:col-span-2"
+            placeholder="defaults JSON"
+            value={catalogForm.defaults}
+            onChange={(e) => setCatalogForm((prev) => ({ ...prev, defaults: e.target.value }))}
+          />
+          <textarea
+            className="min-h-24 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200 md:col-span-2"
+            placeholder="outputs JSON"
+            value={catalogForm.outputs}
+            onChange={(e) => setCatalogForm((prev) => ({ ...prev, outputs: e.target.value }))}
+          />
+          <div className="flex gap-2 md:col-span-12">
+            <PrimaryButton type="submit" disabled={catalogSaving || !catalogForm.modelRef.trim() || !catalogForm.displayName.trim()}>
+              {catalogSaving ? "Saving..." : editingCatalogId ? "Update model" : "Create model"}
+            </PrimaryButton>
+            <PrimaryButton className="bg-slate-600 hover:bg-slate-500" type="button" onClick={() => resetCatalogForm()} disabled={catalogSaving}>
+              Clear
+            </PrimaryButton>
+          </div>
+        </form>
+        <div className="mb-3 grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1fr)_180px]">
+          <TextInput
+            placeholder="Buscar por display name, task o modelRef"
+            value={catalogSearch}
+            onChange={(e) => setCatalogSearch(e.target.value)}
+          />
+          <SelectInput
+            value={catalogProviderFilter}
+            onChange={(e) => setCatalogProviderFilter(e.target.value as "all" | DetectionProviderRuntime)}
+          >
+            <option value="all">all providers</option>
+            {DETECTION_PROVIDER_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </SelectInput>
         </div>
         <DataTable>
           <thead className="bg-slate-50 text-slate-600">
@@ -2278,10 +2989,11 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
               <th className="px-3 py-2">Model</th>
               <th className="px-3 py-2">Status</th>
               <th className="px-3 py-2">Resources</th>
+              <th className="px-3 py-2">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {catalog.map((entry) => (
+            {filteredCatalog.map((entry) => (
               <tr key={entry.id}>
                 <td className="px-3 py-2">{entry.provider}</td>
                 <td className="px-3 py-2">{entry.taskType}</td>
@@ -2293,11 +3005,16 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
                   </Badge>
                 </td>
                 <td className="px-3 py-2 text-xs text-slate-600">{entry.resources.cpu ?? 0} CPU / {entry.resources.gpu ?? 0} GPU</td>
+                <td className="px-3 py-2">
+                  <PrimaryButton className="px-2 py-1 text-xs" type="button" onClick={() => startEditingCatalog(entry)}>
+                    Edit
+                  </PrimaryButton>
+                </td>
               </tr>
             ))}
-            {catalog.length === 0 ? (
+            {filteredCatalog.length === 0 ? (
               <tr>
-                <td className="px-3 py-6 text-center text-sm text-slate-500" colSpan={6}>
+                <td className="px-3 py-6 text-center text-sm text-slate-500" colSpan={7}>
                   No hay modelos en catálogo todavía.
                 </td>
               </tr>
@@ -2312,6 +3029,9 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
 function CameraShow() {
   const { id } = useParams();
   const canEdit = useCan({ resource: "cameras", action: "edit" }).data?.can;
+  const effectiveRole = getEffectiveRoleFromStorage();
+  const canManageDetectionProfile = effectiveRole === "tenant_admin" || effectiveRole === "super_admin";
+  const canManageFaceIdentity = effectiveRole === "tenant_admin" || effectiveRole === "super_admin" || effectiveRole === "monitor";
   const [camera, setCamera] = useState<any>(null);
   const [loadingCamera, setLoadingCamera] = useState(true);
   const [profile, setProfile] = useState<any>(null);
@@ -2328,6 +3048,15 @@ function CameraShow() {
   const [detectionSaved, setDetectionSaved] = useState(false);
   const [validationMessage, setValidationMessage] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<ModelCatalogEntry[]>([]);
+  const [faces, setFaces] = useState<FaceDetectionItem[]>([]);
+  const [loadingFaces, setLoadingFaces] = useState(true);
+  const [selectedFaceId, setSelectedFaceId] = useState<string | null>(null);
+  const [similarFaces, setSimilarFaces] = useState<FaceSimilaritySearchResult | null>(null);
+  const [loadingSimilarFaces, setLoadingSimilarFaces] = useState(false);
+  const [faceMessage, setFaceMessage] = useState<string | null>(null);
+  const [faceActionMessage, setFaceActionMessage] = useState<string | null>(null);
+  const [identityDraftName, setIdentityDraftName] = useState("");
+  const [faceActionLoading, setFaceActionLoading] = useState(false);
 
   function normalizeNotificationRule(raw: any) {
     const base = raw && typeof raw === "object" ? raw : {};
@@ -2434,6 +3163,161 @@ function CameraShow() {
     }
   }
 
+  async function loadFaces(preferredFaceId?: string) {
+    const cameraId = id;
+    if (!cameraId) return;
+    const token = getToken();
+    const tenantId = getTenantId();
+    if (!token || !tenantId) {
+      setActionError("Missing auth context");
+      return;
+    }
+    setLoadingFaces(true);
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL ?? "http://localhost:3001"}/cameras/${cameraId}/faces?_start=0&_end=12`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "X-Tenant-Id": tenantId
+        }
+      });
+      if (!res.ok) {
+        setActionError(await summarizeApiErrorResponse(res, "No se pudo cargar la galería de caras"));
+        return;
+      }
+      const body = (await res.json()) as { data?: FaceDetectionItem[] };
+      const nextFaces = body.data ?? [];
+      setFaces(nextFaces);
+      const nextSelectedFaceId =
+        (preferredFaceId && nextFaces.some((face) => face.id === preferredFaceId) ? preferredFaceId : null) ??
+        (selectedFaceId && nextFaces.some((face) => face.id === selectedFaceId) ? selectedFaceId : null) ??
+        nextFaces[0]?.id ??
+        null;
+      setSelectedFaceId(nextSelectedFaceId);
+      if (!nextSelectedFaceId) {
+        setSimilarFaces(null);
+        setFaceMessage("Todavía no hay caras almacenadas para esta cámara.");
+      } else if (nextFaces.length > 0) {
+        setFaceMessage(null);
+        await loadSimilarFaces(nextSelectedFaceId);
+      }
+    } finally {
+      setLoadingFaces(false);
+    }
+  }
+
+  async function loadSimilarFaces(faceId: string) {
+    const token = getToken();
+    const tenantId = getTenantId();
+    if (!token || !tenantId) {
+      setActionError("Missing auth context");
+      return;
+    }
+    setSelectedFaceId(faceId);
+    setLoadingSimilarFaces(true);
+    setFaceMessage(null);
+    try {
+      const res = await fetch(
+        `${import.meta.env.VITE_API_URL ?? "http://localhost:3001"}/faces/detections/${faceId}/similar?_start=0&_end=6&minSimilarity=0.7`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "X-Tenant-Id": tenantId
+          }
+        }
+      );
+      if (res.ok) {
+        const body = (await res.json()) as { data?: FaceSimilaritySearchResult };
+        setSimilarFaces(body.data ?? null);
+        if ((body.data?.matches ?? []).length === 0) {
+          setFaceMessage("No encontramos otras caras suficientemente parecidas para esta muestra.");
+        }
+        return;
+      }
+      if (res.status === 409) {
+        setSimilarFaces(null);
+        setFaceMessage("La cara seleccionada todavía no tiene embedding persistido para buscar similitudes.");
+        return;
+      }
+      setActionError(await summarizeApiErrorResponse(res, "No se pudo buscar caras similares"));
+    } finally {
+      setLoadingSimilarFaces(false);
+    }
+  }
+
+  async function confirmSelectedClusterIdentity(payload: { identityId?: string; displayName?: string }) {
+    const token = getToken();
+    const tenantId = getTenantId();
+    const selectedFace = faces.find((face) => face.id === selectedFaceId);
+    const clusterId = selectedFace?.cluster?.id;
+    if (!token || !tenantId || !clusterId) {
+      setActionError("No hay un cluster disponible para confirmar");
+      return;
+    }
+    setFaceActionLoading(true);
+    setActionError(null);
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL ?? "http://localhost:3001"}/faces/clusters/${clusterId}/confirm-identity`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          "X-Tenant-Id": tenantId
+        },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        setActionError(await summarizeApiErrorResponse(res, "No se pudo confirmar la identidad"));
+        return;
+      }
+      const body = (await res.json()) as { data?: { displayName?: string | null; id: string; memberCount?: number } };
+      setFaceActionMessage(
+        `Identidad confirmada: ${body.data?.displayName ?? body.data?.id} (${body.data?.memberCount ?? 0} caras asociadas)`
+      );
+      setIdentityDraftName(body.data?.displayName ?? "");
+      await loadFaces(selectedFaceId ?? undefined);
+    } finally {
+      setFaceActionLoading(false);
+    }
+  }
+
+  async function mergeSelectedIdentityInto(targetIdentityId: string) {
+    const token = getToken();
+    const tenantId = getTenantId();
+    const selectedFace = faces.find((face) => face.id === selectedFaceId);
+    const sourceIdentityId = selectedFace?.identity?.id;
+    if (!token || !tenantId || !sourceIdentityId) {
+      setActionError("No hay una identidad origen disponible para merge");
+      return;
+    }
+    setFaceActionLoading(true);
+    setActionError(null);
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL ?? "http://localhost:3001"}/faces/identities/${targetIdentityId}/merge`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          "X-Tenant-Id": tenantId
+        },
+        body: JSON.stringify({
+          sourceIdentityId,
+          reason: "merge_requested_from_camera_investigation"
+        })
+      });
+      if (!res.ok) {
+        setActionError(await summarizeApiErrorResponse(res, "No se pudo mergear la identidad"));
+        return;
+      }
+      const body = (await res.json()) as { data?: { displayName?: string | null; id: string; memberCount?: number } };
+      setFaceActionMessage(
+        `Merge aplicado hacia ${body.data?.displayName ?? body.data?.id} (${body.data?.memberCount ?? 0} caras totales)`
+      );
+      await loadFaces(selectedFaceId ?? undefined);
+    } finally {
+      setFaceActionLoading(false);
+    }
+  }
+
   async function loadCamera() {
     const cameraId = id;
     if (!cameraId) return;
@@ -2492,6 +3376,7 @@ function CameraShow() {
     void loadDetectionProfile();
     void loadDetectionTopology();
     void loadModelCatalog();
+    void loadFaces();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -2529,6 +3414,25 @@ function CameraShow() {
   }, [id]);
 
   if (loadingCamera || !camera) return <div className="p-4">Loading...</div>;
+
+  const audiencePipelines = topology?.pipelines ?? [];
+  const audienceRisks = topology ? summarizeTopologyRisks(topology) : [];
+  const audienceOperationalPipelines = audiencePipelines.filter((pipeline) => pipeline.enabled && pipeline.assignment.status === "assigned").length;
+  const audienceCoverageLabel =
+    topology && topology.summary.enabledPipelines > 0
+      ? `${audienceOperationalPipelines}/${topology.summary.enabledPipelines} activos`
+      : "Sin pipelines activos";
+  const audienceDetections = Array.from(new Set(audiencePipelines.filter((pipeline) => pipeline.enabled).map((pipeline) => formatDetectionTask(pipeline.taskType))));
+  const selectedFace = faces.find((face) => face.id === selectedFaceId) ?? null;
+  const selectedIdentity = selectedFace?.identity ?? null;
+  const selectedCluster = selectedFace?.cluster ?? null;
+  const suggestedIdentityCandidates = Array.from(
+    new Map(
+      (similarFaces?.matches ?? [])
+        .filter((match) => match.face.identity && match.face.identity.id !== selectedIdentity?.id)
+        .map((match) => [match.face.identity!.id, match.face.identity!])
+    ).values()
+  );
 
   async function saveProfile(e: FormEvent) {
     e.preventDefault();
@@ -2707,6 +3611,110 @@ function CameraShow() {
         </div>
         <div>Created: {new Date(camera.createdAt).toLocaleString()}</div>
       </div>
+      {topology ? (
+        <Surface className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Client Summary</div>
+              <div className="text-lg font-semibold text-slate-900">Estado funcional de la cámara</div>
+              <div className="text-sm text-slate-600">
+                {audienceDetections.length > 0 ? `Detecta ${audienceDetections.join(", ")}.` : "Todavía no hay detecciones activas configuradas."}
+              </div>
+            </div>
+            <Badge className={getAudienceToneClasses(topology.runnable && topology.inSync ? "good" : topology.valid ? "warn" : "bad")}>
+              {topology.runnable && topology.inSync ? "Servicio listo" : topology.valid ? "Servicio con atención" : "Servicio incompleto"}
+            </Badge>
+          </div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+            <Surface className="border border-slate-200 bg-slate-50">
+              <div className="text-xs uppercase tracking-wide text-slate-500">Cobertura</div>
+              <div className="mt-1 text-2xl font-semibold text-slate-900">{audienceCoverageLabel}</div>
+              <div className="text-xs text-slate-500">Pipelines habilitados con asignación efectiva</div>
+            </Surface>
+            <Surface className="border border-slate-200 bg-slate-50">
+              <div className="text-xs uppercase tracking-wide text-slate-500">Calidad dominante</div>
+              <div className="mt-1 text-2xl font-semibold text-slate-900">
+                {topology.pipelines.find((pipeline) => pipeline.enabled)?.quality
+                  ? formatDetectionQuality(topology.pipelines.find((pipeline) => pipeline.enabled)!.quality)
+                  : "-"}
+              </div>
+              <div className="text-xs text-slate-500">Nivel configurado para el primer pipeline activo</div>
+            </Surface>
+            <Surface className="border border-slate-200 bg-slate-50">
+              <div className="text-xs uppercase tracking-wide text-slate-500">Nodos candidatos</div>
+              <div className="mt-1 text-2xl font-semibold text-slate-900">{topology.summary.activeCandidateNodes}</div>
+              <div className="text-xs text-slate-500">Capacidad disponible hoy para esta cámara</div>
+            </Surface>
+            <Surface className="border border-slate-200 bg-slate-50">
+              <div className="text-xs uppercase tracking-wide text-slate-500">Riesgos</div>
+              <div className="mt-1 text-2xl font-semibold text-slate-900">{audienceRisks.length}</div>
+              <div className="text-xs text-slate-500">Desvíos o degradaciones que requieren seguimiento</div>
+            </Surface>
+          </div>
+          {audienceRisks.length > 0 ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              Atención: {audienceRisks.join("; ")}.
+            </div>
+          ) : (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+              La cámara tiene una configuración consistente y con capacidad disponible para los pipelines habilitados.
+            </div>
+          )}
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+            {audiencePipelines.map((pipeline) => {
+              const audienceState = describePipelineAudienceState(pipeline);
+              return (
+                <Surface key={`audience-${pipeline.pipelineId}`} className={`border ${getAudienceToneClasses(audienceState.tone)}`}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">{formatDetectionTask(pipeline.taskType)}</div>
+                      <div className="text-xs text-slate-600">
+                        {pipeline.provider} · {formatDetectionQuality(pipeline.quality)} · {pipeline.pipelineId}
+                      </div>
+                    </div>
+                    <Badge className={getAudienceToneClasses(audienceState.tone)}>{audienceState.label}</Badge>
+                  </div>
+                  <div className="mt-2 text-sm text-slate-700">{audienceState.detail}</div>
+                  <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-600">
+                    {pipeline.resolvedModel ? <Badge>{pipeline.resolvedModel.displayName}</Badge> : <Badge>Sin modelo resuelto</Badge>}
+                    <Badge>{pipeline.candidates.length} candidatos</Badge>
+                    {pipeline.assignment.primaryNodeId ? <Badge>Primario: {pipeline.assignment.primaryNodeId}</Badge> : null}
+                  </div>
+                </Surface>
+              );
+            })}
+            {audiencePipelines.length === 0 ? (
+              <Surface className="border border-slate-200 bg-slate-50">
+                <div className="text-sm text-slate-600">Esta cámara todavía no tiene pipelines de detección definidos.</div>
+              </Surface>
+            ) : null}
+          </div>
+        </Surface>
+      ) : null}
+      {topology ? (
+        <Surface className="grid grid-cols-2 gap-3 md:grid-cols-5">
+          <div>
+            <div className="text-xs uppercase tracking-wide text-slate-500">Pipelines</div>
+            <div className="text-lg font-semibold">{topology.summary.totalPipelines}</div>
+          </div>
+          <div>
+            <div className="text-xs uppercase tracking-wide text-slate-500">Assigned</div>
+            <div className="text-lg font-semibold">{topology.summary.assignedPipelines}</div>
+          </div>
+          <div>
+            <div className="text-xs uppercase tracking-wide text-slate-500">Runnable</div>
+            <div className="text-lg font-semibold">{topology.summary.runnablePipelines}</div>
+          </div>
+          <div>
+            <div className="text-xs uppercase tracking-wide text-slate-500">Drifted</div>
+            <div className="text-lg font-semibold">{topology.summary.driftedPipelines}</div>
+          </div>
+          <div>
+            <div className="text-xs uppercase tracking-wide text-slate-500">Candidate Nodes</div>
+            <div className="text-lg font-semibold">{topology.summary.totalCandidateNodes}</div>
+          </div>
+        </Surface>
+      ) : null}
 
       <div className="divider">Lifecycle</div>
       {loadingLifecycle && <div className="text-sm opacity-70">Loading lifecycle...</div>}
@@ -2950,15 +3958,17 @@ function CameraShow() {
             <PrimaryButton className="px-2.5 py-1.5 text-xs" type="button" onClick={() => void loadDetectionProfile()}>
               Reload profile
             </PrimaryButton>
-            <PrimaryButton className="px-2.5 py-1.5 text-xs" type="button" onClick={() => void validateDetectionProfile()}>
-              Validate against nodes
-            </PrimaryButton>
-            {canEdit ? (
+            {canManageDetectionProfile ? (
+              <PrimaryButton className="px-2.5 py-1.5 text-xs" type="button" onClick={() => void validateDetectionProfile()}>
+                Validate against nodes
+              </PrimaryButton>
+            ) : null}
+            {canManageDetectionProfile ? (
               <PrimaryButton className="px-2.5 py-1.5 text-xs" type="submit">
                 Save detection profile
               </PrimaryButton>
             ) : null}
-            {canEdit ? (
+            {canManageDetectionProfile ? (
               <PrimaryButton
                 className="px-2.5 py-1.5 text-xs"
                 type="button"
@@ -2978,6 +3988,11 @@ function CameraShow() {
               </PrimaryButton>
             ) : null}
           </div>
+          {!canManageDetectionProfile ? (
+            <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+              Vista de solo lectura para el detection profile en este rol.
+            </div>
+          ) : null}
           {validationMessage ? <div className="text-sm text-emerald-700">{validationMessage}</div> : null}
           {detectionSaved ? <div className="text-sm text-emerald-700">Detection profile saved</div> : null}
           <div className="space-y-3">
@@ -3024,7 +4039,7 @@ function CameraShow() {
                   <div className="grid grid-cols-1 gap-2 md:grid-cols-6">
                     <TextInput
                       value={pipeline.pipelineId}
-                      disabled={!canEdit}
+                      disabled={!canManageDetectionProfile}
                       onChange={(e) =>
                         setDetectionProfile((prev) =>
                           prev
@@ -3040,7 +4055,7 @@ function CameraShow() {
                     />
                     <SelectInput
                       value={pipeline.provider}
-                      disabled={!canEdit}
+                      disabled={!canManageDetectionProfile}
                       onChange={(e) =>
                         setDetectionProfile((prev) =>
                           prev
@@ -3064,7 +4079,7 @@ function CameraShow() {
                     </SelectInput>
                     <SelectInput
                       value={pipeline.taskType}
-                      disabled={!canEdit}
+                      disabled={!canManageDetectionProfile}
                       onChange={(e) =>
                         setDetectionProfile((prev) =>
                           prev
@@ -3086,7 +4101,7 @@ function CameraShow() {
                     </SelectInput>
                     <SelectInput
                       value={pipeline.quality}
-                      disabled={!canEdit}
+                      disabled={!canManageDetectionProfile}
                       onChange={(e) =>
                         setDetectionProfile((prev) =>
                           prev
@@ -3108,7 +4123,7 @@ function CameraShow() {
                     </SelectInput>
                     <SelectInput
                       value={pipeline.schedule?.mode ?? "realtime"}
-                      disabled={!canEdit}
+                      disabled={!canManageDetectionProfile}
                       onChange={(e) =>
                         setDetectionProfile((prev) =>
                           prev
@@ -3135,7 +4150,7 @@ function CameraShow() {
                     </SelectInput>
                     <TextInput
                       value={String(pipeline.schedule?.frameStride ?? 1)}
-                      disabled={!canEdit}
+                      disabled={!canManageDetectionProfile}
                       onChange={(e) =>
                         setDetectionProfile((prev) =>
                           prev
@@ -3163,7 +4178,7 @@ function CameraShow() {
                       <input
                         type="checkbox"
                         checked={pipeline.enabled}
-                        disabled={!canEdit}
+                        disabled={!canManageDetectionProfile}
                         onChange={(e) =>
                           setDetectionProfile((prev) =>
                             prev
@@ -3182,7 +4197,7 @@ function CameraShow() {
                     <textarea
                       className="min-h-28 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
                       value={prettyJson(pipeline.thresholds)}
-                      disabled={!canEdit}
+                      disabled={!canManageDetectionProfile}
                       onChange={(e) =>
                         setDetectionProfile((prev) =>
                           prev
@@ -3199,7 +4214,7 @@ function CameraShow() {
                     <textarea
                       className="min-h-28 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
                       value={prettyJson(pipeline.outputs)}
-                      disabled={!canEdit}
+                      disabled={!canManageDetectionProfile}
                       onChange={(e) =>
                         setDetectionProfile((prev) =>
                           prev
@@ -3324,6 +4339,237 @@ function CameraShow() {
               </Surface>
             ))}
           </div>
+        </div>
+      )}
+
+      <div className="divider">Face Library</div>
+      {loadingFaces ? <div className="text-sm opacity-70">Loading faces...</div> : null}
+      {!loadingFaces && (
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+          <Surface className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="text-sm font-semibold text-slate-900">Caras almacenadas</div>
+                <div className="text-xs text-slate-500">Muestras recientes detectadas en esta cámara.</div>
+              </div>
+              <div className="flex gap-2">
+                <Badge>{faces.length} visibles</Badge>
+                <PrimaryButton className="px-2.5 py-1.5 text-xs" type="button" onClick={() => void loadFaces(selectedFaceId ?? undefined)}>
+                  Refresh faces
+                </PrimaryButton>
+              </div>
+            </div>
+            {faces.length === 0 ? (
+              <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                Todavía no hay caras almacenadas para esta cámara.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                {faces.map((face) => {
+                  const isSelected = face.id === selectedFaceId;
+                  return (
+                    <button
+                      key={face.id}
+                      type="button"
+                      className={`rounded-lg border px-4 py-3 text-left transition ${
+                        isSelected
+                          ? "border-slate-900 bg-slate-900 text-white"
+                          : "border-slate-200 bg-white text-slate-900 hover:border-slate-400"
+                      }`}
+                      onClick={() => void loadSimilarFaces(face.id)}
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="font-medium">{summarizeFaceLabel(face)}</div>
+                        {face.identity ? (
+                          <Badge className={isSelected ? "border-white/30 bg-white/10 text-white" : ""}>
+                            {face.identity.displayName ?? face.identity.id}
+                          </Badge>
+                        ) : null}
+                      </div>
+                      <div className={`mt-2 text-xs ${isSelected ? "text-slate-200" : "text-slate-500"}`}>
+                        {new Date(face.frameTs).toLocaleString()}
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                        {face.embedding?.dimensions ? (
+                          <Badge className={isSelected ? "border-white/30 bg-white/10 text-white" : ""}>
+                            embedding {face.embedding.dimensions}d
+                          </Badge>
+                        ) : (
+                          <Badge className={isSelected ? "border-white/30 bg-white/10 text-white" : ""}>sin embedding</Badge>
+                        )}
+                        {face.cluster ? (
+                          <Badge className={isSelected ? "border-white/30 bg-white/10 text-white" : ""}>
+                            cluster {face.cluster.displayName ?? face.cluster.id.slice(0, 8)}
+                          </Badge>
+                        ) : null}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </Surface>
+
+          <Surface className="space-y-3">
+            <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-3">
+              <div className="text-sm font-semibold text-slate-900">Investigación facial</div>
+              <div className="mt-1 text-xs text-slate-500">
+                {selectedFace
+                  ? `Cara base: ${summarizeFaceLabel(selectedFace)}`
+                  : "Seleccioná una cara para ver cluster, identidad y acciones disponibles."}
+              </div>
+              {selectedFace ? (
+                <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm">
+                    <div className="text-xs uppercase tracking-wide text-slate-500">Cluster</div>
+                    <div className="mt-1 font-medium text-slate-900">
+                      {selectedCluster ? selectedCluster.displayName ?? selectedCluster.id : "Sin cluster"}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {selectedCluster ? `status ${selectedCluster.status}` : "Todavía no se agrupó con otras caras."}
+                    </div>
+                  </div>
+                  <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm">
+                    <div className="text-xs uppercase tracking-wide text-slate-500">Identidad actual</div>
+                    <div className="mt-1 font-medium text-slate-900">
+                      {selectedIdentity ? selectedIdentity.displayName ?? selectedIdentity.id : "Sin confirmar"}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {selectedIdentity ? `status ${selectedIdentity.status}` : "Podemos confirmarla o asociarla a una identidad existente."}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+              {faceActionMessage ? (
+                <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                  {faceActionMessage}
+                </div>
+              ) : null}
+              {canManageFaceIdentity && selectedCluster && !selectedIdentity ? (
+                <div className="mt-3 space-y-3">
+                  <div className="grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1fr)_auto]">
+                    <TextInput
+                      value={identityDraftName}
+                      placeholder="Nombre para la identidad"
+                      onChange={(e) => setIdentityDraftName(e.target.value)}
+                    />
+                    <PrimaryButton
+                      className="px-3 py-2 text-sm"
+                      type="button"
+                      disabled={faceActionLoading}
+                      onClick={() =>
+                        void confirmSelectedClusterIdentity({
+                          displayName: identityDraftName.trim() || undefined
+                        })
+                      }
+                    >
+                      Confirmar cluster
+                    </PrimaryButton>
+                  </div>
+                  {suggestedIdentityCandidates.length > 0 ? (
+                    <div className="space-y-2">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Asociar a identidad existente</div>
+                      <div className="flex flex-wrap gap-2">
+                        {suggestedIdentityCandidates.map((identity) => (
+                          <PrimaryButton
+                            key={identity.id}
+                            className="px-2.5 py-1.5 text-xs"
+                            type="button"
+                            disabled={faceActionLoading}
+                            onClick={() => void confirmSelectedClusterIdentity({ identityId: identity.id })}
+                          >
+                            Usar {identity.displayName ?? identity.id}
+                          </PrimaryButton>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+              {canManageFaceIdentity && selectedIdentity && suggestedIdentityCandidates.length > 0 ? (
+                <div className="mt-3 space-y-2">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Merges sugeridos</div>
+                  <div className="flex flex-wrap gap-2">
+                    {suggestedIdentityCandidates.map((identity) => (
+                      <PrimaryButton
+                        key={`merge-${identity.id}`}
+                        className="px-2.5 py-1.5 text-xs"
+                        type="button"
+                        disabled={faceActionLoading}
+                        onClick={() => void mergeSelectedIdentityInto(identity.id)}
+                      >
+                        Merge hacia {identity.displayName ?? identity.id}
+                      </PrimaryButton>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              {!canManageFaceIdentity ? (
+                <div className="mt-3 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
+                  Este rol puede investigar, pero no confirmar ni mergear identidades.
+                </div>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="text-sm font-semibold text-slate-900">Caras parecidas</div>
+                <div className="text-xs text-slate-500">
+                  Ranking por similitud de embedding para la cara seleccionada.
+                </div>
+              </div>
+              {selectedFaceId ? (
+                <PrimaryButton className="px-2.5 py-1.5 text-xs" type="button" onClick={() => void loadSimilarFaces(selectedFaceId)}>
+                  Refresh matches
+                </PrimaryButton>
+              ) : null}
+            </div>
+            {loadingSimilarFaces ? <div className="text-sm opacity-70">Buscando caras similares...</div> : null}
+            {faceMessage ? (
+              <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">{faceMessage}</div>
+            ) : null}
+            {!loadingSimilarFaces && similarFaces && similarFaces.matches.length > 0 ? (
+              <div className="space-y-3">
+                {similarFaces.matches.map((match) => (
+                  <Surface key={match.face.id} className="border border-slate-200 bg-slate-50">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="font-medium text-slate-900">{summarizeFaceLabel(match.face)}</div>
+                      <Badge>{(match.similarityScore * 100).toFixed(1)}%</Badge>
+                    </div>
+                    <div className="mt-2 text-xs text-slate-500">{new Date(match.face.frameTs).toLocaleString()}</div>
+                    <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                      <Badge>{match.sameCamera ? "misma cámara" : "otra cámara"}</Badge>
+                      {match.face.identity ? <Badge>{match.face.identity.displayName ?? match.face.identity.id}</Badge> : null}
+                      {match.face.cluster ? <Badge>{match.face.cluster.displayName ?? match.face.cluster.id.slice(0, 8)}</Badge> : null}
+                    </div>
+                    {canManageFaceIdentity && !selectedIdentity && match.face.identity ? (
+                      <div className="mt-3">
+                        <PrimaryButton
+                          className="px-2.5 py-1.5 text-xs"
+                          type="button"
+                          disabled={faceActionLoading}
+                          onClick={() => void confirmSelectedClusterIdentity({ identityId: match.face.identity!.id })}
+                        >
+                          Asociar cluster a {match.face.identity.displayName ?? match.face.identity.id}
+                        </PrimaryButton>
+                      </div>
+                    ) : null}
+                    {canManageFaceIdentity && selectedIdentity && match.face.identity && match.face.identity.id !== selectedIdentity.id ? (
+                      <div className="mt-3">
+                        <PrimaryButton
+                          className="px-2.5 py-1.5 text-xs"
+                          type="button"
+                          disabled={faceActionLoading}
+                          onClick={() => void mergeSelectedIdentityInto(match.face.identity!.id)}
+                        >
+                          Merge hacia {match.face.identity.displayName ?? match.face.identity.id}
+                        </PrimaryButton>
+                      </div>
+                    ) : null}
+                  </Surface>
+                ))}
+              </div>
+            ) : null}
+          </Surface>
         </div>
       )}
     </PageCard>
