@@ -25,6 +25,9 @@ ansible-galaxy collection install -r ansible/requirements.yml
 - `vault_manage_device`: por defecto `false` (no formatea disco).
 - `vault_device`, `vault_mount_point`, `vault_fs_type`.
 - `nfs_server`, `nfs_export_path`, `onprem_vault_remote_path`.
+- `detection_deploy_api_url`, `detection_deploy_admin_email`, `detection_deploy_admin_password`: credenciales para exportar nodos generados desde control-plane.
+- `detection_stack_sync_command`: comando base para `POST /ops/nodes/stack-sync-detection` desde `api`.
+- `detection_stack_sync_timeout_ms`, `detection_stack_sync_max_retries`, `detection_stack_sync_retry_delay_ms`: hardening del loop de stack sync (timeout/reintentos).
 
 ## Uso
 1. Editar inventario:
@@ -41,6 +44,14 @@ ansible/group_vars/all.yml
 ```bash
 ansible-playbook -i ansible/inventory/lab/hosts.yml ansible/playbooks/deploy.yml
 ```
+
+El role `nearhome_stack` ahora ejecuta sincronización de detección antes del deploy final:
+- arranque base sin nodos estáticos
+- export de `infra/docker-compose.detection.generated.yml`
+- re-aplicación del stack con nodos generados
+
+El role `smoke_checks` también valida la conexión `admin/api` para stack sync:
+- `pnpm pilot:smoke:stack-sync-api` (default `dry-run`)
 
 4. Smoke separado:
 ```bash

@@ -7,6 +7,12 @@
       /tmp/provision_cam2.json /tmp/event_publish.json /tmp/event_replay.txt \
       /tmp/yolo.json /tmp/mediapipe.json /tmp/dispatcher.json /tmp/temporal_ui.html
     pnpm pilot:smoke
+    DETECTION_DEPLOY_ADMIN_PASSWORD="${DETECTION_DEPLOY_ADMIN_PASSWORD:-{{ detection_deploy_admin_password }}}" \
+      pnpm pilot:smoke:detection-sync
+    DETECTION_DEPLOY_ADMIN_PASSWORD="${DETECTION_DEPLOY_ADMIN_PASSWORD:-{{ detection_deploy_admin_password }}}" \
+    STACK_SYNC_MODE=onprem \
+    STACK_SYNC_DRY_RUN=1 \
+      pnpm pilot:smoke:stack-sync-api
   args:
     chdir: "{{ nearhome_project_dir }}"
     executable: /bin/bash

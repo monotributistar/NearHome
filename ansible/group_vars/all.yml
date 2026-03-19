@@ -44,3 +44,12 @@ stream_retention_target_disk_pct: 75
 nearhome_bootstrap_repo: false
 nearhome_run_dependency_install: true
 nearhome_run_smoke_after_deploy: true
+
+# Detection deployment export
+detection_deploy_api_url: http://127.0.0.1:3001
+detection_deploy_admin_email: admin@nearhome.dev
+detection_deploy_admin_password: demo1234
+detection_stack_sync_command: bash scripts/pilot/stack-sync-detection.sh
+detection_stack_sync_timeout_ms: 600000
+detection_stack_sync_max_retries: 0
+detection_stack_sync_retry_delay_ms: 2000

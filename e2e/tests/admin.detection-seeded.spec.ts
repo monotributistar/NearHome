@@ -94,6 +94,32 @@ test("NH-DP-UI-04 admin can apply seeded node config from operations", async ({ 
   await expect(page.getByText("in sync")).toBeVisible();
 });
 
+test("NH-DP-UI-04B admin can export the deploy bundle from operations", async ({ page }) => {
+  await loginAsBackoffice(page, "admin@nearhome.dev");
+  await selectTenantByName(page, seedAdminBrowser.tenantName);
+
+  await page.locator(`a[href="${seedAdminBrowser.routes.nodes}"]`).click();
+  await expect(page.getByRole("heading", { name: "Detection Nodes" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Export bundle on server" }).click();
+  await expect(page.getByText("Bundle exportado en")).toBeVisible();
+  await expect(page.getByRole("code").filter({ hasText: "docker-compose.detection.generated.yml" })).toBeVisible();
+});
+
+test("NH-DP-UI-04C admin can trigger a dry-run stack sync from operations", async ({ page }) => {
+  await loginAsBackoffice(page, "admin@nearhome.dev");
+  await selectTenantByName(page, seedAdminBrowser.tenantName);
+
+  await page.locator(`a[href="${seedAdminBrowser.routes.nodes}"]`).click();
+  await expect(page.getByRole("heading", { name: "Detection Nodes" })).toBeVisible();
+
+  await page.getByRole("combobox").filter({ has: page.locator('option[value="onprem-remote"]') }).selectOption("onprem-remote");
+  await page.getByRole("combobox").filter({ has: page.locator('option[value="tunnel"]') }).selectOption("tunnel");
+  await page.getByRole("button", { name: "Dry-run sync" }).click();
+  await expect(page.getByText("Stack sync validado en dry-run para onprem-remote (tunnel)")).toBeVisible();
+  await expect(page.locator("textarea").filter({ hasText: "dry-run bash scripts/pilot/stack-sync-detection.sh onprem-remote tunnel" })).toBeVisible();
+});
+
 test("NH-DP-UI-05 client role keeps simplified navigation and sees detection detail as read-only", async ({ page }) => {
   await loginAsBackoffice(page, "admin@nearhome.dev");
   await page.getByRole("combobox").nth(1).selectOption("client_user");
@@ -132,4 +158,21 @@ test("NH-DP-UI-06 admin can investigate faces, associate a cluster and merge ide
   await expect(page.getByText("Identidad actual").locator("..").getByText(seedAdminBrowser.identityNames.mergeSource)).toBeVisible();
   await page.getByRole("button", { name: `Merge hacia ${seedAdminBrowser.identityNames.mergeTarget}` }).first().click();
   await expect(page.getByText(`Merge aplicado hacia ${seedAdminBrowser.identityNames.mergeTarget}`)).toBeVisible();
+});
+
+test("NH-DP-UI-07 admin can review facial identities as cases", async ({ page }) => {
+  await loginAsBackoffice(page, "admin@nearhome.dev");
+  await selectTenantByName(page, seedAdminBrowser.tenantName);
+
+  await page.locator(`a[href="${seedAdminBrowser.routes.faceCases}"]`).click();
+  await expect(page.getByRole("heading", { name: "Identidades Faciales" })).toBeVisible();
+  await expect(page.getByText(seedAdminBrowser.identityNames.maria)).toBeVisible();
+
+  await page.getByPlaceholder("Buscar por identidad o cámara").fill(seedAdminBrowser.identityNames.maria);
+  await page.getByRole("link", { name: "Ver caso" }).click();
+
+  await expect(page.getByRole("heading", { name: new RegExp(`Caso Facial: ${seedAdminBrowser.identityNames.maria}`) })).toBeVisible();
+  await expect(page.getByText("Historial por cámara")).toBeVisible();
+  await expect(page.getByText("Historial de merges")).toBeVisible();
+  await expect(page.getByText(seedAdminBrowser.cameraNames.ready)).toBeVisible();
 });

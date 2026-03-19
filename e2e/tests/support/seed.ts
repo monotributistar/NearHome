@@ -24,6 +24,7 @@ export const seedAdminBrowser = {
   },
   routes: {
     clientOverview: "/resources/client-overview",
+    faceCases: "/resources/faces",
     nodes: "/operations/nodes"
   }
 } as const;

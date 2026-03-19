@@ -10,6 +10,8 @@ MEDIAPIPE_URL="${MEDIAPIPE_URL:-http://localhost:8092}"
 DISPATCHER_URL="${DISPATCHER_URL:-http://localhost:8072}"
 TEMPORAL_UI_URL="${TEMPORAL_UI_URL:-http://localhost:8088}"
 EVENT_PUBLISH_SECRET="${EVENT_PUBLISH_SECRET:-dev-event-publish-secret}"
+SMOKE_HEALTH_RETRIES="${SMOKE_HEALTH_RETRIES:-15}"
+SMOKE_HEALTH_SLEEP_S="${SMOKE_HEALTH_SLEEP_S:-2}"
 
 TENANT_ID="${SMOKE_TENANT_ID:-tenant-a}"
 CAM1="${SMOKE_CAMERA_1:-pilot-virtual-1}"
@@ -19,7 +21,27 @@ check_health() {
   local name="$1"
   local url="$2"
   echo "Checking $name -> $url"
-  curl -fsS "$url" >/tmp/"$name".json
+  local attempt=1
+  while true; do
+    if curl -fsS "$url" >/tmp/"$name".json; then
+      return 0
+    fi
+    if [[ "$attempt" -ge "$SMOKE_HEALTH_RETRIES" ]]; then
+      echo "Health check failed for $name after $SMOKE_HEALTH_RETRIES attempts" >&2
+      return 1
+    fi
+    attempt=$((attempt + 1))
+    sleep "$SMOKE_HEALTH_SLEEP_S"
+  done
+}
+
+check_health_optional() {
+  local name="$1"
+  local url="$2"
+  if check_health "$name" "$url"; then
+    return 0
+  fi
+  return 1
 }
 
 echo "== Control plane =="
@@ -50,8 +72,23 @@ rg -q "incident.created" /tmp/event_replay.txt
 
 echo "== Detection plane =="
 check_health bridge "$BRIDGE_URL/health"
-check_health yolo "$YOLO_URL/health"
-check_health mediapipe "$MEDIAPIPE_URL/health"
+if ! check_health_optional yolo "$YOLO_URL/health" || ! check_health_optional mediapipe "$MEDIAPIPE_URL/health"; then
+  BRIDGE_NODES_JSON="$(curl -fsS "$BRIDGE_URL/v1/nodes")"
+  ONLINE_NODE_COUNT="$(
+    node -e '
+      const body = JSON.parse(process.argv[1] || "{}");
+      const rows = Array.isArray(body.data) ? body.data : [];
+      const count = rows.filter((row) => row && (row.status === "online" || row.status === "degraded")).length;
+      process.stdout.write(String(count));
+    ' "$BRIDGE_NODES_JSON"
+  )"
+  if [[ "$ONLINE_NODE_COUNT" -gt 0 ]]; then
+    echo "Static node health endpoints unavailable; continuing with generated detection nodes ($ONLINE_NODE_COUNT online)"
+  else
+    echo "No static node health and no generated online nodes in bridge" >&2
+    exit 1
+  fi
+fi
 check_health dispatcher "$DISPATCHER_URL/health"
 curl -fsS "$TEMPORAL_UI_URL" >/tmp/temporal_ui.html
 

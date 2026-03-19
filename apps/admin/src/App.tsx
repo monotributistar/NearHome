@@ -38,8 +38,10 @@ const ADMIN_ROUTES = {
   },
   resources: {
     clientOverview: "/resources/client-overview",
+    faceCases: "/resources/faces",
     cameras: "/resources/cameras",
     cameraDetail: (id: string) => `/resources/cameras/${id}`,
+    faceCaseDetail: (id: string) => `/resources/faces/${id}`,
     notifications: "/resources/notifications"
   },
   identity: {
@@ -153,6 +155,56 @@ type OpsNodeConfigEnvelope = {
   diff: OpsNodeConfigDiff | null;
   appliedAt?: string;
   syncedBridgeTenantAssignments?: boolean;
+};
+
+type OpsNodeDeployDefinition = {
+  nodeId: string;
+  source: "desired" | "observed";
+  runtime: string;
+  serviceName: string;
+  deploymentContractVersion: string;
+  imageHint: string;
+  build: {
+    context: string;
+    dockerfile: string;
+  };
+  env: Record<string, string>;
+  ports: string[];
+  dependsOn: string[];
+  networks: string[];
+  warnings: string[];
+  composeService: Record<string, unknown>;
+};
+
+type OpsNodeDeployBundle = {
+  generatedAt: string;
+  nodeIds: string[];
+  warnings: Array<{ nodeId: string; message: string }>;
+  composeYaml: string;
+  definitions: OpsNodeDeployDefinition[];
+  export?: {
+    path: string;
+    bytes: number;
+    nodeCount: number;
+    warningCount: number;
+    generatedAt: string;
+  };
+};
+
+type DetectionStackSyncState = {
+  status: "idle" | "running" | "succeeded" | "failed";
+  mode: "onprem" | "onprem-remote";
+  profile: string | null;
+  attempt: number | null;
+  maxAttempts: number;
+  timeoutMs: number;
+  retryDelayMs: number;
+  startedAt: string | null;
+  finishedAt: string | null;
+  exitCode: number | null;
+  command: string;
+  logTail: string[];
+  errorMessage: string | null;
 };
 
 type DetectionProviderRuntime = "yolo" | "mediapipe";
@@ -335,6 +387,40 @@ type FaceSimilaritySearchResult = {
   tenantId: string;
   total: number;
   matches: FaceSimilarityMatch[];
+};
+
+type FaceIdentitySummary = {
+  id: string;
+  tenantId: string;
+  displayName?: string | null;
+  status: string;
+  mergedIntoIdentityId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  memberCount: number;
+  latestSeenAt?: string | null;
+  cameras: Array<{ cameraId: string; cameraName: string; sightings: number }>;
+  faces?: FaceDetectionItem[];
+};
+
+type FaceIdentityDetail = FaceIdentitySummary & {
+  appearances: Array<{
+    cameraId: string;
+    cameraName: string;
+    firstSeenAt: string;
+    lastSeenAt: string;
+    sightings: number;
+  }>;
+  mergeHistory: Array<{
+    id: string;
+    sourceIdentityId: string;
+    sourceDisplayName?: string | null;
+    targetIdentityId: string;
+    targetDisplayName?: string | null;
+    reason?: string | null;
+    createdAt: string;
+  }>;
+  faces: FaceDetectionItem[];
 };
 
 type CameraMonitorItem = {
@@ -530,6 +616,10 @@ function summarizeFaceLabel(face: FaceDetectionItem) {
   const cropKey = face.cropStorageKey?.split("/").pop();
   if (cropKey) return cropKey;
   return `face-${face.id.slice(0, 8)}`;
+}
+
+function formatFaceIdentityName(identity: { id: string; displayName?: string | null }) {
+  return identity.displayName?.trim() || identity.id;
 }
 
 function summarizeTopologyRisks(topology: DetectionTopology) {
@@ -745,6 +835,7 @@ function Layout({ apiUrl }: { apiUrl: string }) {
           title: "Seguimiento",
           items: [
             { to: ADMIN_ROUTES.resources.clientOverview, label: "Resumen Cliente", icon: <HomeAlt width={16} height={16} /> },
+            { to: ADMIN_ROUTES.resources.faceCases, label: "Identidades", icon: <User width={16} height={16} /> },
             { to: ADMIN_ROUTES.resources.cameras, label: "Cámaras", icon: <Camera width={16} height={16} /> },
             { to: ADMIN_ROUTES.resources.notifications, label: "Notificaciones", icon: <BellNotification width={16} height={16} /> }
           ]
@@ -764,6 +855,7 @@ function Layout({ apiUrl }: { apiUrl: string }) {
           title: "Recursos",
           items: [
             { to: ADMIN_ROUTES.resources.clientOverview, label: "Resumen Cliente", icon: <HomeAlt width={16} height={16} /> },
+            { to: ADMIN_ROUTES.resources.faceCases, label: "Identidades", icon: <User width={16} height={16} /> },
             { to: ADMIN_ROUTES.resources.cameras, label: "Cámaras", icon: <Camera width={16} height={16} /> },
             { to: ADMIN_ROUTES.resources.notifications, label: "Notificaciones", icon: <BellNotification width={16} height={16} /> }
           ]
@@ -846,8 +938,10 @@ function Layout({ apiUrl }: { apiUrl: string }) {
         <Route path={ADMIN_ROUTES.operations.realtime} element={<RealtimePage apiUrl={apiUrl} />} />
 
         <Route path={ADMIN_ROUTES.resources.clientOverview} element={<ClientOverviewPage apiUrl={apiUrl} />} />
+        <Route path={ADMIN_ROUTES.resources.faceCases} element={<FaceInvestigationsPage apiUrl={apiUrl} />} />
         <Route path={ADMIN_ROUTES.resources.cameras} element={<CamerasPage />} />
         <Route path="/resources/cameras/:id" element={<CameraShow />} />
+        <Route path="/resources/faces/:id" element={<FaceIdentityShow />} />
         <Route path={ADMIN_ROUTES.resources.notifications} element={<NotificationsPage apiUrl={apiUrl} />} />
 
         <Route path={ADMIN_ROUTES.identity.tenants} element={<TenantsPage />} />
@@ -863,6 +957,7 @@ function Layout({ apiUrl }: { apiUrl: string }) {
         <Route path="/nodes" element={<Navigate to={ADMIN_ROUTES.operations.nodes} replace />} />
         <Route path="/realtime" element={<Navigate to={ADMIN_ROUTES.operations.realtime} replace />} />
         <Route path="/client-overview" element={<Navigate to={ADMIN_ROUTES.resources.clientOverview} replace />} />
+        <Route path="/faces" element={<Navigate to={ADMIN_ROUTES.resources.faceCases} replace />} />
         <Route path="/cameras" element={<Navigate to={ADMIN_ROUTES.resources.cameras} replace />} />
         <Route path="/cameras/:id" element={<LegacyCameraDetailRedirect />} />
         <Route path="/notifications" element={<Navigate to={ADMIN_ROUTES.resources.notifications} replace />} />
@@ -2110,6 +2205,9 @@ function CamerasPage() {
 function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
   const [nodes, setNodes] = useState<OpsNodeSnapshot[]>([]);
   const [nodeConfig, setNodeConfig] = useState<OpsNodeConfigEnvelope | null>(null);
+  const [deployDefinition, setDeployDefinition] = useState<OpsNodeDeployDefinition | null>(null);
+  const [deployBundle, setDeployBundle] = useState<OpsNodeDeployBundle | null>(null);
+  const [stackSyncState, setStackSyncState] = useState<DetectionStackSyncState | null>(null);
   const [catalog, setCatalog] = useState<ModelCatalogEntry[]>([]);
   const [tenantOptions, setTenantOptions] = useState<Array<{ id: string; name: string }>>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string>("");
@@ -2118,6 +2216,11 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
   const [statusFilter, setStatusFilter] = useState<"all" | "online" | "degraded" | "offline">("all");
   const [loading, setLoading] = useState(true);
   const [loadingNodeConfig, setLoadingNodeConfig] = useState(false);
+  const [loadingDeployDefinition, setLoadingDeployDefinition] = useState(false);
+  const [loadingDeployBundle, setLoadingDeployBundle] = useState(false);
+  const [exportingDeployBundle, setExportingDeployBundle] = useState(false);
+  const [loadingStackSyncState, setLoadingStackSyncState] = useState(false);
+  const [startingStackSync, setStartingStackSync] = useState(false);
   const [saving, setSaving] = useState(false);
   const [catalogSaving, setCatalogSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -2127,6 +2230,13 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
   const [catalogSearch, setCatalogSearch] = useState("");
   const [catalogProviderFilter, setCatalogProviderFilter] = useState<"all" | DetectionProviderRuntime>("all");
   const [editingCatalogId, setEditingCatalogId] = useState<string | null>(null);
+  const [stackSyncForm, setStackSyncForm] = useState<{
+    mode: "onprem" | "onprem-remote";
+    profile: "default" | "tunnel" | "observability";
+  }>({
+    mode: "onprem",
+    profile: "default"
+  });
   const [form, setForm] = useState({
     nodeId: "",
     tenantScope: "*",
@@ -2195,10 +2305,57 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
       }),
     [catalog, catalogProviderFilter, catalogSearch]
   );
+  const faceCatalogEntries = useMemo(
+    () => catalog.filter((entry) => entry.taskType === "face_detection"),
+    [catalog]
+  );
+  const faceRuntimeRows = useMemo(
+    () =>
+      nodes
+        .map((node) => {
+          const observedCapabilities = node.capabilities ?? [];
+          const desiredCapabilities = nodeConfig?.desiredConfig?.nodeId === node.nodeId ? (nodeConfig.desiredConfig.capabilities ?? []) : [];
+          const observedSupportsFace = observedCapabilities.some((capability) => capability.taskTypes?.includes("face_detection"));
+          const desiredSupportsFace = desiredCapabilities.some((capability) => capability.taskTypes?.includes("face_detection"));
+          if (!observedSupportsFace && !desiredSupportsFace) return null;
+          const observedModelRefs = Array.from(
+            new Set(
+              observedCapabilities
+                .flatMap((capability) => capability.models ?? [])
+                .filter((value) => typeof value === "string" && value.length > 0)
+            )
+          );
+          const desiredModelRefs = Array.from(
+            new Set(desiredCapabilities.flatMap((capability) => capability.modelRefs ?? []).filter((value) => value.length > 0))
+          );
+          return {
+            nodeId: node.nodeId,
+            runtime: node.runtime,
+            status: node.status,
+            endpoint: node.endpoint,
+            tenantIds: node.assignedTenantIds ?? [],
+            desiredSupportsFace,
+            observedSupportsFace,
+            desiredModelRefs,
+            observedModelRefs,
+            inSync: nodeConfig?.nodeId === node.nodeId ? Boolean(nodeConfig.diff?.inSync) : undefined
+          };
+        })
+        .filter((entry) => entry !== null),
+    [nodeConfig, nodes]
+  );
 
   useEffect(() => {
     setAssignmentDraft(selectedNode?.assignedTenantIds ?? []);
   }, [selectedNodeId, selectedNode?.assignedTenantIds]);
+
+  useEffect(() => {
+    if (!selectedNodeId) {
+      setDeployDefinition(null);
+      return;
+    }
+    void loadDeployDefinition(selectedNodeId);
+  }, [selectedNodeId]);
 
   async function loadTenants() {
     const token = getToken();
@@ -2363,12 +2520,131 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
     }
   }
 
+  async function loadDeployDefinition(nodeId: string) {
+    const token = getToken();
+    if (!token) return;
+    setLoadingDeployDefinition(true);
+    try {
+      const res = await fetch(`${apiUrl}/ops/nodes/${encodeURIComponent(nodeId)}/deploy-definition`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error(`node deploy definition ${res.status}`);
+      const body = (await res.json()) as { data?: OpsNodeDeployDefinition };
+      setDeployDefinition(body.data ?? null);
+    } catch (loadError) {
+      setError(summarizeApiError(loadError, "No se pudo cargar la definición de despliegue"));
+    } finally {
+      setLoadingDeployDefinition(false);
+    }
+  }
+
+  async function loadDeployBundle(nodeIds?: string[]) {
+    const token = getToken();
+    if (!token) return;
+    setLoadingDeployBundle(true);
+    try {
+      const query = nodeIds && nodeIds.length > 0 ? `?nodeIds=${encodeURIComponent(nodeIds.join(","))}` : "";
+      const res = await fetch(`${apiUrl}/ops/nodes/deploy-bundle${query}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error(`node deploy bundle ${res.status}`);
+      const body = (await res.json()) as { data?: OpsNodeDeployBundle };
+      setDeployBundle(body.data ?? null);
+    } catch (loadError) {
+      setError(summarizeApiError(loadError, "No se pudo cargar el bundle de despliegue"));
+    } finally {
+      setLoadingDeployBundle(false);
+    }
+  }
+
+  async function exportDeployBundle(nodeIds?: string[]) {
+    const token = getToken();
+    if (!token) return;
+    setExportingDeployBundle(true);
+    setError(null);
+    setOk(null);
+    try {
+      const res = await fetch(`${apiUrl}/ops/nodes/deploy-bundle/export`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({ nodeIds: nodeIds && nodeIds.length > 0 ? nodeIds : undefined })
+      });
+      if (!res.ok) throw new Error(`node deploy bundle export ${res.status}`);
+      const body = (await res.json()) as { data?: OpsNodeDeployBundle };
+      setDeployBundle(body.data ?? null);
+      if (body.data?.export?.path) {
+        setOk(`Bundle exportado en ${body.data.export.path}`);
+      } else {
+        setOk("Bundle exportado");
+      }
+    } catch (exportError) {
+      setError(summarizeApiError(exportError, "No se pudo exportar el bundle de despliegue"));
+    } finally {
+      setExportingDeployBundle(false);
+    }
+  }
+
+  async function loadStackSyncState() {
+    const token = getToken();
+    if (!token) return;
+    setLoadingStackSyncState(true);
+    try {
+      const res = await fetch(`${apiUrl}/ops/nodes/stack-sync-detection`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error(`stack sync state ${res.status}`);
+      const body = (await res.json()) as { data?: DetectionStackSyncState };
+      setStackSyncState(body.data ?? null);
+    } catch (loadError) {
+      setError(summarizeApiError(loadError, "No se pudo cargar el estado de stack sync"));
+    } finally {
+      setLoadingStackSyncState(false);
+    }
+  }
+
+  async function triggerStackSync(dryRun: boolean) {
+    const token = getToken();
+    if (!token) return;
+    setStartingStackSync(true);
+    setError(null);
+    setOk(null);
+    try {
+      const res = await fetch(`${apiUrl}/ops/nodes/stack-sync-detection`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          mode: stackSyncForm.mode,
+          profile: stackSyncForm.profile === "default" ? undefined : stackSyncForm.profile,
+          dryRun
+        })
+      });
+      if (!res.ok) throw new Error(await summarizeApiErrorResponse(res, "No se pudo iniciar stack sync"));
+      const body = (await res.json()) as { data?: DetectionStackSyncState };
+      setStackSyncState(body.data ?? null);
+      const profileLabel = stackSyncForm.profile === "default" ? "" : ` (${stackSyncForm.profile})`;
+      setOk(dryRun ? `Stack sync validado en dry-run para ${stackSyncForm.mode}${profileLabel}` : `Stack sync iniciado para ${stackSyncForm.mode}${profileLabel}`);
+    } catch (startError) {
+      setError(summarizeApiError(startError, "No se pudo iniciar stack sync"));
+    } finally {
+      setStartingStackSync(false);
+    }
+  }
+
   useEffect(() => {
     void loadTenants();
     void loadCatalog();
     void loadNodes(true);
+    void loadDeployBundle();
+    void loadStackSyncState();
     const id = window.setInterval(() => {
       void loadNodes(true);
+      void loadStackSyncState();
     }, 15000);
     return () => window.clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2552,6 +2828,30 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
           <PrimaryButton className="px-2.5 py-1.5 text-xs" type="button" onClick={() => void loadNodes(false)} disabled={loading || saving}>
             Reload cache
           </PrimaryButton>
+          <PrimaryButton
+            className="px-2.5 py-1.5 text-xs"
+            type="button"
+            onClick={() => void loadDeployBundle(filteredNodes.map((node) => node.nodeId))}
+            disabled={loadingDeployBundle || saving}
+          >
+            {loadingDeployBundle ? "Refreshing bundle..." : "Refresh deploy bundle"}
+          </PrimaryButton>
+          <PrimaryButton
+            className="px-2.5 py-1.5 text-xs"
+            type="button"
+            onClick={() => void exportDeployBundle(filteredNodes.map((node) => node.nodeId))}
+            disabled={exportingDeployBundle || saving}
+          >
+            {exportingDeployBundle ? "Exporting bundle..." : "Export bundle on server"}
+          </PrimaryButton>
+          <PrimaryButton
+            className="px-2.5 py-1.5 text-xs"
+            type="button"
+            onClick={() => void loadStackSyncState()}
+            disabled={loadingStackSyncState || saving}
+          >
+            {loadingStackSyncState ? "Refreshing stack sync..." : "Refresh stack sync"}
+          </PrimaryButton>
           <Badge>total: {nodes.length}</Badge>
           <Badge>visible: {filteredNodes.length}</Badge>
         </div>
@@ -2734,6 +3034,187 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
         </form>
       </PageCard>
 
+      <PageCard title="Face Detection Contract">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+          <Surface className="space-y-3">
+            <div className="text-sm font-semibold text-slate-900">Contrato operativo para `face_detection`</div>
+            <div className="text-sm text-slate-600">
+              Esta vista resume qué modelos de rostro están declarados en catálogo y qué nodos los publican en runtime con su
+              configuración deseada y observada.
+            </div>
+            <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700">
+              Requisitos mínimos:
+              <div className="mt-2 font-mono text-xs text-slate-600">
+                provider=`yolo` · taskType=`face_detection` · outputs=`storeFaceCrops/storeEmbeddings`
+              </div>
+            </div>
+            <DataTable>
+              <thead className="bg-slate-50 text-slate-600">
+                <tr>
+                  <th className="px-3 py-2">Modelo</th>
+                  <th className="px-3 py-2">Quality</th>
+                  <th className="px-3 py-2">ModelRef</th>
+                  <th className="px-3 py-2">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {faceCatalogEntries.map((entry) => (
+                  <tr key={entry.id}>
+                    <td className="px-3 py-2">{entry.displayName}</td>
+                    <td className="px-3 py-2">{entry.quality}</td>
+                    <td className="px-3 py-2 font-mono text-xs text-slate-600">{entry.modelRef}</td>
+                    <td className="px-3 py-2">
+                      <Badge className={entry.status === "active" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}>
+                        {entry.status}
+                      </Badge>
+                    </td>
+                  </tr>
+                ))}
+                {faceCatalogEntries.length === 0 ? (
+                  <tr>
+                    <td className="px-3 py-6 text-center text-sm text-slate-500" colSpan={4}>
+                      No hay entradas de catálogo para `face_detection`.
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </DataTable>
+          </Surface>
+
+          <Surface className="space-y-3">
+            <div className="text-sm font-semibold text-slate-900">Nodos con soporte facial</div>
+            <div className="space-y-3">
+              {faceRuntimeRows.map((row) => (
+                <Surface key={row.nodeId} className="border border-slate-200 bg-slate-50">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="font-medium text-slate-900">{row.nodeId}</div>
+                      <div className="text-xs text-slate-500">{row.runtime} · {row.endpoint}</div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Badge>{row.status}</Badge>
+                      {row.inSync !== undefined ? (
+                        <Badge className={row.inSync ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}>
+                          {row.inSync ? "in sync" : "drift"}
+                        </Badge>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <div>
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Desired contract</div>
+                      <div className="mt-1 text-sm text-slate-700">{row.desiredSupportsFace ? "declared" : "not declared"}</div>
+                      <div className="mt-2 text-xs text-slate-500">{row.desiredModelRefs.join(", ") || "sin modelRefs deseados"}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Observed runtime</div>
+                      <div className="mt-1 text-sm text-slate-700">{row.observedSupportsFace ? "published" : "not published"}</div>
+                      <div className="mt-2 text-xs text-slate-500">{row.observedModelRefs.join(", ") || "sin modelos observados"}</div>
+                    </div>
+                  </div>
+                  <div className="mt-3 text-xs text-slate-500">Tenants: {row.tenantIds.join(", ") || "*"}</div>
+                </Surface>
+              ))}
+              {faceRuntimeRows.length === 0 ? (
+                <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                  No hay nodos con `face_detection` declarado u observado en este momento.
+                </div>
+              ) : null}
+            </div>
+          </Surface>
+        </div>
+      </PageCard>
+
+      <PageCard title="Detection Deploy Bundle">
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
+            <Badge>nodes: {deployBundle?.nodeIds.length ?? 0}</Badge>
+            <Badge>warnings: {deployBundle?.warnings.length ?? 0}</Badge>
+            <span>generated: {deployBundle?.generatedAt ? new Date(deployBundle.generatedAt).toLocaleString() : "-"}</span>
+          </div>
+          {deployBundle?.export ? (
+            <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+              export path: <code className="break-all">{deployBundle.export.path}</code> · bytes: {deployBundle.export.bytes} · nodes:{" "}
+              {deployBundle.export.nodeCount}
+            </div>
+          ) : null}
+          {deployBundle?.warnings && deployBundle.warnings.length > 0 ? (
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              {deployBundle.warnings.map((warning) => `${warning.nodeId}: ${warning.message}`).join(" | ")}
+            </div>
+          ) : null}
+          <textarea
+            className="min-h-[260px] w-full rounded-lg border border-slate-200 bg-slate-950 px-3 py-3 font-mono text-xs text-slate-100"
+            readOnly
+            value={deployBundle?.composeYaml ?? "services:\n  {}\n"}
+          />
+        </div>
+      </PageCard>
+
+      <PageCard title="Detection Stack Sync">
+        <div className="space-y-3">
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-[180px_180px_minmax(0,1fr)]">
+            <SelectInput
+              value={stackSyncForm.mode}
+              onChange={(e) => setStackSyncForm((prev) => ({ ...prev, mode: e.target.value as "onprem" | "onprem-remote" }))}
+            >
+              <option value="onprem">onprem</option>
+              <option value="onprem-remote">onprem-remote</option>
+            </SelectInput>
+            <SelectInput
+              value={stackSyncForm.profile}
+              onChange={(e) =>
+                setStackSyncForm((prev) => ({ ...prev, profile: e.target.value as "default" | "tunnel" | "observability" }))
+              }
+            >
+              <option value="default">default profile</option>
+              <option value="tunnel">tunnel</option>
+              <option value="observability">observability</option>
+            </SelectInput>
+            <div className="text-sm text-slate-600">Elegí el target operativo antes de disparar el sync.</div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <PrimaryButton
+              className="px-2.5 py-1.5 text-xs"
+              type="button"
+              onClick={() => void triggerStackSync(true)}
+              disabled={startingStackSync || stackSyncState?.status === "running"}
+            >
+              {startingStackSync ? "Starting..." : "Dry-run sync"}
+            </PrimaryButton>
+            <PrimaryButton
+              className="px-2.5 py-1.5 text-xs"
+              type="button"
+              onClick={() => void triggerStackSync(false)}
+              disabled={startingStackSync || stackSyncState?.status === "running"}
+            >
+              {startingStackSync ? "Starting..." : "Run sync"}
+            </PrimaryButton>
+            <Badge>{stackSyncState?.status ?? "idle"}</Badge>
+            <Badge>{stackSyncState?.mode ?? "onprem"}</Badge>
+            {stackSyncState?.profile ? <Badge>profile {stackSyncState.profile}</Badge> : null}
+            {stackSyncState?.attempt ? <Badge>attempt {stackSyncState.attempt}/{stackSyncState.maxAttempts}</Badge> : null}
+            {stackSyncState ? <Badge>timeout {stackSyncState.timeoutMs}ms</Badge> : null}
+            {stackSyncState && stackSyncState.exitCode !== null ? <Badge>exit {stackSyncState.exitCode}</Badge> : null}
+          </div>
+          <div className="text-sm text-slate-600">
+            started: {stackSyncState?.startedAt ? new Date(stackSyncState.startedAt).toLocaleString() : "-"} · finished:{" "}
+            {stackSyncState?.finishedAt ? new Date(stackSyncState.finishedAt).toLocaleString() : "-"}
+          </div>
+          <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+            command: <code className="break-all">{stackSyncState?.command ?? "bash scripts/pilot/stack-sync-detection.sh onprem"}</code>
+          </div>
+          {stackSyncState?.errorMessage ? (
+            <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{stackSyncState.errorMessage}</div>
+          ) : null}
+          <textarea
+            className="min-h-[180px] w-full rounded-lg border border-slate-200 bg-slate-950 px-3 py-3 font-mono text-xs text-slate-100"
+            readOnly
+            value={(stackSyncState?.logTail ?? []).join("\n")}
+          />
+        </div>
+      </PageCard>
+
       <PageCard title="Node Configuration Detail">
         {!selectedNode ? (
           <div className="text-sm text-slate-500">{loading ? "Loading..." : "Seleccioná un nodo para ver su configuración."}</div>
@@ -2760,6 +3241,14 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
                 disabled={saving || loadingNodeConfig}
               >
                 {loadingNodeConfig ? "Refreshing..." : "Refresh config"}
+              </PrimaryButton>
+              <PrimaryButton
+                className="px-2.5 py-1.5 text-xs"
+                type="button"
+                onClick={() => void loadDeployDefinition(selectedNode.nodeId)}
+                disabled={saving || loadingDeployDefinition}
+              >
+                {loadingDeployDefinition ? "Refreshing deploy..." : "Refresh deploy"}
               </PrimaryButton>
               <PrimaryButton
                 className="px-2.5 py-1.5 text-xs"
@@ -2802,6 +3291,47 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
                   Guardar asignación
                 </PrimaryButton>
               </div>
+            </Surface>
+            <Surface>
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <div className="font-medium">Deploy definition</div>
+                {deployDefinition ? <Badge>{deployDefinition.source}</Badge> : null}
+                {deployDefinition ? <Badge>contract {deployDefinition.deploymentContractVersion}</Badge> : null}
+              </div>
+              {loadingDeployDefinition ? (
+                <div className="text-xs text-slate-500">Loading deploy definition...</div>
+              ) : deployDefinition ? (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <div className="rounded-lg bg-slate-100 p-2 text-xs">
+                      <div className="mb-1 font-semibold uppercase tracking-wide text-slate-500">Build</div>
+                      <div>service: {deployDefinition.serviceName}</div>
+                      <div>image hint: {deployDefinition.imageHint}</div>
+                      <div>context: {deployDefinition.build.context}</div>
+                      <div>dockerfile: {deployDefinition.build.dockerfile}</div>
+                      <div>ports: {deployDefinition.ports.join(", ")}</div>
+                    </div>
+                    <div className="rounded-lg bg-slate-100 p-2 text-xs">
+                      <div className="mb-1 font-semibold uppercase tracking-wide text-slate-500">Dependencies</div>
+                      <div>depends_on: {deployDefinition.dependsOn.join(", ") || "-"}</div>
+                      <div>networks: {deployDefinition.networks.join(", ") || "-"}</div>
+                      <div>warnings: {deployDefinition.warnings.join(" | ") || "none"}</div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                    <div>
+                      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Environment</div>
+                      <pre className="overflow-x-auto rounded-lg bg-slate-100 p-2 text-xs">{prettyJson(deployDefinition.env)}</pre>
+                    </div>
+                    <div>
+                      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Compose snippet</div>
+                      <pre className="overflow-x-auto rounded-lg bg-slate-100 p-2 text-xs">{prettyJson(deployDefinition.composeService)}</pre>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-xs text-slate-500">No hay definición de despliegue disponible para este nodo.</div>
+              )}
             </Surface>
             <Surface>
               <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -3023,6 +3553,273 @@ function DetectionNodesPage({ apiUrl }: { apiUrl: string }) {
         </DataTable>
       </PageCard>
     </div>
+  );
+}
+
+function FaceInvestigationsPage({ apiUrl }: { apiUrl: string }) {
+  const [rows, setRows] = useState<FaceIdentitySummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"active" | "all" | "confirmed" | "merged">("active");
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const token = getToken();
+    const tenantId = getTenantId();
+    if (!token || !tenantId) {
+      setError("Missing auth context");
+      setLoading(false);
+      return;
+    }
+
+    const load = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const params = new URLSearchParams({ _start: "0", _end: "50" });
+        if (statusFilter === "merged") {
+          params.set("status", "merged");
+          params.set("includeMerged", "true");
+        } else if (statusFilter === "confirmed") {
+          params.set("status", "confirmed");
+        }
+        const res = await fetch(`${apiUrl}/faces/identities?${params.toString()}`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "X-Tenant-Id": tenantId
+          }
+        });
+        if (!res.ok) {
+          setError(await summarizeApiErrorResponse(res, "No se pudo cargar identidades"));
+          return;
+        }
+        const body = (await res.json()) as { data?: FaceIdentitySummary[] };
+        const fetched = body.data ?? [];
+        setRows(
+          statusFilter === "active" ? fetched.filter((item) => item.status !== "merged" && !item.mergedIntoIdentityId) : fetched
+        );
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    void load();
+  }, [apiUrl, statusFilter]);
+
+  const normalizedQuery = query.trim().toLowerCase();
+  const filtered = rows.filter((row) => {
+    if (!normalizedQuery) return true;
+    const inIdentity = formatFaceIdentityName(row).toLowerCase().includes(normalizedQuery);
+    const inCameras = row.cameras.some((camera) => camera.cameraName.toLowerCase().includes(normalizedQuery));
+    return inIdentity || inCameras;
+  });
+
+  return (
+    <PageCard title="Identidades Faciales">
+      <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_180px]">
+        <TextInput
+          placeholder="Buscar por identidad o cámara"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        <SelectInput value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}>
+          <option value="active">activas</option>
+          <option value="confirmed">confirmadas</option>
+          <option value="merged">mergeadas</option>
+          <option value="all">todas</option>
+        </SelectInput>
+      </div>
+      {error ? <div className="mb-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div> : null}
+      {loading ? (
+        <div className="text-sm opacity-70">Loading facial identities...</div>
+      ) : (
+        <DataTable>
+          <thead className="bg-slate-50 text-slate-600">
+            <tr>
+              <th className="px-3 py-2">Identidad</th>
+              <th className="px-3 py-2">Estado</th>
+              <th className="px-3 py-2">Apariciones</th>
+              <th className="px-3 py-2">Cámaras</th>
+              <th className="px-3 py-2">Última vez</th>
+              <th className="px-3 py-2">Acción</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {filtered.map((row) => (
+              <tr key={row.id}>
+                <td className="px-3 py-2">
+                  <div className="font-medium text-slate-900">{formatFaceIdentityName(row)}</div>
+                  <div className="text-xs text-slate-500">{row.id}</div>
+                </td>
+                <td className="px-3 py-2">
+                  <Badge className={row.status === "merged" ? "border-amber-200 bg-amber-50 text-amber-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}>
+                    {row.status}
+                  </Badge>
+                </td>
+                <td className="px-3 py-2">{row.memberCount}</td>
+                <td className="px-3 py-2 text-sm text-slate-600">
+                  {row.cameras.map((camera) => `${camera.cameraName} (${camera.sightings})`).join(", ") || "-"}
+                </td>
+                <td className="px-3 py-2 text-sm text-slate-600">{row.latestSeenAt ? new Date(row.latestSeenAt).toLocaleString() : "-"}</td>
+                <td className="px-3 py-2">
+                  <Link className="text-sm font-medium text-slate-700 underline underline-offset-2" to={ADMIN_ROUTES.resources.faceCaseDetail(row.id)}>
+                    Ver caso
+                  </Link>
+                </td>
+              </tr>
+            ))}
+            {filtered.length === 0 ? (
+              <tr>
+                <td className="px-3 py-6 text-center text-sm text-slate-500" colSpan={6}>
+                  No hay identidades para este filtro.
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </DataTable>
+      )}
+    </PageCard>
+  );
+}
+
+function FaceIdentityShow() {
+  const { id } = useParams();
+  const [identity, setIdentity] = useState<FaceIdentityDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const identityId = id;
+    const token = getToken();
+    const tenantId = getTenantId();
+    if (!identityId || !token || !tenantId) {
+      setError("Missing auth context");
+      setLoading(false);
+      return;
+    }
+    const load = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await fetch(`${import.meta.env.VITE_API_URL ?? "http://localhost:3001"}/faces/identities/${identityId}`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "X-Tenant-Id": tenantId
+          }
+        });
+        if (!res.ok) {
+          setError(await summarizeApiErrorResponse(res, "No se pudo cargar el caso facial"));
+          return;
+        }
+        const body = (await res.json()) as { data?: FaceIdentityDetail };
+        setIdentity(body.data ?? null);
+      } finally {
+        setLoading(false);
+      }
+    };
+    void load();
+  }, [id]);
+
+  if (loading) return <PageCard title="Caso Facial">Loading...</PageCard>;
+  if (error || !identity) {
+    return <PageCard title="Caso Facial">{error ?? "No se encontró la identidad"}</PageCard>;
+  }
+
+  return (
+    <PageCard title={`Caso Facial: ${formatFaceIdentityName(identity)}`}>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+        <Surface className="border border-slate-200 bg-slate-50">
+          <div className="text-xs uppercase tracking-wide text-slate-500">Estado</div>
+          <div className="mt-1 text-2xl font-semibold text-slate-900">{identity.status}</div>
+        </Surface>
+        <Surface className="border border-slate-200 bg-slate-50">
+          <div className="text-xs uppercase tracking-wide text-slate-500">Caras asociadas</div>
+          <div className="mt-1 text-2xl font-semibold text-slate-900">{identity.memberCount}</div>
+        </Surface>
+        <Surface className="border border-slate-200 bg-slate-50">
+          <div className="text-xs uppercase tracking-wide text-slate-500">Cámaras</div>
+          <div className="mt-1 text-2xl font-semibold text-slate-900">{identity.cameras.length}</div>
+        </Surface>
+        <Surface className="border border-slate-200 bg-slate-50">
+          <div className="text-xs uppercase tracking-wide text-slate-500">Última aparición</div>
+          <div className="mt-1 text-sm font-semibold text-slate-900">{identity.latestSeenAt ? new Date(identity.latestSeenAt).toLocaleString() : "-"}</div>
+        </Surface>
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
+        <Surface className="space-y-3">
+          <div className="text-sm font-semibold text-slate-900">Historial por cámara</div>
+          <DataTable>
+            <thead className="bg-slate-50 text-slate-600">
+              <tr>
+                <th className="px-3 py-2">Cámara</th>
+                <th className="px-3 py-2">Primera vez</th>
+                <th className="px-3 py-2">Última vez</th>
+                <th className="px-3 py-2">Vistas</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {identity.appearances.map((appearance) => (
+                <tr key={appearance.cameraId}>
+                  <td className="px-3 py-2">
+                    <Link className="text-sm font-medium text-slate-700 underline underline-offset-2" to={ADMIN_ROUTES.resources.cameraDetail(appearance.cameraId)}>
+                      {appearance.cameraName}
+                    </Link>
+                  </td>
+                  <td className="px-3 py-2 text-sm text-slate-600">{new Date(appearance.firstSeenAt).toLocaleString()}</td>
+                  <td className="px-3 py-2 text-sm text-slate-600">{new Date(appearance.lastSeenAt).toLocaleString()}</td>
+                  <td className="px-3 py-2">{appearance.sightings}</td>
+                </tr>
+              ))}
+            </tbody>
+          </DataTable>
+        </Surface>
+
+        <Surface className="space-y-3">
+          <div className="text-sm font-semibold text-slate-900">Historial de merges</div>
+          {identity.mergeHistory.length === 0 ? (
+            <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+              Esta identidad todavía no participó en merges.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {identity.mergeHistory.map((entry) => (
+                <Surface key={entry.id} className="border border-slate-200 bg-slate-50">
+                  <div className="text-sm font-medium text-slate-900">
+                    {entry.sourceIdentityId === identity.id ? "Merge saliente" : "Merge entrante"}
+                  </div>
+                  <div className="mt-1 text-sm text-slate-700">
+                    {formatFaceIdentityName({ id: entry.sourceIdentityId, displayName: entry.sourceDisplayName })} →{" "}
+                    {formatFaceIdentityName({ id: entry.targetIdentityId, displayName: entry.targetDisplayName })}
+                  </div>
+                  <div className="mt-1 text-xs text-slate-500">{new Date(entry.createdAt).toLocaleString()}</div>
+                  {entry.reason ? <div className="mt-1 text-xs text-slate-500">Motivo: {entry.reason}</div> : null}
+                </Surface>
+              ))}
+            </div>
+          )}
+        </Surface>
+      </div>
+
+      <div className="mt-4">
+        <div className="mb-3 text-sm font-semibold text-slate-900">Caras asociadas</div>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {identity.faces.map((face) => (
+            <Surface key={face.id} className="border border-slate-200 bg-slate-50">
+              <div className="font-medium text-slate-900">{summarizeFaceLabel(face)}</div>
+              <div className="mt-1 text-xs text-slate-500">{new Date(face.frameTs).toLocaleString()}</div>
+              <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                <Badge>{face.embedding?.dimensions ? `${face.embedding.dimensions}d` : "sin embedding"}</Badge>
+                {face.cluster ? <Badge>{face.cluster.displayName ?? face.cluster.id}</Badge> : null}
+                <Badge>
+                  <Link to={ADMIN_ROUTES.resources.cameraDetail(face.cameraId)}>Ver cámara</Link>
+                </Badge>
+              </div>
+            </Surface>
+          ))}
+        </div>
+      </div>
+    </PageCard>
   );
 }
 
@@ -4432,7 +5229,13 @@ function CameraShow() {
                   <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm">
                     <div className="text-xs uppercase tracking-wide text-slate-500">Identidad actual</div>
                     <div className="mt-1 font-medium text-slate-900">
-                      {selectedIdentity ? selectedIdentity.displayName ?? selectedIdentity.id : "Sin confirmar"}
+                      {selectedIdentity ? (
+                        <Link className="underline underline-offset-2" to={ADMIN_ROUTES.resources.faceCaseDetail(selectedIdentity.id)}>
+                          {selectedIdentity.displayName ?? selectedIdentity.id}
+                        </Link>
+                      ) : (
+                        "Sin confirmar"
+                      )}
                     </div>
                     <div className="mt-1 text-xs text-slate-500">
                       {selectedIdentity ? `status ${selectedIdentity.status}` : "Podemos confirmarla o asociarla a una identidad existente."}
@@ -4538,7 +5341,13 @@ function CameraShow() {
                     <div className="mt-2 text-xs text-slate-500">{new Date(match.face.frameTs).toLocaleString()}</div>
                     <div className="mt-3 flex flex-wrap gap-2 text-xs">
                       <Badge>{match.sameCamera ? "misma cámara" : "otra cámara"}</Badge>
-                      {match.face.identity ? <Badge>{match.face.identity.displayName ?? match.face.identity.id}</Badge> : null}
+                      {match.face.identity ? (
+                        <Badge>
+                          <Link to={ADMIN_ROUTES.resources.faceCaseDetail(match.face.identity.id)}>
+                            {match.face.identity.displayName ?? match.face.identity.id}
+                          </Link>
+                        </Badge>
+                      ) : null}
                       {match.face.cluster ? <Badge>{match.face.cluster.displayName ?? match.face.cluster.id.slice(0, 8)}</Badge> : null}
                     </div>
                     {canManageFaceIdentity && !selectedIdentity && match.face.identity ? (

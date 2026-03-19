@@ -1,0 +1,136 @@
+services:
+  inference-node-yolo-seed-node-portal-browser-primary:
+    build:
+      context: "../apps/inference-node-yolo"
+      dockerfile: "Dockerfile"
+    environment:
+      INFERENCE_BRIDGE_URL: "http://inference-bridge:8090"
+      NODE_ID: "seed-node-portal-browser-primary"
+      NODE_RUNTIME: "yolo"
+      NODE_TRANSPORT: "http"
+      NODE_ENDPOINT: "http://seed-node-portal-browser-primary:8091"
+      NODE_TENANT_ID: "cmmtezsuv0008w1i20oec3khl"
+      NODE_TENANT_IDS: "cmmtezsuv0008w1i20oec3khl"
+      NODE_TASK_TYPES: "person_detection"
+      NODE_MODELS: "seed-yolo26-person-balanced"
+      NODE_MAX_CONCURRENT: "3"
+      NODE_RESOURCES_CPU: "4"
+      NODE_RESOURCES_GPU: "0"
+      NODE_RESOURCES_VRAM_MB: "0"
+      NODE_HEARTBEAT_INTERVAL_MS: "10000"
+      NODE_CONTRACT_VERSION: "1.0"
+      NODE_AUTH_ADMIN_SECRET: "${NODE_AUTH_ADMIN_SECRET}"
+    ports:
+      - "8091:8091"
+    depends_on:
+      - "inference-bridge"
+    networks:
+      - "nearhome_net"
+  inference-node-yolo-seed-node-admin-browser-primary:
+    build:
+      context: "../apps/inference-node-yolo"
+      dockerfile: "Dockerfile"
+    environment:
+      INFERENCE_BRIDGE_URL: "http://inference-bridge:8090"
+      NODE_ID: "seed-node-admin-browser-primary"
+      NODE_RUNTIME: "yolo"
+      NODE_TRANSPORT: "http"
+      NODE_ENDPOINT: "http://seed-node-admin-browser-primary:8091"
+      NODE_TENANT_ID: "cmmtezsuv0007w1i2xt62z4v6"
+      NODE_TENANT_IDS: "cmmtezsuv0007w1i2xt62z4v6"
+      NODE_TASK_TYPES: "person_detection"
+      NODE_MODELS: "seed-yolo26-person-balanced"
+      NODE_MAX_CONCURRENT: "3"
+      NODE_RESOURCES_CPU: "4"
+      NODE_RESOURCES_GPU: "0"
+      NODE_RESOURCES_VRAM_MB: "0"
+      NODE_HEARTBEAT_INTERVAL_MS: "10000"
+      NODE_CONTRACT_VERSION: "1.0"
+      NODE_AUTH_ADMIN_SECRET: "${NODE_AUTH_ADMIN_SECRET}"
+    ports:
+      - "8091:8091"
+    depends_on:
+      - "inference-bridge"
+    networks:
+      - "nearhome_net"
+  inference-node-yolo-seed-node-nhdp21-topology-fallback:
+    build:
+      context: "../apps/inference-node-yolo"
+      dockerfile: "Dockerfile"
+    environment:
+      INFERENCE_BRIDGE_URL: "http://inference-bridge:8090"
+      NODE_ID: "seed-node-nhdp21-topology-fallback"
+      NODE_RUNTIME: "yolo"
+      NODE_TRANSPORT: "http"
+      NODE_ENDPOINT: "http://seed-node-nhdp21-topology-fallback:8091"
+      NODE_TENANT_ID: "cmmtezsuu0005w1i2td9h5xkf"
+      NODE_TENANT_IDS: "cmmtezsuu0005w1i2td9h5xkf"
+      NODE_TASK_TYPES: "person_detection"
+      NODE_MODELS: "seed-yolo26-person-balanced"
+      NODE_MAX_CONCURRENT: "4"
+      NODE_RESOURCES_CPU: "4"
+      NODE_RESOURCES_GPU: "0"
+      NODE_RESOURCES_VRAM_MB: "0"
+      NODE_HEARTBEAT_INTERVAL_MS: "10000"
+      NODE_CONTRACT_VERSION: "1.0"
+      NODE_AUTH_ADMIN_SECRET: "${NODE_AUTH_ADMIN_SECRET}"
+    ports:
+      - "8091:8091"
+    depends_on:
+      - "inference-bridge"
+    networks:
+      - "nearhome_net"
+  inference-node-yolo-seed-node-nhdp21-topology-primary:
+    build:
+      context: "../apps/inference-node-yolo"
+      dockerfile: "Dockerfile"
+    environment:
+      INFERENCE_BRIDGE_URL: "http://inference-bridge:8090"
+      NODE_ID: "seed-node-nhdp21-topology-primary"
+      NODE_RUNTIME: "yolo"
+      NODE_TRANSPORT: "http"
+      NODE_ENDPOINT: "http://seed-node-nhdp21-topology-primary:8091"
+      NODE_TENANT_ID: "cmmtezsuu0005w1i2td9h5xkf"
+      NODE_TENANT_IDS: "cmmtezsuu0005w1i2td9h5xkf"
+      NODE_TASK_TYPES: "person_detection"
+      NODE_MODELS: "seed-yolo26-person-balanced"
+      NODE_MAX_CONCURRENT: "4"
+      NODE_RESOURCES_CPU: "4"
+      NODE_RESOURCES_GPU: "0"
+      NODE_RESOURCES_VRAM_MB: "0"
+      NODE_HEARTBEAT_INTERVAL_MS: "10000"
+      NODE_CONTRACT_VERSION: "1.0"
+      NODE_AUTH_ADMIN_SECRET: "${NODE_AUTH_ADMIN_SECRET}"
+    ports:
+      - "8091:8091"
+    depends_on:
+      - "inference-bridge"
+    networks:
+      - "nearhome_net"
+  inference-node-yolo-seed-node-nhdp21-validation:
+    build:
+      context: "../apps/inference-node-yolo"
+      dockerfile: "Dockerfile"
+    environment:
+      INFERENCE_BRIDGE_URL: "http://inference-bridge:8090"
+      NODE_ID: "seed-node-nhdp21-validation"
+      NODE_RUNTIME: "yolo"
+      NODE_TRANSPORT: "http"
+      NODE_ENDPOINT: "http://seed-node-nhdp21-validation:8091"
+      NODE_TENANT_ID: "cmmtezsuu0004w1i2hrc2jrxx"
+      NODE_TENANT_IDS: "cmmtezsuu0004w1i2hrc2jrxx"
+      NODE_TASK_TYPES: "face_detection"
+      NODE_MODELS: "seed-yolo26-face-balanced"
+      NODE_MAX_CONCURRENT: "2"
+      NODE_RESOURCES_CPU: "4"
+      NODE_RESOURCES_GPU: "0"
+      NODE_RESOURCES_VRAM_MB: "0"
+      NODE_HEARTBEAT_INTERVAL_MS: "10000"
+      NODE_CONTRACT_VERSION: "1.0"
+      NODE_AUTH_ADMIN_SECRET: "${NODE_AUTH_ADMIN_SECRET}"
+    ports:
+      - "8091:8091"
+    depends_on:
+      - "inference-bridge"
+    networks:
+      - "nearhome_net"

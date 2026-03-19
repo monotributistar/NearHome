@@ -1,6 +1,6 @@
 # Pilot Runbook (Local + On-Prem)
 
-Fecha: `2026-03-06`
+Fecha: `2026-03-16`
 
 ## 1) Objetivo
 
@@ -218,6 +218,115 @@ Variables útiles:
 - `api`: `GET /health`, `GET /readiness`
 - `event-gateway`: `GET /health`
 - `inference-bridge`: `GET /health`, `GET /v1/nodes`
+
+## 9) Runbook operativo stack-sync (admin/api)
+
+Objetivo: ejecutar el loop de sincronización de nodos de detección desde `control-plane`, con validación previa y rollback simple.
+
+### 9.1 Pre-check
+
+1. Confirmar stack arriba (`onprem` o `onprem-remote`):
+
+```bash
+pnpm pilot:stack:up:onprem
+# o
+pnpm pilot:stack:up:onprem:remote
+```
+
+2. Confirmar salud base:
+
+```bash
+pnpm pilot:smoke
+```
+
+3. Confirmar credenciales para admin/api:
+
+```bash
+export DETECTION_DEPLOY_ADMIN_PASSWORD='<admin-password>'
+```
+
+### 9.2 Dry-run obligatorio
+
+```bash
+STACK_SYNC_MODE=onprem \
+STACK_SYNC_DRY_RUN=1 \
+pnpm pilot:smoke:stack-sync-api
+```
+
+Para vault remoto:
+
+```bash
+STACK_SYNC_MODE=onprem-remote \
+STACK_SYNC_DRY_RUN=1 \
+pnpm pilot:smoke:stack-sync-api
+```
+
+### 9.3 Ejecución real
+
+Desde admin UI (`/ops`) o por API:
+
+```bash
+STACK_SYNC_MODE=onprem \
+STACK_SYNC_DRY_RUN=0 \
+pnpm pilot:smoke:stack-sync-api
+```
+
+Opcional con perfil:
+
+```bash
+STACK_SYNC_MODE=onprem \
+STACK_SYNC_PROFILE=tunnel \
+STACK_SYNC_DRY_RUN=0 \
+pnpm pilot:smoke:stack-sync-api
+```
+
+### 9.4 Validación post-run
+
+```bash
+pnpm pilot:smoke
+pnpm pilot:smoke:detection-sync
+```
+
+Esperado:
+- servicios principales `Up`
+- `infra/docker-compose.detection.generated.yml` presente
+- nodos generados reportando `online` en `inference-bridge`
+
+### 9.5 Rollback operativo
+
+Si falla la corrida real:
+
+1. Volver al modo/perfil estable anterior.
+2. Reejecutar sync en `dry-run` para validar:
+
+```bash
+STACK_SYNC_MODE=onprem \
+STACK_SYNC_DRY_RUN=1 \
+pnpm pilot:smoke:stack-sync-api
+```
+
+3. Reaplicar stack estable:
+
+```bash
+pnpm pilot:stack:sync-detection:onprem
+# o
+pnpm pilot:stack:sync-detection:onprem:remote
+```
+
+4. Confirmar recuperación:
+
+```bash
+pnpm pilot:smoke
+pnpm pilot:smoke:detection-sync
+pnpm pilot:smoke:stack-sync-api
+```
+
+### 9.6 Matriz rápida de fallos (stack sync)
+
+- `STACK_SYNC_ALREADY_RUNNING` (HTTP 409): ya hay una corrida activa; esperar estado terminal y reintentar.
+- `failed + Stack sync exited with code N`: fallo del comando base; revisar `logTail` y validar comando/credenciales.
+- `failed + Stack sync timed out`: subir `DETECTION_STACK_SYNC_TIMEOUT_MS` o corregir bloqueos en script remoto.
+- Reintentos: `DETECTION_STACK_SYNC_MAX_RETRIES` y `DETECTION_STACK_SYNC_RETRY_DELAY_MS` controlan recuperación automática.
 - `inference-node-yolo`: `GET /health`
 - `inference-node-mediapipe`: `GET /health`
 - `detection-dispatcher`: `GET /health`

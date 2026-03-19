@@ -5353,3 +5353,306 @@ describe("NH-DP-19 face clustering and identity management", () => {
     });
   });
 });
+
+describe("NH-DP-25 face identity case views", () => {
+  it("lists seeded identities and exposes detailed appearances and merge history", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const tenant = await prisma.tenant.findFirst({
+      where: { name: seedFixtures.tenants.adminBrowser }
+    });
+    expect(tenant).toBeTruthy();
+
+    const mariaIdentity = await prisma.faceIdentity.findFirst({
+      where: {
+        tenantId: tenant!.id,
+        displayName: "Maria Gomez"
+      }
+    });
+    expect(mariaIdentity).toBeTruthy();
+
+    const listResponse = await app.inject({
+      method: "GET",
+      url: "/faces/identities",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenant!.id
+      }
+    });
+    expect(listResponse.statusCode).toBe(200);
+    expect(listResponse.json()).toMatchObject({
+      data: expect.arrayContaining([
+        expect.objectContaining({
+          displayName: "Maria Gomez",
+          status: "confirmed"
+        })
+      ])
+    });
+
+    const detailResponse = await app.inject({
+      method: "GET",
+      url: `/faces/identities/${mariaIdentity!.id}`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenant!.id
+      }
+    });
+    expect(detailResponse.statusCode).toBe(200);
+    const detailBody = detailResponse.json<{
+      data: {
+        id: string;
+        displayName: string;
+        memberCount: number;
+        appearances: Array<{ cameraName: string; sightings: number }>;
+        mergeHistory: Array<unknown>;
+      };
+    }>().data;
+    expect(detailBody.id).toBe(mariaIdentity!.id);
+    expect(detailBody.displayName).toBe("Maria Gomez");
+    expect(detailBody.memberCount).toBeGreaterThanOrEqual(1);
+    expect(detailBody.appearances).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          cameraName: seedFixtures.cameras.adminBrowserReady.name,
+          sightings: expect.any(Number)
+        })
+      ])
+    );
+    expect(Array.isArray(detailBody.mergeHistory)).toBe(true);
+  });
+});
+
+describe("NH-DP-26 node deploy definition", () => {
+  it("builds a deploy definition from desired node config", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/ops/nodes/${seedFixtures.nodes.adminBrowserPrimary.nodeId}/deploy-definition`,
+      headers: {
+        authorization: `Bearer ${adminToken}`
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      data: {
+        nodeId: seedFixtures.nodes.adminBrowserPrimary.nodeId,
+        source: "desired",
+        runtime: "yolo",
+        env: expect.objectContaining({
+          NODE_ID: seedFixtures.nodes.adminBrowserPrimary.nodeId,
+          NODE_RUNTIME: "yolo"
+        }),
+        composeService: expect.any(Object)
+      }
+    });
+  });
+
+  it("builds a deploy bundle for multiple nodes", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/ops/nodes/deploy-bundle?nodeIds=${seedFixtures.nodes.adminBrowserPrimary.nodeId},${seedFixtures.nodes.detectionValidation.nodeId}`,
+      headers: {
+        authorization: `Bearer ${adminToken}`
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      data: {
+        nodeIds: expect.arrayContaining([seedFixtures.nodes.adminBrowserPrimary.nodeId, seedFixtures.nodes.detectionValidation.nodeId]),
+        composeYaml: expect.stringContaining("services:"),
+        definitions: expect.arrayContaining([
+          expect.objectContaining({ nodeId: seedFixtures.nodes.adminBrowserPrimary.nodeId }),
+          expect.objectContaining({ nodeId: seedFixtures.nodes.detectionValidation.nodeId })
+        ])
+      }
+    });
+  });
+
+  it("exports the deploy bundle to the configured output path", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/ops/nodes/deploy-bundle/export",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "content-type": "application/json"
+      },
+      payload: {
+        nodeIds: [seedFixtures.nodes.adminBrowserPrimary.nodeId, seedFixtures.nodes.detectionValidation.nodeId]
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      data: {
+        nodeIds: expect.arrayContaining([seedFixtures.nodes.adminBrowserPrimary.nodeId, seedFixtures.nodes.detectionValidation.nodeId]),
+        composeYaml: expect.stringContaining("services:"),
+        export: {
+          path: expect.stringContaining("docker-compose.detection.generated.yml"),
+          nodeCount: 2,
+          bytes: expect.any(Number)
+        }
+      }
+    });
+  });
+
+  it("starts a dry-run detection stack sync with mode/profile and exposes its status", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+
+    const startResponse = await app.inject({
+      method: "POST",
+      url: "/ops/nodes/stack-sync-detection",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "content-type": "application/json"
+      },
+      payload: {
+        mode: "onprem-remote",
+        profile: "tunnel",
+        dryRun: true
+      }
+    });
+
+    expect(startResponse.statusCode).toBe(200);
+    expect(startResponse.json()).toMatchObject({
+      data: {
+        status: "succeeded",
+        mode: "onprem-remote",
+        profile: "tunnel",
+        attempt: 1,
+        exitCode: 0,
+        command: expect.stringContaining("onprem-remote tunnel"),
+        logTail: expect.arrayContaining([expect.stringContaining("dry-run"), expect.stringContaining("config timeout=")])
+      }
+    });
+
+    const statusResponse = await app.inject({
+      method: "GET",
+      url: "/ops/nodes/stack-sync-detection",
+      headers: {
+        authorization: `Bearer ${adminToken}`
+      }
+    });
+
+    expect(statusResponse.statusCode).toBe(200);
+    expect(statusResponse.json()).toMatchObject({
+      data: {
+        status: "succeeded",
+        mode: "onprem-remote",
+        profile: "tunnel",
+        attempt: 1
+      }
+    });
+  });
+
+  it("applies retry/timeout overrides in dry-run stack sync", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/ops/nodes/stack-sync-detection",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "content-type": "application/json"
+      },
+      payload: {
+        mode: "onprem",
+        dryRun: true,
+        timeoutMs: 12_000,
+        maxRetries: 2,
+        retryDelayMs: 50
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      data: {
+        status: "succeeded",
+        mode: "onprem",
+        attempt: 1,
+        maxAttempts: 3,
+        timeoutMs: 12_000,
+        retryDelayMs: 50,
+        logTail: expect.arrayContaining([expect.stringContaining("attempts=3"), expect.stringContaining("retryDelay=50ms")])
+      }
+    });
+  });
+
+  it("retries a failed stack sync attempt and eventually succeeds", async () => {
+    const previousCommand = process.env.DETECTION_STACK_SYNC_COMMAND;
+    const previousMarker = process.env.NH_STACK_SYNC_MARKER;
+    const markerPath = `/tmp/nearhome-stack-sync-retry-${Date.now()}`;
+    process.env.DETECTION_STACK_SYNC_COMMAND =
+      `node -e "const fs=require('node:fs');const p=process.env.NH_STACK_SYNC_MARKER;if(fs.existsSync(p)){process.exit(0);}fs.writeFileSync(p,'1');process.exit(9);"`;
+    process.env.NH_STACK_SYNC_MARKER = markerPath;
+
+    const retryApp = await buildApp();
+    await retryApp.ready();
+    try {
+      const loginResponse = await retryApp.inject({
+        method: "POST",
+        url: "/auth/login",
+        headers: { "x-forwarded-for": `test-retry-${Date.now()}` },
+        payload: { email: "admin@nearhome.dev", password: "demo1234" }
+      });
+      expect(loginResponse.statusCode).toBe(200);
+      const token = loginResponse.json<LoginResult>().accessToken;
+
+      const startResponse = await retryApp.inject({
+        method: "POST",
+        url: "/ops/nodes/stack-sync-detection",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json"
+        },
+        payload: {
+          mode: "onprem",
+          dryRun: false,
+          maxRetries: 1,
+          retryDelayMs: 10,
+          timeoutMs: 5_000
+        }
+      });
+      expect(startResponse.statusCode).toBe(200);
+
+      let statusPayload: { data: any } | null = null;
+      for (let i = 0; i < 20; i += 1) {
+        const poll = await retryApp.inject({
+          method: "GET",
+          url: "/ops/nodes/stack-sync-detection",
+          headers: { authorization: `Bearer ${token}` }
+        });
+        expect(poll.statusCode).toBe(200);
+        statusPayload = poll.json<{ data: DetectionStackSyncState }>();
+        if (statusPayload.data.status !== "running") break;
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      }
+
+      expect(statusPayload).toBeTruthy();
+      expect(statusPayload!.data).toMatchObject({
+        status: "succeeded",
+        attempt: 2,
+        maxAttempts: 2,
+        exitCode: 0,
+        logTail: expect.arrayContaining([expect.stringContaining("retrying in 10ms")])
+      });
+    } finally {
+      await retryApp.close();
+      if (previousCommand === undefined) {
+        delete process.env.DETECTION_STACK_SYNC_COMMAND;
+      } else {
+        process.env.DETECTION_STACK_SYNC_COMMAND = previousCommand;
+      }
+      if (previousMarker === undefined) {
+        delete process.env.NH_STACK_SYNC_MARKER;
+      } else {
+        process.env.NH_STACK_SYNC_MARKER = previousMarker;
+      }
+    }
+  });
+});

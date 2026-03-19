@@ -8,6 +8,10 @@ import { z } from "zod";
 import { EntitlementsSchema, LoginInputSchema, RoleSchema } from "@app/shared";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { createHmac } from "node:crypto";
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 
 type Role = z.infer<typeof RoleSchema>;
 const RoleInputSchema = z.enum(["tenant_admin", "monitor", "client_user", "operator", "customer"]);
@@ -75,6 +79,22 @@ type DetectionPipelineNodeCandidate = {
   isDrained: boolean;
   assignedTenantIds: string[];
   score: number;
+};
+
+type DetectionStackSyncState = {
+  status: "idle" | "running" | "succeeded" | "failed";
+  mode: "onprem" | "onprem-remote";
+  profile: string | null;
+  attempt: number | null;
+  maxAttempts: number;
+  timeoutMs: number;
+  retryDelayMs: number;
+  startedAt: string | null;
+  finishedAt: string | null;
+  exitCode: number | null;
+  command: string;
+  logTail: string[];
+  errorMessage: string | null;
 };
 
 function statusToCode(statusCode: number): string {
@@ -214,6 +234,39 @@ type FaceSimilarityMatchResponse = {
   similarityScore: number;
   sameCamera: boolean;
   face: FaceDetectionResponse;
+};
+
+type FaceIdentitySummaryResponse = {
+  id: string;
+  tenantId: string;
+  displayName: string | null;
+  status: string;
+  mergedIntoIdentityId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  memberCount: number;
+  latestSeenAt: string | null;
+  cameras: Array<{ cameraId: string; cameraName: string; sightings: number }>;
+  faces?: FaceDetectionResponse[];
+};
+
+type FaceIdentityDetailResponse = FaceIdentitySummaryResponse & {
+  appearances: Array<{
+    cameraId: string;
+    cameraName: string;
+    firstSeenAt: string;
+    lastSeenAt: string;
+    sightings: number;
+  }>;
+  mergeHistory: Array<{
+    id: string;
+    sourceIdentityId: string;
+    sourceDisplayName: string | null;
+    targetIdentityId: string;
+    targetDisplayName: string | null;
+    reason: string | null;
+    createdAt: string;
+  }>;
 };
 
 type DesiredNodeCapability = {
@@ -584,6 +637,212 @@ function buildNodeConfigDiff(args: {
     inSync: items.length === 0,
     items
   };
+}
+
+function extractPortFromEndpoint(endpoint: string, fallbackPort: number) {
+  try {
+    const url = new URL(endpoint);
+    if (url.port) return Number(url.port);
+  } catch {}
+  return fallbackPort;
+}
+
+type NodeObservedConfigView = {
+  runtime: string;
+  transport: string;
+  endpoint: string;
+  resources: Record<string, number>;
+  capabilities: BridgeNodeCapability[];
+  models: string[];
+  assignedTenantIds: string[];
+  maxConcurrent: number;
+  status: string;
+  queueDepth: number;
+  isDrained: boolean;
+  lastHeartbeatAt: string;
+  updatedAt: string;
+};
+
+function buildNodeDeployDefinition(args: {
+  nodeId: string;
+  desired: ReturnType<typeof normalizeDesiredNodeConfig> | null;
+  observed: NodeObservedConfigView | null;
+}) {
+  const source = args.desired ? "desired" : "observed";
+  const base = args.desired ?? args.observed;
+  if (!base) return null;
+
+  const runtime = base.runtime;
+  const fallbackPort = runtime === "mediapipe" ? 8092 : 8091;
+  const port = extractPortFromEndpoint(base.endpoint, fallbackPort);
+  const capabilityList =
+    "capabilities" in base && Array.isArray(base.capabilities)
+      ? base.capabilities
+      : [];
+  const taskTypes = Array.from(
+    new Set(capabilityList.flatMap((capability: any) => capability.taskTypes ?? []).filter((value: unknown) => typeof value === "string"))
+  ) as string[];
+  const modelRefs = Array.from(
+    new Set(
+      [
+        ...(("models" in base && Array.isArray(base.models) ? base.models : []) as string[]),
+        ...capabilityList.flatMap((capability: any) => capability.modelRefs ?? capability.models ?? [])
+      ].filter((value) => typeof value === "string" && value.length > 0)
+    )
+  );
+  const tenantIds =
+    "tenantIds" in base && Array.isArray(base.tenantIds)
+      ? base.tenantIds
+      : "assignedTenantIds" in base && Array.isArray(base.assignedTenantIds)
+        ? base.assignedTenantIds
+        : [];
+  const serviceName = `inference-node-${runtime}-${args.nodeId.replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase()}`;
+  const buildContext =
+    runtime === "mediapipe"
+      ? "../apps/inference-node-mediapipe"
+      : "../apps/inference-node-yolo";
+
+  const env = {
+    INFERENCE_BRIDGE_URL: "http://inference-bridge:8090",
+    NODE_ID: args.nodeId,
+    NODE_RUNTIME: runtime,
+    NODE_TRANSPORT: base.transport,
+    NODE_ENDPOINT: base.endpoint,
+    NODE_TENANT_ID: tenantIds.length === 1 ? tenantIds[0] : "",
+    NODE_TENANT_IDS: tenantIds.join(","),
+    NODE_TASK_TYPES: taskTypes.join(","),
+    NODE_MODELS: modelRefs.join(","),
+    NODE_MAX_CONCURRENT: String(base.maxConcurrent),
+    NODE_RESOURCES_CPU: String(base.resources.cpu ?? 0),
+    NODE_RESOURCES_GPU: String(base.resources.gpu ?? 0),
+    NODE_RESOURCES_VRAM_MB: String(base.resources.vramMb ?? 0),
+    NODE_HEARTBEAT_INTERVAL_MS: "10000",
+    NODE_CONTRACT_VERSION: "contractVersion" in base ? base.contractVersion : "1.0",
+    NODE_AUTH_ADMIN_SECRET: "${NODE_AUTH_ADMIN_SECRET}"
+  };
+
+  const warnings: string[] = [];
+  if (taskTypes.length === 0) warnings.push("Node does not declare any taskTypes");
+  if (modelRefs.length === 0) warnings.push("Node does not declare any models");
+  if (runtime === "yolo" && taskTypes.includes("face_detection") && !modelRefs.some((model) => model.includes("face"))) {
+    warnings.push("Face detection is declared but no face-specific modelRef was found");
+  }
+
+  return {
+    nodeId: args.nodeId,
+    source,
+    runtime,
+    serviceName,
+    deploymentContractVersion: "1.0",
+    imageHint: runtime === "mediapipe" ? "nearhome/inference-node-mediapipe:local" : "nearhome/inference-node-yolo:local",
+    build: {
+      context: buildContext,
+      dockerfile: "Dockerfile"
+    },
+    env,
+    ports: [`${port}:${port}`],
+    dependsOn: ["inference-bridge"],
+    networks: ["nearhome_net"],
+    warnings,
+    composeService: {
+      [serviceName]: {
+        build: {
+          context: buildContext,
+          dockerfile: "Dockerfile"
+        },
+        environment: env,
+        ports: [`${port}:${port}`],
+        depends_on: ["inference-bridge"],
+        networks: ["nearhome_net"]
+      }
+    }
+  };
+}
+
+function yamlScalar(value: unknown) {
+  if (value === null || value === undefined) return "null";
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return JSON.stringify(String(value));
+}
+
+function renderYaml(value: unknown, indent = 0): string {
+  const prefix = " ".repeat(indent);
+  if (Array.isArray(value)) {
+    if (value.length === 0) return `${prefix}[]`;
+    return value
+      .map((item) => {
+        if (item && typeof item === "object") {
+          const nested = renderYaml(item, indent + 2);
+          const [firstLine, ...rest] = nested.split("\n");
+          return `${prefix}- ${firstLine.trimStart()}${rest.length ? `\n${rest.join("\n")}` : ""}`;
+        }
+        return `${prefix}- ${yamlScalar(item)}`;
+      })
+      .join("\n");
+  }
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value);
+    if (entries.length === 0) return `${prefix}{}`;
+    return entries
+      .map(([key, item]) => {
+        if (item && typeof item === "object") {
+          return `${prefix}${key}:\n${renderYaml(item, indent + 2)}`;
+        }
+        return `${prefix}${key}: ${yamlScalar(item)}`;
+      })
+      .join("\n");
+  }
+  return `${prefix}${yamlScalar(value)}`;
+}
+
+function buildDeployBundle(definitions: Array<ReturnType<typeof buildNodeDeployDefinition>>) {
+  const effectiveDefinitions = definitions.filter((definition): definition is NonNullable<typeof definition> => Boolean(definition));
+  const services: Record<string, unknown> = {};
+  for (const definition of effectiveDefinitions) {
+    Object.assign(services, definition.composeService);
+  }
+  const composeYaml = ["services:", renderYaml(services, 2), ""].join("\n");
+  return {
+    generatedAt: new Date().toISOString(),
+    nodeIds: effectiveDefinitions.map((definition) => definition.nodeId),
+    warnings: effectiveDefinitions.flatMap((definition) =>
+      definition.warnings.map((warning) => ({
+        nodeId: definition.nodeId,
+        message: warning
+      }))
+    ),
+    composeYaml,
+    definitions: effectiveDefinitions
+  };
+}
+
+async function persistDeployBundle(args: {
+  bundle: ReturnType<typeof buildDeployBundle>;
+  outputPath: string;
+}) {
+  const resolvedPath = resolve(args.outputPath);
+  await mkdir(dirname(resolvedPath), { recursive: true });
+  await writeFile(resolvedPath, args.bundle.composeYaml, "utf8");
+  return {
+    path: resolvedPath,
+    bytes: Buffer.byteLength(args.bundle.composeYaml, "utf8"),
+    nodeCount: args.bundle.nodeIds.length,
+    warningCount: args.bundle.warnings.length,
+    generatedAt: args.bundle.generatedAt
+  };
+}
+
+function resolveDefaultDetectionDeployOutputPath() {
+  const cwdInfraPath = resolve(process.cwd(), "infra", "docker-compose.detection.generated.yml");
+  if (existsSync(resolve(process.cwd(), "infra"))) return cwdInfraPath;
+  return resolve(process.cwd(), "..", "..", "infra", "docker-compose.detection.generated.yml");
+}
+
+function resolveRepoRoot() {
+  if (existsSync(resolve(process.cwd(), "package.json")) && existsSync(resolve(process.cwd(), "infra"))) {
+    return process.cwd();
+  }
+  return resolve(process.cwd(), "..", "..");
 }
 
 function parseCameraRecordingPolicy(rulesProfileRaw: string | null): CameraRecordingPolicy {
@@ -1022,6 +1281,45 @@ function faceDetectionResponse(face: {
           status: face.identityMembership.identity.status
         }
       : undefined
+  };
+}
+
+function summarizeIdentityFaces(
+  faces: Array<
+    FaceDetectionResponse & {
+      cameraName?: string;
+    }
+  >
+) {
+  const appearancesByCamera = new Map<
+    string,
+    { cameraId: string; cameraName: string; firstSeenAt: string; lastSeenAt: string; sightings: number }
+  >();
+
+  for (const face of faces) {
+    const cameraName = face.cameraName ?? face.cameraId;
+    const current = appearancesByCamera.get(face.cameraId);
+    if (!current) {
+      appearancesByCamera.set(face.cameraId, {
+        cameraId: face.cameraId,
+        cameraName,
+        firstSeenAt: face.frameTs,
+        lastSeenAt: face.frameTs,
+        sightings: 1
+      });
+      continue;
+    }
+    current.firstSeenAt = face.frameTs < current.firstSeenAt ? face.frameTs : current.firstSeenAt;
+    current.lastSeenAt = face.frameTs > current.lastSeenAt ? face.frameTs : current.lastSeenAt;
+    current.sightings += 1;
+  }
+
+  const appearances = Array.from(appearancesByCamera.values()).sort((left, right) => right.lastSeenAt.localeCompare(left.lastSeenAt));
+  const cameras = appearances.map(({ cameraId, cameraName, sightings }) => ({ cameraId, cameraName, sightings }));
+  return {
+    appearances,
+    cameras,
+    latestSeenAt: faces[0]?.frameTs ?? null
   };
 }
 
@@ -1941,6 +2239,7 @@ async function syncCameraHealthFromGateway(args: {
 
 export async function buildApp() {
   const app = Fastify({ logger: true });
+  const repoRoot = resolveRepoRoot();
   const jwtSecret = process.env.JWT_SECRET ?? "dev-super-secret";
   const streamTokenSecret = process.env.STREAM_TOKEN_SECRET ?? "dev-stream-token-secret";
   const streamGatewayUrl = process.env.STREAM_GATEWAY_URL?.replace(/\/$/, "") ?? null;
@@ -1956,6 +2255,23 @@ export async function buildApp() {
   const inferenceBridgeUrl =
     process.env.INFERENCE_BRIDGE_URL?.replace(/\/$/, "") ?? detectionBridgeUrl ?? "http://inference-bridge:8090";
   const nodeAuthAdminSecret = process.env.NODE_AUTH_ADMIN_SECRET ?? "dev-node-auth-admin-secret";
+  const detectionDeployOutputPath = process.env.DETECTION_DEPLOY_OUTPUT_PATH ?? resolveDefaultDetectionDeployOutputPath();
+  const detectionStackSyncCommand = process.env.DETECTION_STACK_SYNC_COMMAND ?? "";
+  const detectionStackSyncTimeoutMsRaw = Number(process.env.DETECTION_STACK_SYNC_TIMEOUT_MS ?? 600_000);
+  const detectionStackSyncMaxRetriesRaw = Number(process.env.DETECTION_STACK_SYNC_MAX_RETRIES ?? 0);
+  const detectionStackSyncRetryDelayMsRaw = Number(process.env.DETECTION_STACK_SYNC_RETRY_DELAY_MS ?? 2_000);
+  const detectionStackSyncTimeoutMs =
+    Number.isFinite(detectionStackSyncTimeoutMsRaw) && detectionStackSyncTimeoutMsRaw >= 5_000
+      ? Math.min(Math.trunc(detectionStackSyncTimeoutMsRaw), 3_600_000)
+      : 600_000;
+  const detectionStackSyncMaxRetries =
+    Number.isFinite(detectionStackSyncMaxRetriesRaw) && detectionStackSyncMaxRetriesRaw >= 0
+      ? Math.min(Math.trunc(detectionStackSyncMaxRetriesRaw), 5)
+      : 0;
+  const detectionStackSyncRetryDelayMs =
+    Number.isFinite(detectionStackSyncRetryDelayMsRaw) && detectionStackSyncRetryDelayMsRaw >= 0
+      ? Math.min(Math.trunc(detectionStackSyncRetryDelayMsRaw), 60_000)
+      : 2_000;
   const loginRateLimitMax = Number(process.env.LOGIN_RATE_LIMIT_MAX ?? 20);
   const loginRateLimitWindowMs = Number(process.env.LOGIN_RATE_LIMIT_WINDOW_MS ?? 60_000);
   const readinessForceFail = process.env.READINESS_FORCE_FAIL === "1";
@@ -1966,6 +2282,22 @@ export async function buildApp() {
       .filter((value) => value.length > 0)
   );
   const loginBuckets = new Map<string, LoginBucket>();
+  let detectionStackSyncState: DetectionStackSyncState = {
+    status: "idle",
+    mode: "onprem",
+    profile: null,
+    attempt: null,
+    maxAttempts: detectionStackSyncMaxRetries + 1,
+    timeoutMs: detectionStackSyncTimeoutMs,
+    retryDelayMs: detectionStackSyncRetryDelayMs,
+    startedAt: null,
+    finishedAt: null,
+    exitCode: null,
+    command: detectionStackSyncCommand || "bash scripts/pilot/stack-sync-detection.sh <mode> [profile]",
+    logTail: [],
+    errorMessage: null
+  };
+  let detectionStackSyncRunId = 0;
   let streamSyncTimer: NodeJS.Timeout | null = null;
   let streamSyncInFlight = false;
   const streamSyncCursorByTenant = new Map<string, string | null>();
@@ -2025,6 +2357,152 @@ export async function buildApp() {
       }
     }
     return updated;
+  };
+
+  const appendDetectionStackSyncLog = (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    detectionStackSyncState.logTail = [...detectionStackSyncState.logTail, trimmed].slice(-80);
+  };
+
+  const runDetectionStackSync = (args: {
+    mode: "onprem" | "onprem-remote";
+    profile?: string | null;
+    dryRun?: boolean;
+    timeoutMs?: number;
+    maxRetries?: number;
+    retryDelayMs?: number;
+  }) => {
+    const timeoutMs = args.timeoutMs ?? detectionStackSyncTimeoutMs;
+    const maxRetries = args.maxRetries ?? detectionStackSyncMaxRetries;
+    const retryDelayMs = args.retryDelayMs ?? detectionStackSyncRetryDelayMs;
+    const maxAttempts = maxRetries + 1;
+    const commandSuffix = `${args.mode}${args.profile ? ` ${args.profile}` : ""}`;
+    const command = detectionStackSyncCommand
+      ? `${detectionStackSyncCommand} ${commandSuffix}`.trim()
+      : `bash scripts/pilot/stack-sync-detection.sh ${commandSuffix}`;
+    const startedAt = new Date().toISOString();
+    detectionStackSyncState = {
+      status: args.dryRun ? "succeeded" : "running",
+      mode: args.mode,
+      profile: args.profile ?? null,
+      attempt: 1,
+      maxAttempts,
+      timeoutMs,
+      retryDelayMs,
+      startedAt,
+      finishedAt: args.dryRun ? startedAt : null,
+      exitCode: args.dryRun ? 0 : null,
+      command,
+      logTail: args.dryRun
+        ? [`dry-run ${command}`, `config timeout=${timeoutMs}ms attempts=${maxAttempts} retryDelay=${retryDelayMs}ms`]
+        : [`started ${command}`, `config timeout=${timeoutMs}ms attempts=${maxAttempts} retryDelay=${retryDelayMs}ms`],
+      errorMessage: null
+    };
+
+    if (args.dryRun) return;
+    const runId = ++detectionStackSyncRunId;
+
+    const executeAttempt = (attempt: number) => {
+      if (runId !== detectionStackSyncRunId) return;
+      detectionStackSyncState = {
+        ...detectionStackSyncState,
+        status: "running",
+        attempt,
+        finishedAt: null,
+        exitCode: null,
+        errorMessage: null
+      };
+      appendDetectionStackSyncLog(`attempt ${attempt}/${maxAttempts}`);
+
+      const child = spawn(command, {
+        cwd: repoRoot,
+        env: process.env,
+        shell: true,
+        stdio: ["ignore", "pipe", "pipe"]
+      });
+      let settled = false;
+      let timedOut = false;
+      const timeout = setTimeout(() => {
+        timedOut = true;
+        appendDetectionStackSyncLog(`timeout ${timeoutMs}ms; sending SIGTERM`);
+        child.kill("SIGTERM");
+        setTimeout(() => {
+          if (!settled) {
+            appendDetectionStackSyncLog("forcing SIGKILL");
+            child.kill("SIGKILL");
+          }
+        }, 5_000).unref();
+      }, timeoutMs);
+
+      const scheduleRetryOrFail = (args: { message: string; exitCode: number }) => {
+        if (settled || runId !== detectionStackSyncRunId) return;
+        settled = true;
+        clearTimeout(timeout);
+
+        if (attempt < maxAttempts) {
+          const nextAttempt = attempt + 1;
+          appendDetectionStackSyncLog(`attempt ${attempt} failed: ${args.message}`);
+          appendDetectionStackSyncLog(`retrying in ${retryDelayMs}ms (${nextAttempt}/${maxAttempts})`);
+          setTimeout(() => {
+            executeAttempt(nextAttempt);
+          }, retryDelayMs).unref();
+          return;
+        }
+
+        detectionStackSyncState = {
+          ...detectionStackSyncState,
+          status: "failed",
+          finishedAt: new Date().toISOString(),
+          exitCode: args.exitCode,
+          errorMessage: args.message
+        };
+        appendDetectionStackSyncLog(`finished exit=${args.exitCode}`);
+      };
+
+      child.stdout.on("data", (chunk) => {
+        if (runId !== detectionStackSyncRunId) return;
+        appendDetectionStackSyncLog(String(chunk));
+      });
+      child.stderr.on("data", (chunk) => {
+        if (runId !== detectionStackSyncRunId) return;
+        appendDetectionStackSyncLog(String(chunk));
+      });
+      child.on("error", (error) => {
+        app.log.error({ error }, "ops.nodes.stack_sync_failed");
+        scheduleRetryOrFail({
+          message: error.message,
+          exitCode: -1
+        });
+      });
+      child.on("close", (code, signal) => {
+        if (settled || runId !== detectionStackSyncRunId) return;
+        clearTimeout(timeout);
+
+        if (!timedOut && code === 0) {
+          settled = true;
+          detectionStackSyncState = {
+            ...detectionStackSyncState,
+            status: "succeeded",
+            finishedAt: new Date().toISOString(),
+            exitCode: 0,
+            errorMessage: null
+          };
+          appendDetectionStackSyncLog("finished exit=0");
+          return;
+        }
+
+        const failureMessage = timedOut
+          ? `Stack sync timed out after ${timeoutMs}ms`
+          : `Stack sync exited with code ${code ?? -1}${signal ? ` (signal ${signal})` : ""}`;
+        scheduleRetryOrFail({
+          message: failureMessage,
+          exitCode: code ?? -1
+        });
+      });
+    };
+
+    executeAttempt(1);
   };
 
   const publishRealtimeEvent = async (args: {
@@ -6404,6 +6882,74 @@ export async function buildApp() {
     };
   });
 
+  app.get("/faces/identities", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const ctx = getTenantContext(request);
+    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+    const query = request.query as Record<string, unknown>;
+    const { skip, take } = parseListQuery(query);
+    const status = typeof query.status === "string" ? query.status : undefined;
+    const includeMerged = String(query.includeMerged ?? "false").toLowerCase() === "true";
+    const where = {
+      tenantId: ctx.tenantId,
+      ...(status ? { status } : {}),
+      ...(includeMerged ? {} : { mergedIntoIdentityId: null })
+    };
+
+    const [rows, total] = await Promise.all([
+      prismaUnsafe.faceIdentity.findMany({
+        where,
+        include: {
+          members: {
+            include: {
+              faceDetection: {
+                include: {
+                  embedding: true,
+                  clusterMembership: { include: { cluster: true } },
+                  identityMembership: { include: { identity: true } },
+                  camera: true
+                }
+              }
+            }
+          }
+        },
+        orderBy: { updatedAt: "desc" },
+        skip,
+        take
+      }),
+      prismaUnsafe.faceIdentity.count({ where })
+    ]);
+
+    reply.header("x-total-count", String(total));
+    return {
+      data: rows.map((identity: any): FaceIdentitySummaryResponse => {
+        const faces = identity.members
+          .map((member: any) => {
+            const face = faceDetectionResponse(member.faceDetection);
+            return {
+              ...face,
+              cameraName: member.faceDetection.camera?.name ?? member.faceDetection.cameraId
+            };
+          })
+          .sort((left: any, right: any) => right.frameTs.localeCompare(left.frameTs));
+        const summary = summarizeIdentityFaces(faces);
+        return {
+          id: identity.id,
+          tenantId: identity.tenantId,
+          displayName: identity.displayName,
+          status: identity.status,
+          mergedIntoIdentityId: identity.mergedIntoIdentityId,
+          createdAt: toISO(identity.createdAt),
+          updatedAt: toISO(identity.updatedAt),
+          memberCount: identity.members.length,
+          latestSeenAt: summary.latestSeenAt,
+          cameras: summary.cameras,
+          faces: faces.slice(0, 6)
+        };
+      }),
+      total
+    };
+  });
+
   app.get("/faces/identities/:id", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
     const ctx = getTenantContext(request);
     assertRole(request, ["tenant_admin", "monitor", "client_user"]);
@@ -6415,16 +6961,61 @@ export async function buildApp() {
           include: {
             faceDetection: {
               include: {
+                camera: true,
                 embedding: true,
                 clusterMembership: { include: { cluster: true } },
                 identityMembership: { include: { identity: true } }
               }
             }
-          }
+          },
+          orderBy: { faceDetection: { frameTs: "desc" } }
+        },
+        sourceMergeLogs: {
+          include: {
+            targetIdentity: true
+          },
+          orderBy: { createdAt: "desc" }
+        },
+        targetMergeLogs: {
+          include: {
+            sourceIdentity: true
+          },
+          orderBy: { createdAt: "desc" }
         }
       }
     });
     if (!identity) throw app.httpErrors.notFound();
+
+    const faces = identity.members
+      .map((member: any) => {
+        const face = faceDetectionResponse(member.faceDetection);
+        return {
+          ...face,
+          cameraName: member.faceDetection.camera?.name ?? member.faceDetection.cameraId
+        };
+      })
+      .sort((left: any, right: any) => right.frameTs.localeCompare(left.frameTs));
+    const summary = summarizeIdentityFaces(faces);
+    const mergeHistory = [
+      ...identity.sourceMergeLogs.map((entry: any) => ({
+        id: entry.id,
+        sourceIdentityId: entry.sourceIdentityId,
+        sourceDisplayName: identity.displayName,
+        targetIdentityId: entry.targetIdentityId,
+        targetDisplayName: entry.targetIdentity?.displayName ?? null,
+        reason: entry.reason ?? null,
+        createdAt: toISO(entry.createdAt)
+      })),
+      ...identity.targetMergeLogs.map((entry: any) => ({
+        id: entry.id,
+        sourceIdentityId: entry.sourceIdentityId,
+        sourceDisplayName: entry.sourceIdentity?.displayName ?? null,
+        targetIdentityId: entry.targetIdentityId,
+        targetDisplayName: identity.displayName,
+        reason: entry.reason ?? null,
+        createdAt: toISO(entry.createdAt)
+      }))
+    ].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 
     return {
       data: {
@@ -6436,8 +7027,12 @@ export async function buildApp() {
         createdAt: toISO(identity.createdAt),
         updatedAt: toISO(identity.updatedAt),
         memberCount: identity.members.length,
-        faces: identity.members.map((member: any) => faceDetectionResponse(member.faceDetection))
-      }
+        latestSeenAt: summary.latestSeenAt,
+        cameras: summary.cameras,
+        faces,
+        appearances: summary.appearances,
+        mergeHistory
+      } satisfies FaceIdentityDetailResponse
     };
   });
 
@@ -6928,6 +7523,164 @@ export async function buildApp() {
         diff
       }
     };
+  });
+
+  app.get("/ops/nodes/:nodeId/deploy-definition", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
+    const { nodeId } = request.params as { nodeId: string };
+    const [desiredRow, observedRow] = await Promise.all([
+      prisma.inferenceNodeDesiredConfig.findUnique({ where: { nodeId } }),
+      prisma.inferenceNodeSnapshot.findUnique({
+        where: { nodeId },
+        include: { assignments: { select: { tenantId: true }, orderBy: { tenantId: "asc" } } }
+      })
+    ]);
+
+    if (!desiredRow && !observedRow) throw app.httpErrors.notFound("Node not found");
+
+    const desired = desiredRow ? normalizeDesiredNodeConfig(desiredRow) : null;
+    const observed = observedRow ? nodeObservedConfigResponse(observedRow) : null;
+    const definition = buildNodeDeployDefinition({ nodeId, desired, observed });
+    if (!definition) throw app.httpErrors.notFound("Node not found");
+    return { data: definition };
+  });
+
+  app.get("/ops/nodes/deploy-bundle", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
+    const query = z
+      .object({
+        nodeIds: z.string().optional()
+      })
+      .parse(request.query ?? {});
+    const requestedNodeIds = Array.from(
+      new Set(
+        (query.nodeIds ?? "")
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean)
+      )
+    );
+
+    const whereClause = requestedNodeIds.length > 0 ? { nodeId: { in: requestedNodeIds } } : {};
+    const [desiredRows, observedRows] = await Promise.all([
+      prisma.inferenceNodeDesiredConfig.findMany({
+        where: whereClause,
+        orderBy: { nodeId: "asc" }
+      }),
+      prisma.inferenceNodeSnapshot.findMany({
+        where: whereClause,
+        include: { assignments: { select: { tenantId: true }, orderBy: { tenantId: "asc" } } },
+        orderBy: { nodeId: "asc" }
+      })
+    ]);
+
+    const desiredByNodeId = new Map(desiredRows.map((row) => [row.nodeId, normalizeDesiredNodeConfig(row)]));
+    const observedByNodeId = new Map(observedRows.map((row) => [row.nodeId, nodeObservedConfigResponse(row)]));
+    const nodeIds = requestedNodeIds.length > 0 ? requestedNodeIds : Array.from(new Set([...desiredByNodeId.keys(), ...observedByNodeId.keys()])).sort();
+    if (nodeIds.length === 0) {
+      return {
+        data: {
+          generatedAt: new Date().toISOString(),
+          nodeIds: [],
+          warnings: [],
+          composeYaml: "services:\n  {}\n",
+          definitions: []
+        }
+      };
+    }
+
+    const definitions = nodeIds
+      .map((nodeId) =>
+        buildNodeDeployDefinition({
+          nodeId,
+          desired: desiredByNodeId.get(nodeId) ?? null,
+          observed: observedByNodeId.get(nodeId) ?? null
+        })
+      )
+      .filter((definition): definition is NonNullable<typeof definition> => Boolean(definition));
+
+    return { data: buildDeployBundle(definitions) };
+  });
+
+  app.post("/ops/nodes/deploy-bundle/export", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
+    if (!request.ctx?.isSuperuser) throw app.httpErrors.forbidden("Only superuser can export deploy bundles");
+    const body = z
+      .object({
+        nodeIds: z.array(z.string().min(1)).optional()
+      })
+      .parse(request.body ?? {});
+    const requestedNodeIds = Array.from(new Set((body.nodeIds ?? []).map((value) => value.trim()).filter(Boolean)));
+    const whereClause = requestedNodeIds.length > 0 ? { nodeId: { in: requestedNodeIds } } : {};
+    const [desiredRows, observedRows] = await Promise.all([
+      prisma.inferenceNodeDesiredConfig.findMany({
+        where: whereClause,
+        orderBy: { nodeId: "asc" }
+      }),
+      prisma.inferenceNodeSnapshot.findMany({
+        where: whereClause,
+        include: { assignments: { select: { tenantId: true }, orderBy: { tenantId: "asc" } } },
+        orderBy: { nodeId: "asc" }
+      })
+    ]);
+
+    const desiredByNodeId = new Map(desiredRows.map((row) => [row.nodeId, normalizeDesiredNodeConfig(row)]));
+    const observedByNodeId = new Map(observedRows.map((row) => [row.nodeId, nodeObservedConfigResponse(row)]));
+    const nodeIds = requestedNodeIds.length > 0 ? requestedNodeIds : Array.from(new Set([...desiredByNodeId.keys(), ...observedByNodeId.keys()])).sort();
+    const definitions = nodeIds
+      .map((nodeId) =>
+        buildNodeDeployDefinition({
+          nodeId,
+          desired: desiredByNodeId.get(nodeId) ?? null,
+          observed: observedByNodeId.get(nodeId) ?? null
+        })
+      )
+      .filter((definition): definition is NonNullable<typeof definition> => Boolean(definition));
+    const bundle = buildDeployBundle(definitions);
+    const exported = await persistDeployBundle({
+      bundle,
+      outputPath: detectionDeployOutputPath
+    });
+
+    return {
+      data: {
+        ...bundle,
+        export: exported
+      }
+    };
+  });
+
+  app.get("/ops/nodes/stack-sync-detection", { preHandler: authPreHandler }, async () => {
+    return { data: detectionStackSyncState };
+  });
+
+  app.post("/ops/nodes/stack-sync-detection", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
+    if (!request.ctx?.isSuperuser) throw app.httpErrors.forbidden("Only superuser can trigger stack sync");
+    const body = z
+      .object({
+        mode: z.enum(["onprem", "onprem-remote"]).default("onprem"),
+        profile: z.string().trim().min(1).optional(),
+        dryRun: z.boolean().default(false),
+        timeoutMs: z.number().int().min(5_000).max(3_600_000).optional(),
+        maxRetries: z.number().int().min(0).max(5).optional(),
+        retryDelayMs: z.number().int().min(0).max(60_000).optional()
+      })
+      .parse(request.body ?? {});
+
+    if (detectionStackSyncState.status === "running") {
+      throw new ApiDomainError({
+        statusCode: 409,
+        apiCode: "STACK_SYNC_ALREADY_RUNNING",
+        message: "A detection stack sync is already running",
+        details: detectionStackSyncState
+      });
+    }
+    runDetectionStackSync({
+      mode: body.mode,
+      profile: body.profile ?? null,
+      dryRun: body.dryRun,
+      timeoutMs: body.timeoutMs,
+      maxRetries: body.maxRetries,
+      retryDelayMs: body.retryDelayMs
+    });
+    return { data: detectionStackSyncState };
   });
 
   app.put("/ops/nodes/:nodeId/config", { preHandler: authPreHandler }, async (request: FastifyRequest) => {

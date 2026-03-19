@@ -26,12 +26,15 @@ Definir el contrato operativo para despliegues reproducibles y testeables de Nea
 1. Validación de prerequisitos del host.
 2. Preparación de storage (local o remoto).
 3. Render de `.env` on-prem correspondiente.
-4. Levantar stack (`pnpm pilot:stack:up:onprem` o `pnpm pilot:stack:up:onprem:remote`).
-5. Verificación funcional (`pnpm pilot:smoke`).
+4. Sincronizar nodos de detección (`pnpm pilot:stack:sync-detection:onprem` o `pnpm pilot:stack:sync-detection:onprem:remote`).
+5. Verificación funcional (`pnpm pilot:smoke` + `pnpm pilot:smoke:detection-sync`).
+6. Verificación de integración API para stack sync (`pnpm pilot:smoke:stack-sync-api` en `dry-run`).
 
 ## 5. Criterio de éxito
 - `docker ps` muestra todos los servicios principales `Up`.
 - `pnpm pilot:smoke` finaliza en `Smoke planes PASS`.
+- `pnpm pilot:smoke:detection-sync` finaliza en `Smoke detection sync PASS`.
+- `pnpm pilot:smoke:stack-sync-api` finaliza en `Stack sync API smoke PASS`.
 - Test mínimo de regresión:
   - `pnpm --filter @app/api test`
   - `pnpm --filter @app/stream-gateway test`
@@ -41,11 +44,16 @@ Se considera despliegue fallido si se cumple cualquiera de estas condiciones:
 - No se puede montar el vault requerido por el modo.
 - Stack no converge (`docker compose up` con error).
 - Falla `pilot:smoke`.
+- Falla `pilot:smoke:detection-sync`.
+- Falla `pilot:smoke:stack-sync-api`.
 
 ## 7. Rollback
 - Re-ejecutar deploy con `app_version` anterior estable.
 - Si aplica cambio de modo, volver al `vault_mode` previo.
-- Confirmar estado con `pnpm pilot:smoke`.
+- Confirmar estado con:
+  - `pnpm pilot:smoke`
+  - `pnpm pilot:smoke:detection-sync`
+  - `pnpm pilot:smoke:stack-sync-api` (en `dry-run`)
 
 ## 8. Seguridad y operación
 - Nunca hardcodear secretos en playbooks; usar `ansible-vault` o variables inyectadas.

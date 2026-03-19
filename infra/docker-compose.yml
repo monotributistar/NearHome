@@ -91,6 +91,7 @@ services:
     depends_on:
       - temporal
       - inference-bridge
+    restart: unless-stopped
     networks:
       - nearhome_net
 
@@ -106,6 +107,7 @@ services:
       - "8072:8072"
     depends_on:
       - temporal
+    restart: unless-stopped
     networks:
       - nearhome_net
 
@@ -113,6 +115,7 @@ services:
     build:
       context: ../apps/inference-node-yolo
       dockerfile: Dockerfile
+    profiles: ["static-detection"]
     environment:
       INFERENCE_BRIDGE_URL: http://inference-bridge:8090
       NODE_ID: ${YOLO_NODE_ID:-node-yolo-1}
@@ -139,6 +142,7 @@ services:
     build:
       context: ../apps/inference-node-mediapipe
       dockerfile: Dockerfile
+    profiles: ["static-detection"]
     environment:
       INFERENCE_BRIDGE_URL: http://inference-bridge:8090
       NODE_ID: ${MEDIAPIPE_NODE_ID:-node-mediapipe-1}
