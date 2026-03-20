@@ -151,8 +151,16 @@ type DetectorFlags = {
   lpr: boolean;
 };
 
-type DetectionRuntimeProvider = "yolo" | "mediapipe";
-type DetectionTaskType = "person_detection" | "object_detection" | "license_plate_detection" | "face_detection" | "pose_estimation";
+type DetectionRuntimeProvider = "yolo" | "mediapipe" | "audio_vad" | "audio_classifier";
+type DetectionTaskType =
+  | "person_detection"
+  | "object_detection"
+  | "license_plate_detection"
+  | "face_detection"
+  | "pose_estimation"
+  | "speech_detection"
+  | "audio_event_classification"
+  | "transcription";
 type DetectionQuality = "fast" | "balanced" | "accurate";
 
 type CameraDetectionPipeline = {
@@ -173,6 +181,21 @@ type CameraDetectionProfile = {
   cameraId: string;
   tenantId: string;
   pipelines: CameraDetectionPipeline[];
+  audio?: {
+    enabled: boolean;
+    execution: "core" | "detection_plane";
+    sampleRate: number;
+    channels: number;
+    windowMs: number;
+    overlapMs: number;
+    minVolume: number;
+    detectors: string[];
+    transcription: {
+      enabled: boolean;
+      mode: "off" | "on_demand" | "rules_based";
+      minConfidence: number;
+    };
+  };
   configVersion: number;
   updatedAt: string;
 };
@@ -357,15 +380,19 @@ const DetectionJobStatusSchema = z.enum(["queued", "running", "succeeded", "fail
 const DetectionModeSchema = z.enum(["realtime", "batch"]);
 const DetectionSourceSchema = z.enum(["snapshot", "clip", "range"]);
 const DetectionProviderSchema = z.enum(["onprem_bento", "huggingface_space", "external_http"]);
-const DetectionRuntimeProviderSchema = z.enum(["yolo", "mediapipe"]);
+const DetectionRuntimeProviderSchema = z.enum(["yolo", "mediapipe", "audio_vad", "audio_classifier"]);
 const DetectionTaskTypeSchema = z.enum([
   "person_detection",
   "object_detection",
   "license_plate_detection",
   "face_detection",
-  "pose_estimation"
+  "pose_estimation",
+  "speech_detection",
+  "audio_event_classification",
+  "transcription"
 ]);
 const DetectionQualitySchema = z.enum(["fast", "balanced", "accurate"]);
+const DetectionMediaKindSchema = z.enum(["image", "audio"]);
 const DesiredNodeCapabilitySchema = z.object({
   capabilityId: z.string(),
   taskTypes: z.array(z.string()).default([]),
@@ -389,6 +416,29 @@ const CameraDetectionPipelineSchema = z.object({
 });
 const CameraDetectionProfileInputSchema = z.object({
   pipelines: z.array(CameraDetectionPipelineSchema).default([]),
+  audio: z
+    .object({
+      enabled: z.boolean().default(false),
+      execution: z.enum(["core", "detection_plane"]).default("detection_plane"),
+      sampleRate: z.number().int().positive().default(16000),
+      channels: z.number().int().min(1).max(2).default(1),
+      windowMs: z.number().int().positive().default(500),
+      overlapMs: z.number().int().nonnegative().default(250),
+      minVolume: z.number().nonnegative().default(0.02),
+      detectors: z.array(z.string()).default([]),
+      transcription: z
+        .object({
+          enabled: z.boolean().default(false),
+          mode: z.enum(["off", "on_demand", "rules_based"]).default("off"),
+          minConfidence: z.number().min(0).max(1).default(0.75)
+        })
+        .default({
+          enabled: false,
+          mode: "off",
+          minConfidence: 0.75
+        })
+    })
+    .optional(),
   configVersion: z.number().int().positive().optional()
 });
 const DetectionJobEffectiveConfigSchema = z.object({
@@ -437,6 +487,10 @@ const ModelCatalogEntryInputSchema = z.object({
   outputs: z.record(z.any()).optional(),
   status: z.enum(["active", "disabled"]).default("active")
 });
+
+function isAudioTaskType(taskType: string) {
+  return taskType === "speech_detection" || taskType === "audio_event_classification" || taskType === "transcription";
+}
 
 function canTransitionCameraLifecycle(from: CameraLifecycleStatus, to: CameraLifecycleStatus) {
   const allowed: Record<CameraLifecycleStatus, CameraLifecycleStatus[]> = {
@@ -497,6 +551,21 @@ function defaultCameraDetectionProfile(tenantId: string, cameraId: string): Came
     cameraId,
     tenantId,
     pipelines: [],
+    audio: {
+      enabled: false,
+      execution: "detection_plane",
+      sampleRate: 16000,
+      channels: 1,
+      windowMs: 500,
+      overlapMs: 250,
+      minVolume: 0.02,
+      detectors: [],
+      transcription: {
+        enabled: false,
+        mode: "off",
+        minConfidence: 0.75
+      }
+    },
     configVersion: 1,
     updatedAt: new Date().toISOString()
   };
@@ -512,6 +581,7 @@ function parseCameraDetectionProfile(raw: string | null, tenantId: string, camer
       cameraId,
       tenantId,
       pipelines: parsed.pipelines ?? fallback.pipelines,
+      audio: parsed.audio ?? fallback.audio,
       configVersion: parsed.configVersion ?? fallback.configVersion,
       updatedAt: typeof source.updatedAt === "string" ? source.updatedAt : fallback.updatedAt
     };
@@ -523,6 +593,7 @@ function parseCameraDetectionProfile(raw: string | null, tenantId: string, camer
 function serializeCameraDetectionProfile(profile: CameraDetectionProfile) {
   return JSON.stringify({
     pipelines: profile.pipelines,
+    audio: profile.audio,
     configVersion: profile.configVersion,
     updatedAt: profile.updatedAt
   });
@@ -1517,24 +1588,37 @@ function resolveZoneFromProfile(zoneMapRaw: string | null, bbox: { x: number; y:
   return null;
 }
 
-function deriveIncidentFromDetection(args: { label: string; zoneId: string | null; location: string | null }) {
+function deriveIncidentFromDetection(args: {
+  label: string;
+  zoneId: string | null;
+  location: string | null;
+  mediaKind?: "image" | "audio";
+}) {
+  const mediaKind = args.mediaKind ?? "image";
   const label = args.label.toLowerCase();
+  const suffix = mediaKind === "audio" ? " (audio)" : "";
   if (label.includes("dog")) {
     return {
       type: "dog_in_backyard",
-      summary: `Dog detected${args.zoneId ? ` in zone ${args.zoneId}` : ""}${args.location ? ` at ${args.location}` : ""}`
+      summary: `Dog detected${suffix}${args.zoneId ? ` in zone ${args.zoneId}` : ""}${args.location ? ` at ${args.location}` : ""}`
     };
   }
   if (label.includes("branch")) {
     return {
       type: "branch_fall_backyard",
-      summary: `Branch fall detected${args.zoneId ? ` in zone ${args.zoneId}` : ""}${args.location ? ` at ${args.location}` : ""}`
+      summary: `Branch fall detected${suffix}${args.zoneId ? ` in zone ${args.zoneId}` : ""}${args.location ? ` at ${args.location}` : ""}`
     };
   }
   if (label.includes("person")) {
     return {
       type: "person_approached_front_window",
-      summary: `Person detected${args.zoneId ? ` in zone ${args.zoneId}` : ""}${args.location ? ` at ${args.location}` : ""}`
+      summary: `Person detected${suffix}${args.zoneId ? ` in zone ${args.zoneId}` : ""}${args.location ? ` at ${args.location}` : ""}`
+    };
+  }
+  if (mediaKind === "audio") {
+    return {
+      type: `audio_event_${label.replace(/[^a-z0-9]+/g, "_")}`,
+      summary: `${args.label} detected from audio${args.location ? ` at ${args.location}` : ""}`
     };
   }
   return {
@@ -2244,6 +2328,7 @@ export async function buildApp() {
   const streamTokenSecret = process.env.STREAM_TOKEN_SECRET ?? "dev-stream-token-secret";
   const streamGatewayUrl = process.env.STREAM_GATEWAY_URL?.replace(/\/$/, "") ?? null;
   const detectionBridgeUrl = process.env.DETECTION_BRIDGE_URL?.replace(/\/$/, "") ?? null;
+  const audioDetectionRunnerUrl = process.env.AUDIO_DETECTION_RUNNER_URL?.replace(/\/$/, "") ?? null;
   const temporalDispatchUrl = process.env.DETECTION_TEMPORAL_DISPATCH_URL?.replace(/\/$/, "") ?? null;
   const detectionCallbackSecret = process.env.DETECTION_CALLBACK_SECRET ?? "dev-detection-callback-secret";
   const eventGatewayUrl = process.env.EVENT_GATEWAY_URL?.replace(/\/$/, "") ?? null;
@@ -2688,11 +2773,15 @@ export async function buildApp() {
     detections: Array<{
       label?: string;
       confidence?: number;
+      mediaKind?: "image" | "audio";
       bbox?: { x?: number; y?: number; w?: number; h?: number };
       keypoints?: unknown;
       attributes?: Record<string, unknown>;
       providerMeta?: Record<string, unknown>;
       frameTs?: string;
+      startedAt?: string;
+      endedAt?: string;
+      temporalWindow?: { startMs?: number; endMs?: number; durationMs?: number };
     }>;
     providerMeta?: Record<string, unknown>;
   }) => {
@@ -2734,15 +2823,17 @@ export async function buildApp() {
         const det = args.detections[i];
         const label = typeof det.label === "string" && det.label.length > 0 ? det.label : "unknown";
         const confidence = typeof det.confidence === "number" ? det.confidence : 0;
+        const mediaKind = DetectionMediaKindSchema.safeParse(det.mediaKind).success ? (det.mediaKind as "image" | "audio") : "image";
         const bbox = {
           x: typeof det.bbox?.x === "number" ? det.bbox.x : 0,
           y: typeof det.bbox?.y === "number" ? det.bbox.y : 0,
           w: typeof det.bbox?.w === "number" ? det.bbox.w : 0.1,
           h: typeof det.bbox?.h === "number" ? det.bbox.h : 0.1
         };
-        const frameTs = typeof det.frameTs === "string" ? new Date(det.frameTs) : new Date();
-        const zoneId = resolveZoneFromProfile(job.camera.profile?.zoneMap ?? null, bbox);
-        const incident = deriveIncidentFromDetection({ label, zoneId, location: job.camera.location });
+        const tsInput = typeof det.frameTs === "string" ? det.frameTs : typeof det.startedAt === "string" ? det.startedAt : undefined;
+        const frameTs = tsInput ? new Date(tsInput) : new Date();
+        const zoneId = mediaKind === "image" ? resolveZoneFromProfile(job.camera.profile?.zoneMap ?? null, bbox) : null;
+        const incident = deriveIncidentFromDetection({ label, zoneId, location: job.camera.location, mediaKind });
 
         const observation = await tx.detectionObservation.create({
           data: {
@@ -2754,7 +2845,13 @@ export async function buildApp() {
             confidence,
             bbox: JSON.stringify(bbox),
             keypoints: det.keypoints ? JSON.stringify(det.keypoints) : null,
-            attributes: det.attributes ? JSON.stringify(det.attributes) : null,
+            attributes: JSON.stringify({
+              ...(det.attributes ?? {}),
+              mediaKind,
+              ...(det.temporalWindow ? { temporalWindow: det.temporalWindow } : {}),
+              ...(det.startedAt ? { startedAt: det.startedAt } : {}),
+              ...(det.endedAt ? { endedAt: det.endedAt } : {})
+            }),
             providerMeta: det.providerMeta
               ? JSON.stringify(det.providerMeta)
               : args.providerMeta
@@ -2763,48 +2860,56 @@ export async function buildApp() {
           }
         });
 
-        await attachFaceArtifacts({
-          tx,
-          job,
-          observation: { id: observation.id, frameTs },
-          detection: det,
-          bbox
-        });
+        if (mediaKind === "image") {
+          await attachFaceArtifacts({
+            tx,
+            job,
+            observation: { id: observation.id, frameTs },
+            detection: det,
+            bbox
+          });
+        }
 
-        const track = await tx.track.create({
-          data: {
-            jobId: job.id,
-            tenantId: job.tenantId,
-            cameraId: job.cameraId,
-            classLabel: label,
-            trackExternalId: `${job.id}-${i + 1}`,
-            startedAt: frameTs,
-            metadata: JSON.stringify({ zoneId })
-          }
-        });
+        const track =
+          mediaKind === "image"
+            ? await tx.track.create({
+                data: {
+                  jobId: job.id,
+                  tenantId: job.tenantId,
+                  cameraId: job.cameraId,
+                  classLabel: label,
+                  trackExternalId: `${job.id}-${i + 1}`,
+                  startedAt: frameTs,
+                  metadata: JSON.stringify({ zoneId })
+                }
+              })
+            : null;
 
-        await tx.trackPoint.create({
-          data: {
-            trackId: track.id,
-            ts: frameTs,
-            x: bbox.x + bbox.w / 2,
-            y: bbox.y + bbox.h / 2,
-            zoneId
-          }
-        });
+        if (track) {
+          await tx.trackPoint.create({
+            data: {
+              trackId: track.id,
+              ts: frameTs,
+              x: bbox.x + bbox.w / 2,
+              y: bbox.y + bbox.h / 2,
+              zoneId
+            }
+          });
+        }
 
         const primitive = await tx.scenePrimitiveEvent.create({
           data: {
             tenantId: job.tenantId,
             cameraId: job.cameraId,
             jobId: job.id,
-            type: `object_detected.${label.toLowerCase()}`,
+            type: mediaKind === "audio" ? `audio_detected.${label.toLowerCase()}` : `object_detected.${label.toLowerCase()}`,
             severity: confidence >= 0.8 ? "high" : confidence >= 0.5 ? "medium" : "low",
             startedAt: frameTs,
             payload: JSON.stringify({
               confidence,
               zoneId,
-              observationId: observation.id
+              observationId: observation.id,
+              mediaKind
             })
           }
         });
@@ -2822,7 +2927,8 @@ export async function buildApp() {
             payload: JSON.stringify({
               label,
               confidence,
-              zoneId
+              zoneId,
+              mediaKind
             })
           }
         });
@@ -2842,7 +2948,7 @@ export async function buildApp() {
             tenantId: job.tenantId,
             incidentId: incidentEvent.id,
             observationId: observation.id,
-            trackId: track.id,
+            trackId: track?.id ?? null,
             scenePrimitiveEventId: primitive.id
           }
         });
@@ -3077,6 +3183,8 @@ export async function buildApp() {
         thresholds,
         outputs
       };
+      const mediaKind = isAudioTaskType(pipeline.taskType) ? "audio" : "image";
+      const audioExecution = mediaKind === "audio" ? (profile.audio?.execution ?? "detection_plane") : undefined;
 
       return {
         provider,
@@ -3091,6 +3199,8 @@ export async function buildApp() {
           schedule,
           thresholds,
           outputs,
+          mediaKind,
+          ...(audioExecution ? { audioExecution } : {}),
           resolvedConfig: effectiveConfig
         }
       };
@@ -3139,6 +3249,13 @@ export async function buildApp() {
           thresholds: normalizeRecord(baseOptions.thresholds),
           outputs: normalizeRecord(baseOptions.outputs)
         };
+        const mediaKind = isAudioTaskType(parsedTaskType.data) ? "audio" : "image";
+        const audioExecution =
+          mediaKind === "audio" && typeof baseOptions.audioExecution === "string"
+            ? baseOptions.audioExecution
+            : mediaKind === "audio"
+              ? "detection_plane"
+              : undefined;
 
         return {
           provider,
@@ -3146,6 +3263,8 @@ export async function buildApp() {
           options: {
             ...baseOptions,
             modelRef: catalogEntry.modelRef,
+            mediaKind,
+            ...(audioExecution ? { audioExecution } : {}),
             resolvedConfig: effectiveConfig
           }
         };
@@ -3408,8 +3527,20 @@ export async function buildApp() {
       provider: job.provider
     };
 
+    const isAudioTask =
+      inferPayload.taskType === "speech_detection" ||
+      inferPayload.taskType === "audio_event_classification" ||
+      inferPayload.taskType === "transcription" ||
+      (typeof options.mediaKind === "string" && options.mediaKind === "audio");
+    const audioExecutionMode = typeof options.audioExecution === "string" ? options.audioExecution : "detection_plane";
+    const inferUrl = isAudioTask
+      ? audioExecutionMode === "core"
+        ? `${detectionBridgeUrl}/v1/infer`
+        : `${(audioDetectionRunnerUrl ?? "http://audio-detection-runner:8074").replace(/\/$/, "")}/v1/infer/audio`
+      : `${detectionBridgeUrl}/v1/infer`;
+
     try {
-      const response = await fetch(`${detectionBridgeUrl}/v1/infer`, {
+      const response = await fetch(inferUrl, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(inferPayload)
@@ -6346,6 +6477,7 @@ export async function buildApp() {
             z.object({
               label: z.string().optional(),
               confidence: z.number().optional(),
+              mediaKind: DetectionMediaKindSchema.optional(),
               bbox: z
                 .object({
                   x: z.number().optional(),
@@ -6357,7 +6489,16 @@ export async function buildApp() {
               keypoints: z.unknown().optional(),
               attributes: z.record(z.any()).optional(),
               providerMeta: z.record(z.any()).optional(),
-              frameTs: z.string().optional()
+              frameTs: z.string().optional(),
+              startedAt: z.string().optional(),
+              endedAt: z.string().optional(),
+              temporalWindow: z
+                .object({
+                  startMs: z.number().int().nonnegative().optional(),
+                  endMs: z.number().int().nonnegative().optional(),
+                  durationMs: z.number().int().positive().optional()
+                })
+                .optional()
             })
           )
           .default([]),

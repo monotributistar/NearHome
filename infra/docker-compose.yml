@@ -14,6 +14,7 @@ services:
       STREAM_GATEWAY_URL: http://stream-gateway:3010
       DETECTION_EXECUTION_MODE: temporal
       DETECTION_TEMPORAL_DISPATCH_URL: http://detection-dispatcher:8072
+      AUDIO_DETECTION_RUNNER_URL: http://audio-detection-runner:8074
       DETECTION_CALLBACK_SECRET: dev-detection-callback-secret
       EVENT_GATEWAY_URL: http://event-gateway:3011
       EVENT_PUBLISH_SECRET: dev-event-publish-secret
@@ -86,12 +87,26 @@ services:
       TEMPORAL_SERVER: temporal:7233
       TEMPORAL_TASK_QUEUE: nearhome-detection
       INFERENCE_BRIDGE_URL: http://inference-bridge:8090
+      AUDIO_DETECTION_RUNNER_URL: http://audio-detection-runner:8074
       CONTROL_PLANE_URL: http://api:3001
       DETECTION_CALLBACK_SECRET: dev-detection-callback-secret
     depends_on:
       - temporal
       - inference-bridge
+      - audio-detection-runner
     restart: unless-stopped
+    networks:
+      - nearhome_net
+
+  audio-detection-runner:
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile.node-workspace
+    command: ["pnpm", "--filter", "@app/audio-detection-runner", "dev"]
+    environment:
+      PORT: 8074
+    ports:
+      - "8074:8074"
     networks:
       - nearhome_net
 

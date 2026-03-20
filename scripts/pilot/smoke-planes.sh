@@ -8,6 +8,7 @@ BRIDGE_URL="${BRIDGE_URL:-http://localhost:8090}"
 YOLO_URL="${YOLO_URL:-http://localhost:8091}"
 MEDIAPIPE_URL="${MEDIAPIPE_URL:-http://localhost:8092}"
 DISPATCHER_URL="${DISPATCHER_URL:-http://localhost:8072}"
+AUDIORUNNER_URL="${AUDIORUNNER_URL:-http://localhost:8074}"
 TEMPORAL_UI_URL="${TEMPORAL_UI_URL:-http://localhost:8088}"
 EVENT_PUBLISH_SECRET="${EVENT_PUBLISH_SECRET:-dev-event-publish-secret}"
 SMOKE_HEALTH_RETRIES="${SMOKE_HEALTH_RETRIES:-15}"
@@ -90,6 +91,7 @@ if ! check_health_optional yolo "$YOLO_URL/health" || ! check_health_optional me
   fi
 fi
 check_health dispatcher "$DISPATCHER_URL/health"
+check_health audio_runner "$AUDIORUNNER_URL/health"
 curl -fsS "$TEMPORAL_UI_URL" >/tmp/temporal_ui.html
 
 echo "Smoke planes PASS"

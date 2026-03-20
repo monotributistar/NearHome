@@ -2924,6 +2924,141 @@ describe("NH-DP-13 detection pipeline execution", () => {
   });
 });
 
+describe("NH-DP-AUDIO-01 audio routing to detection plane runner", () => {
+  it("routes audio jobs to AUDIO_DETECTION_RUNNER_URL and persists audio incidents", async () => {
+    const previousBridge = process.env.DETECTION_BRIDGE_URL;
+    const previousAudioRunner = process.env.AUDIO_DETECTION_RUNNER_URL;
+    const previousMode = process.env.DETECTION_EXECUTION_MODE;
+
+    process.env.DETECTION_BRIDGE_URL = "http://mock-inference-bridge";
+    process.env.AUDIO_DETECTION_RUNNER_URL = "http://mock-audio-runner";
+    process.env.DETECTION_EXECUTION_MODE = "inline";
+
+    const fetchMock = vi.fn(async (input: any) => {
+      const url = String(input);
+      if (url.includes("http://mock-audio-runner/v1/infer/audio")) {
+        return new globalThis.Response(
+          JSON.stringify({
+            detections: [
+              {
+                label: "loud_noise",
+                confidence: 0.84,
+                mediaKind: "audio",
+                startedAt: "2026-03-19T10:00:00.000Z",
+                endedAt: "2026-03-19T10:00:00.500Z",
+                temporalWindow: { startMs: 0, endMs: 500, durationMs: 500 },
+                attributes: { rms: 0.18 }
+              }
+            ],
+            providerMeta: { provider: "audio_runner", source: "rtsp/go2rtc" }
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+      if (url.includes("http://mock-inference-bridge/v1/infer")) {
+        return new globalThis.Response("bridge should not be called for audio", { status: 500 });
+      }
+      return new globalThis.Response("not found", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const pipelineApp = await buildApp();
+    await pipelineApp.ready();
+
+    try {
+      const loginResponse = await pipelineApp.inject({
+        method: "POST",
+        url: "/auth/login",
+        headers: { "x-forwarded-for": `test-audio-route-${Date.now()}` },
+        payload: { email: "admin@nearhome.dev", password: "demo1234" }
+      });
+      expect(loginResponse.statusCode).toBe(200);
+      const token = loginResponse.json<{ accessToken: string }>().accessToken;
+
+      const meResponse = await pipelineApp.inject({
+        method: "GET",
+        url: "/auth/me",
+        headers: { authorization: `Bearer ${token}` }
+      });
+      expect(meResponse.statusCode).toBe(200);
+      const tenantId = meResponse.json<{ memberships: Array<{ tenantId: string }> }>().memberships[0]?.tenantId;
+      expect(tenantId).toBeTruthy();
+
+      const camerasResponse = await pipelineApp.inject({
+        method: "GET",
+        url: "/cameras?_start=0&_end=1",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "x-tenant-id": tenantId!
+        }
+      });
+      expect(camerasResponse.statusCode).toBe(200);
+      const cameraId = camerasResponse.json<{ data: Array<{ id: string }> }>().data[0]?.id;
+      expect(cameraId).toBeTruthy();
+
+      const createResponse = await pipelineApp.inject({
+        method: "POST",
+        url: "/v1/detections/jobs",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "x-tenant-id": tenantId!
+        },
+        payload: {
+          cameraId,
+          mode: "realtime",
+          source: "snapshot",
+          provider: "onprem_bento",
+          options: { modelRef: "audio-mvp@0.1.0", taskType: "audio_event_classification", mediaKind: "audio" }
+        }
+      });
+      expect(createResponse.statusCode).toBe(200);
+      const jobId = createResponse.json<{ data: { id: string } }>().data.id;
+
+      let jobStatus = "queued";
+      for (let i = 0; i < 30; i += 1) {
+        const jobResponse = await pipelineApp.inject({
+          method: "GET",
+          url: `/v1/detections/jobs/${jobId}`,
+          headers: {
+            authorization: `Bearer ${token}`,
+            "x-tenant-id": tenantId!
+          }
+        });
+        expect(jobResponse.statusCode).toBe(200);
+        jobStatus = jobResponse.json<{ data: { status: string } }>().data.status;
+        if (jobStatus === "succeeded") break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      expect(jobStatus).toBe("succeeded");
+
+      const calledUrls = fetchMock.mock.calls.map((entry) => String(entry[0]));
+      expect(calledUrls.some((url) => url.includes("http://mock-audio-runner/v1/infer/audio"))).toBe(true);
+      expect(calledUrls.some((url) => url.includes("http://mock-inference-bridge/v1/infer"))).toBe(false);
+
+      const incidentsResponse = await pipelineApp.inject({
+        method: "GET",
+        url: "/v1/incidents?_start=0&_end=20",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "x-tenant-id": tenantId!
+        }
+      });
+      expect(incidentsResponse.statusCode).toBe(200);
+      const incidents = incidentsResponse.json<{ data: Array<{ type: string }> }>().data;
+      expect(incidents.some((entry) => entry.type === "audio_event_loud_noise")).toBe(true);
+    } finally {
+      await pipelineApp.close();
+      vi.unstubAllGlobals();
+      process.env.DETECTION_BRIDGE_URL = previousBridge;
+      process.env.AUDIO_DETECTION_RUNNER_URL = previousAudioRunner;
+      process.env.DETECTION_EXECUTION_MODE = previousMode;
+    }
+  });
+});
+
 describe("NH-DP-14 temporal workflow dispatch", () => {
   it("dispatches detection job to temporal endpoint and stores workflow/run ids", async () => {
     const previousBridge = process.env.DETECTION_BRIDGE_URL;

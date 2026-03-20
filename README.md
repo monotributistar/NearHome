@@ -6,6 +6,7 @@ Monorepo PNPM + Turborepo con:
 - `apps/stream-gateway`: data-plane MVP para playback (provision + playback tokenizado)
 - `apps/event-gateway`: event-plane WS/SSE (token short-lived + tenant scoped)
 - `apps/inference-bridge`: FastAPI bridge para seleccionar nodos/proveedores de inferencia
+- `apps/audio-detection-runner`: runner TypeScript de detección de audio (sampler/gate/plugins/agregación)
 - `apps/detection-worker`: Temporal worker para jobs de detección
 - `apps/inference-node-yolo`: nodo de inferencia on-prem (object detection)
 - `apps/inference-node-mediapipe`: nodo de inferencia on-prem (pose/actions)
@@ -145,6 +146,7 @@ pnpm dev
 - Stream gateway metrics: `http://localhost:3010/metrics`
 - Event gateway: `http://localhost:3011`
 - Inference bridge: `http://localhost:8090`
+- Audio detection runner: `http://localhost:8074`
 - Inference node YOLO: `http://localhost:8091`
 - Inference node MediaPipe: `http://localhost:8092`
 - Admin: `http://localhost:5173`
@@ -193,6 +195,7 @@ Notas operativas:
 - `pnpm dev`
 - `pnpm dev:stream`
 - `pnpm dev:event`
+- `pnpm dev:audio-detection`
 - `pnpm db:reset`
 - `pnpm typecheck`
 - `pnpm build`
@@ -258,6 +261,7 @@ Nota: API publica eventos realtime en `event-gateway` vía `EVENT_GATEWAY_URL` +
   - stream-gateway
   - event-gateway (WS/SSE)
   - inference-bridge
+  - audio-detection-runner
   - detection-worker (Temporal)
   - detection-dispatcher (HTTP -> Temporal start workflow)
   - nodos de inferencia on-prem (YOLO/MediaPipe)

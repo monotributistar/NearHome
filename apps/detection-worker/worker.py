@@ -16,22 +16,32 @@ async def call_inference_bridge(payload: Dict[str, Any]) -> Dict[str, Any]:
     import httpx
 
     bridge_url = os.environ.get("INFERENCE_BRIDGE_URL", "http://inference-bridge:8090").rstrip("/")
+    audio_runner_url = os.environ.get("AUDIO_DETECTION_RUNNER_URL", "http://audio-detection-runner:8074").rstrip("/")
     options = payload.get("options") if isinstance(payload.get("options"), dict) else {}
+    task_type = str(options.get("taskType") or "object_detection")
+    media_kind = str(options.get("mediaKind") or "")
+    audio_execution = str(options.get("audioExecution") or "detection_plane")
+    is_audio = (
+        (media_kind == "audio" or task_type in {"speech_detection", "audio_event_classification", "transcription"})
+        and audio_execution != "core"
+    )
     infer_payload = {
         "requestId": str(payload.get("requestId") or f"det-{payload.get('jobId', 'unknown')}"),
         "jobId": str(payload["jobId"]),
         "tenantId": str(payload["tenantId"]),
         "cameraId": str(payload["cameraId"]),
-        "taskType": str(options.get("taskType") or "object_detection"),
+        "taskType": task_type,
         "modelRef": str(options.get("modelRef") or "yolo26n@1.0.0"),
         "mediaRef": payload.get("mediaRef", {}),
         "thresholds": options.get("thresholds") if isinstance(options.get("thresholds"), dict) else {},
         "deadlineMs": int(options.get("deadlineMs") or 15000),
         "priority": int(options.get("priority") or 5),
-        "provider": str(payload.get("provider") or "onprem_bento"),
+        "provider": str(payload.get("provider") or ("audio_runner" if is_audio else "onprem_bento")),
+        "options": options,
     }
+    endpoint = f"{audio_runner_url}/v1/infer/audio" if is_audio else f"{bridge_url}/v1/infer"
     async with httpx.AsyncClient(timeout=15) as client:
-        response = await client.post(f"{bridge_url}/v1/infer", json=infer_payload)
+        response = await client.post(endpoint, json=infer_payload)
         response.raise_for_status()
         return response.json()
 

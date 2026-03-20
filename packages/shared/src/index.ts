@@ -65,13 +65,16 @@ export const CameraSchema = z.object({
             .array(
               z.object({
                 pipelineId: z.string(),
-                provider: z.enum(["yolo", "mediapipe"]),
+                provider: z.enum(["yolo", "mediapipe", "audio_vad", "audio_classifier"]),
                 taskType: z.enum([
                   "person_detection",
                   "object_detection",
                   "license_plate_detection",
                   "face_detection",
-                  "pose_estimation"
+                  "pose_estimation",
+                  "speech_detection",
+                  "audio_event_classification",
+                  "transcription"
                 ]),
                 quality: z.enum(["fast", "balanced", "accurate"]),
                 enabled: z.boolean(),
@@ -86,6 +89,7 @@ export const CameraSchema = z.object({
               })
             )
             .default([]),
+          audio: z.record(z.any()).optional(),
           configVersion: z.number().int().positive().default(1),
           updatedAt: z.string().optional()
         })
@@ -140,6 +144,109 @@ export const EventSchema = z.object({
   severity: z.enum(["low", "medium", "high"]),
   timestamp: z.string(),
   payload: z.record(z.any()).optional()
+});
+
+export const MediaKindSchema = z.enum(["image", "audio"]);
+export const AudioTranscriptionModeSchema = z.enum(["off", "on_demand", "rules_based"]);
+
+export const CameraAudioConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  execution: z.enum(["core", "detection_plane"]).default("detection_plane"),
+  sampleRate: z.number().int().positive().default(16000),
+  channels: z.number().int().min(1).max(2).default(1),
+  windowMs: z.number().int().positive().default(500),
+  overlapMs: z.number().int().nonnegative().default(250),
+  minVolume: z.number().nonnegative().default(0.02),
+  detectors: z.array(z.string()).default([]),
+  transcription: z
+    .object({
+      enabled: z.boolean().default(false),
+      mode: AudioTranscriptionModeSchema.default("off"),
+      minConfidence: z.number().min(0).max(1).default(0.75)
+    })
+    .default({
+      enabled: false,
+      mode: "off",
+      minConfidence: 0.75
+    })
+});
+
+export const BaseSampleSchema = z.object({
+  sampleId: z.string(),
+  tenantId: z.string(),
+  cameraId: z.string(),
+  mediaKind: MediaKindSchema,
+  startedAt: z.string(),
+  endedAt: z.string(),
+  sourceRef: z.record(z.any()).optional(),
+  metadata: z.record(z.any()).optional()
+});
+
+export const ImageFrameSampleSchema = BaseSampleSchema.extend({
+  mediaKind: z.literal("image"),
+  frameTs: z.string(),
+  frameIndex: z.number().int().nonnegative().optional(),
+  image: z.object({
+    uri: z.string(),
+    width: z.number().int().positive().optional(),
+    height: z.number().int().positive().optional(),
+    encoding: z.string().optional()
+  })
+});
+
+export const AudioWindowSampleSchema = BaseSampleSchema.extend({
+  mediaKind: z.literal("audio"),
+  sampleRate: z.number().int().positive(),
+  channels: z.number().int().min(1).max(2),
+  windowMs: z.number().int().positive(),
+  overlapMs: z.number().int().nonnegative(),
+  rms: z.number().nonnegative(),
+  peakDbfs: z.number().optional(),
+  audioRef: z
+    .object({
+      uri: z.string().optional(),
+      codec: z.string().optional()
+    })
+    .optional()
+}).superRefine((value, context) => {
+  if (value.overlapMs >= value.windowMs) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "overlapMs must be lower than windowMs",
+      path: ["overlapMs"]
+    });
+  }
+});
+
+export const DetectionEventSchema = z.object({
+  eventId: z.string(),
+  eventVersion: z.string().default("1.0"),
+  mediaKind: MediaKindSchema,
+  tenantId: z.string(),
+  cameraId: z.string(),
+  label: z.string(),
+  confidence: z.number().min(0).max(1),
+  startedAt: z.string(),
+  endedAt: z.string().optional(),
+  sampleId: z.string().optional(),
+  bbox: z
+    .object({
+      x: z.number(),
+      y: z.number(),
+      w: z.number(),
+      h: z.number()
+    })
+    .optional(),
+  keypoints: z.array(z.object({ x: z.number(), y: z.number(), score: z.number().optional() })).optional(),
+  temporalWindow: z
+    .object({
+      startMs: z.number().int().nonnegative(),
+      endMs: z.number().int().nonnegative(),
+      durationMs: z.number().int().positive()
+    })
+    .optional(),
+  attributes: z.record(z.any()).optional(),
+  providerMeta: z.record(z.any()).optional()
 });
 
 export const StreamSessionStatusSchema = z.enum(["requested", "issued", "active", "ended", "expired"]);
@@ -363,13 +470,16 @@ export const NodeCapabilitySchema = z.object({
   models: z.array(z.string())
 });
 
-export const DetectionProviderRuntimeSchema = z.enum(["yolo", "mediapipe"]);
+export const DetectionProviderRuntimeSchema = z.enum(["yolo", "mediapipe", "audio_vad", "audio_classifier"]);
 export const DetectionTaskTypeSchema = z.enum([
   "person_detection",
   "object_detection",
   "license_plate_detection",
   "face_detection",
-  "pose_estimation"
+  "pose_estimation",
+  "speech_detection",
+  "audio_event_classification",
+  "transcription"
 ]);
 export const DetectionQualitySchema = z.enum(["fast", "balanced", "accurate"]);
 export const DetectionJobEffectiveConfigSchema = z.object({
@@ -427,6 +537,7 @@ export const CameraDetectionProfileSchema = z.object({
   cameraId: z.string(),
   tenantId: z.string(),
   pipelines: z.array(CameraDetectionPipelineSchema).default([]),
+  audio: CameraAudioConfigSchema.optional(),
   configVersion: z.number().int().positive(),
   updatedAt: z.string()
 });
@@ -568,6 +679,17 @@ export const MeResponseSchema = z.object({
   entitlements: EntitlementsSchema.optional()
 });
 
+export interface DetectorPlugin<TSample> {
+  pluginId: string;
+  supports: MediaKind;
+  detect(sample: TSample, context: { tenantId: string; cameraId: string }): Promise<DetectionEvent[]>;
+}
+
+export interface TemporalEventAggregator {
+  ingest(event: DetectionEvent): DetectionEvent[];
+  flush(): DetectionEvent[];
+}
+
 export type Tenant = z.infer<typeof TenantSchema>;
 export type User = z.infer<typeof UserSchema>;
 export type Membership = z.infer<typeof MembershipSchema>;
@@ -576,6 +698,13 @@ export type Plan = z.infer<typeof PlanSchema>;
 export type Subscription = z.infer<typeof SubscriptionSchema>;
 export type Entitlements = z.infer<typeof EntitlementsSchema>;
 export type Event = z.infer<typeof EventSchema>;
+export type MediaKind = z.infer<typeof MediaKindSchema>;
+export type AudioTranscriptionMode = z.infer<typeof AudioTranscriptionModeSchema>;
+export type CameraAudioConfig = z.infer<typeof CameraAudioConfigSchema>;
+export type BaseSample = z.infer<typeof BaseSampleSchema>;
+export type ImageFrameSample = z.infer<typeof ImageFrameSampleSchema>;
+export type AudioWindowSample = z.infer<typeof AudioWindowSampleSchema>;
+export type DetectionEvent = z.infer<typeof DetectionEventSchema>;
 export type StreamSession = z.infer<typeof StreamSessionSchema>;
 export type DetectionJob = z.infer<typeof DetectionJobSchema>;
 export type DetectionObservation = z.infer<typeof DetectionObservationSchema>;

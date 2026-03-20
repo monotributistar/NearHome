@@ -6,6 +6,7 @@ Stack principal para laboratorio/on-prem:
 - `stream-gateway` (`:3010`)
 - `event-gateway` (`:3011`)
 - `inference-bridge` (`:8090`)
+- `audio-detection-runner` (`:8074`)
 - `inference-node-yolo` (`:8091`)
 - `inference-node-mediapipe` (`:8092`)
 - `detection-worker` (Temporal task queue)
@@ -167,6 +168,18 @@ Para cámaras físicas LAN:
 cp infra/.env.pilot.cameras.example infra/.env.pilot.cameras
 pnpm pilot:harness
 ```
+
+Para feeds públicos de prueba (sin cámara LAN propia):
+
+```bash
+cp infra/.env.pilot.cameras.public.example infra/.env.pilot.cameras
+pnpm pilot:harness
+```
+
+Catálogo de feeds públicos/versionados:
+
+- `infra/public-test-feeds.json`
+- `docs/PUBLIC_TEST_FEEDS.md`
 
 Valida:
 - control-plane (`api`)

@@ -1,0 +1,58 @@
+{
+  "generatedAt": "2026-03-19",
+  "notes": [
+    "Feeds externos: pueden variar disponibilidad o formato sin previo aviso.",
+    "Los primeros entries fueron verificados con ffprobe desde este entorno en 2026-03-19.",
+    "Los entries RTSP de referencia pueden no responder si la red bloquea el puerto 554."
+  ],
+  "feeds": [
+    {
+      "id": "mux-x36xhzz",
+      "name": "Mux x36xhzz test feed",
+      "kind": "test-pattern",
+      "protocol": "hls",
+      "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+      "verified": true
+    },
+    {
+      "id": "apple-bipbop",
+      "name": "Apple BipBop example stream",
+      "kind": "test-video",
+      "protocol": "hls",
+      "url": "https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_ts/master.m3u8",
+      "verified": true
+    },
+    {
+      "id": "mux-test-001",
+      "name": "Mux test_001 stream",
+      "kind": "test-video",
+      "protocol": "hls",
+      "url": "https://test-streams.mux.dev/test_001/stream.m3u8",
+      "verified": true
+    },
+    {
+      "id": "hessdalen-01",
+      "name": "Hessdalen Cam 01 (reference)",
+      "kind": "public-camera",
+      "protocol": "rtsp",
+      "url": "rtsp://www.hessdalen.org:1935/rtplive/_definst_/hessdalen01.stream",
+      "verified": false
+    },
+    {
+      "id": "hessdalen-02",
+      "name": "Hessdalen Cam 02 (reference)",
+      "kind": "public-camera",
+      "protocol": "rtsp",
+      "url": "rtsp://www.hessdalen.org:1935/rtplive/_definst_/hessdalen02.stream",
+      "verified": false
+    },
+    {
+      "id": "hessdalen-03",
+      "name": "Hessdalen Cam 03 (reference)",
+      "kind": "public-camera",
+      "protocol": "rtsp",
+      "url": "rtsp://www.hessdalen.org:1935/rtplive/_definst_/hessdalen03.stream",
+      "verified": false
+    }
+  ]
+}
