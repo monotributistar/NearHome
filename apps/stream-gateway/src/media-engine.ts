@@ -179,7 +179,24 @@ function buildFfmpegHlsCommand(input: StreamMediaInput, storageDir: string) {
     ? ["-f", "lavfi", "-i", `"${input.rtspUrl.slice("lavfi:".length)}"`]
     : ["-rtsp_transport", ffmpegTransport, "-i", `"${input.rtspUrl}"`];
   const videoArgs = isLavfi
-    ? ["-c:v", "mpeg2video", "-q:v", "4", "-pix_fmt", "yuv420p"]
+    ? [
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-tune",
+        "zerolatency",
+        "-pix_fmt",
+        "yuv420p",
+        "-r",
+        "15",
+        "-g",
+        "30",
+        "-keyint_min",
+        "30",
+        "-sc_threshold",
+        "0"
+      ]
     : ["-c:v", "copy"];
   return [
     "ffmpeg",

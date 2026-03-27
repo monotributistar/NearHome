@@ -1,13 +1,341 @@
 {
-  "generatedAt": "2026-03-19",
+  "generatedAt": "2026-03-22",
   "notes": [
-    "Feeds externos: pueden variar disponibilidad o formato sin previo aviso.",
-    "Los primeros entries fueron verificados con ffprobe desde este entorno en 2026-03-19.",
-    "Los entries RTSP de referencia pueden no responder si la red bloquea el puerto 554."
+    "Catalogo ampliado para stress test.",
+    "Incluye 70 camaras publicas WSDOT (snapshot JPEG) verificadas por HTTP 200.",
+    "Incluye 2 feeds HLS fallback para pruebas de pipeline de video continuo."
+  ],
+  "sources": [
+    {
+      "provider": "WSDOT",
+      "url": "https://data.wsdot.wa.gov/mobile/Cameras.json",
+      "licenseNote": "Datos publicos de trafico/camaras del estado de Washington"
+    }
   ],
   "feeds": [
     {
+      "id": "wsdot-9818",
+      "provider": "WSDOT",
+      "name": "Anacortes Airport Fuel Pump",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/anafuel.jpg",
+      "roadName": "Airports",
+      "direction": "W",
+      "milepost": 1,
+      "location": {
+        "lat": 48.498333,
+        "lon": -122.6625
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9819",
+      "provider": "WSDOT",
+      "name": "Anacortes Airport Gate",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/anagate.jpg",
+      "roadName": "Airports",
+      "direction": "E",
+      "milepost": 1,
+      "location": {
+        "lat": 48.498333,
+        "lon": -122.6625
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9820",
+      "provider": "WSDOT",
+      "name": "Anacortes Airport North",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/anarunwayn.jpg",
+      "roadName": "Airports",
+      "direction": "N",
+      "milepost": 1,
+      "location": {
+        "lat": 48.498333,
+        "lon": -122.6625
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9821",
+      "provider": "WSDOT",
+      "name": "Anacortes Airport South",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/anarunways.jpg",
+      "roadName": "Airports",
+      "direction": "S",
+      "milepost": 1,
+      "location": {
+        "lat": 48.498333,
+        "lon": -122.6625
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-8216",
+      "provider": "WSDOT",
+      "name": "Arlington Municipal Airport Northwest",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/arlwest.jpg",
+      "roadName": "Airports",
+      "direction": "E",
+      "milepost": 2,
+      "location": {
+        "lat": 48.1675,
+        "lon": -122.1583
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-8217",
+      "provider": "WSDOT",
+      "name": "Arlington Municipal Airport West",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/arlrw11.jpg",
+      "roadName": "Airports",
+      "direction": "W",
+      "milepost": 2,
+      "location": {
+        "lat": 48.1675,
+        "lon": -122.1583
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-8218",
+      "provider": "WSDOT",
+      "name": "Arlington Municipal Airport North",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/arlrw16.jpg",
+      "roadName": "Airports",
+      "direction": "N",
+      "milepost": 2,
+      "location": {
+        "lat": 48.1675,
+        "lon": -122.1583
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-8219",
+      "provider": "WSDOT",
+      "name": "Arlington Municipal Airport Southwest",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/arlsw.jpg",
+      "roadName": "Airports",
+      "direction": "S",
+      "milepost": 2,
+      "location": {
+        "lat": 48.1675,
+        "lon": -122.1583
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9822",
+      "provider": "WSDOT",
+      "name": "Auburn Municipal Airport West",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/auburn1.jpg",
+      "roadName": "Airports",
+      "direction": "W",
+      "milepost": 3,
+      "location": {
+        "lat": 47.3275,
+        "lon": -122.226389
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9823",
+      "provider": "WSDOT",
+      "name": "Auburn Municipal Airport North",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/auburn2.jpg",
+      "roadName": "Airports",
+      "direction": "N",
+      "milepost": 3,
+      "location": {
+        "lat": 47.3275,
+        "lon": -122.226389
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9824",
+      "provider": "WSDOT",
+      "name": "Auburn Municipal Airport South",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/auburn3.jpg",
+      "roadName": "Airports",
+      "direction": "S",
+      "milepost": 3,
+      "location": {
+        "lat": 47.3275,
+        "lon": -122.226389
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9825",
+      "provider": "WSDOT",
+      "name": "Auburn Municipal Airport East",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/auburn4.jpg",
+      "roadName": "Airports",
+      "direction": "E",
+      "milepost": 3,
+      "location": {
+        "lat": 47.3275,
+        "lon": -122.226389
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9826",
+      "provider": "WSDOT",
+      "name": "Bellingham International Airport",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/bham.jpg",
+      "roadName": "Airports",
+      "direction": "N",
+      "milepost": 4,
+      "location": {
+        "lat": 48.7925,
+        "lon": -122.5375
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9827",
+      "provider": "WSDOT",
+      "name": "Bremerton National Airport North",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/BremertonRWN.jpg",
+      "roadName": "Airports",
+      "direction": "N",
+      "milepost": 5,
+      "location": {
+        "lat": 47.49,
+        "lon": -122.764723
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9828",
+      "provider": "WSDOT",
+      "name": "Bremerton National Airport South",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/BremertonRWS.jpg",
+      "roadName": "Airports",
+      "direction": "S",
+      "milepost": 5,
+      "location": {
+        "lat": 47.49,
+        "lon": -122.764723
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9829",
+      "provider": "WSDOT",
+      "name": "Chehalis-Centralia Airport North",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/chehalis9.jpg",
+      "roadName": "Airports",
+      "direction": "N",
+      "milepost": 6,
+      "location": {
+        "lat": 46.676944,
+        "lon": -122.9825
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9830",
+      "provider": "WSDOT",
+      "name": "Chehalis-Centralia Airport East",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/chehalis10.jpg",
+      "roadName": "Airports",
+      "direction": "E",
+      "milepost": 6,
+      "location": {
+        "lat": 46.676944,
+        "lon": -122.9825
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9831",
+      "provider": "WSDOT",
+      "name": "Chehalis-Centralia Airport South",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/chehalis11.jpg",
+      "roadName": "Airports",
+      "direction": "S",
+      "milepost": 6,
+      "location": {
+        "lat": 46.676944,
+        "lon": -122.9825
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9832",
+      "provider": "WSDOT",
+      "name": "Chehalis-Centralia Airport West",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/chehalis12.jpg",
+      "roadName": "Airports",
+      "direction": "W",
+      "milepost": 6,
+      "location": {
+        "lat": 46.676944,
+        "lon": -122.9825
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9248",
+      "provider": "WSDOT",
+      "name": "Chehalis-Centralia Airport cam 1",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/sw/005vc07860.jpg",
+      "roadName": "Airports",
+      "direction": "N",
+      "milepost": 6,
+      "location": {
+        "lat": 46.676944,
+        "lon": -122.9825
+      },
+      "verified": true
+    },
+    {
       "id": "mux-x36xhzz",
+      "provider": "Mux",
       "name": "Mux x36xhzz test feed",
       "kind": "test-pattern",
       "protocol": "hls",
@@ -16,6 +344,7 @@
     },
     {
       "id": "apple-bipbop",
+      "provider": "Apple",
       "name": "Apple BipBop example stream",
       "kind": "test-video",
       "protocol": "hls",
@@ -23,36 +352,804 @@
       "verified": true
     },
     {
-      "id": "mux-test-001",
-      "name": "Mux test_001 stream",
-      "kind": "test-video",
-      "protocol": "hls",
-      "url": "https://test-streams.mux.dev/test_001/stream.m3u8",
+      "id": "wsdot-9833",
+      "provider": "WSDOT",
+      "name": "Columbia Gorge Regional Airport",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/Dalles.jpg",
+      "roadName": "Airports",
+      "direction": "W",
+      "milepost": 7,
+      "location": {
+        "lat": 45.619115,
+        "lon": -121.172531
+      },
       "verified": true
     },
     {
-      "id": "hessdalen-01",
-      "name": "Hessdalen Cam 01 (reference)",
+      "id": "wsdot-9834",
+      "provider": "WSDOT",
+      "name": "Colville Municipal Airport East",
       "kind": "public-camera",
-      "protocol": "rtsp",
-      "url": "rtsp://www.hessdalen.org:1935/rtplive/_definst_/hessdalen01.stream",
-      "verified": false
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/colvilleE.jpg",
+      "roadName": "Airports",
+      "direction": "S",
+      "milepost": 8,
+      "location": {
+        "lat": 48.543888,
+        "lon": -117.883889
+      },
+      "verified": true
     },
     {
-      "id": "hessdalen-02",
-      "name": "Hessdalen Cam 02 (reference)",
+      "id": "wsdot-9835",
+      "provider": "WSDOT",
+      "name": "Deer Park Municipal Airport East",
       "kind": "public-camera",
-      "protocol": "rtsp",
-      "url": "rtsp://www.hessdalen.org:1935/rtplive/_definst_/hessdalen02.stream",
-      "verified": false
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/dpeast.jpg",
+      "roadName": "Airports",
+      "direction": "E",
+      "milepost": 10,
+      "location": {
+        "lat": 47.966944,
+        "lon": -117.428334
+      },
+      "verified": true
     },
     {
-      "id": "hessdalen-03",
-      "name": "Hessdalen Cam 03 (reference)",
+      "id": "wsdot-9836",
+      "provider": "WSDOT",
+      "name": "Deer Park Municipal Airport North",
       "kind": "public-camera",
-      "protocol": "rtsp",
-      "url": "rtsp://www.hessdalen.org:1935/rtplive/_definst_/hessdalen03.stream",
-      "verified": false
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/dpnorth.jpg",
+      "roadName": "Airports",
+      "direction": "N",
+      "milepost": 10,
+      "location": {
+        "lat": 47.966944,
+        "lon": -117.428334
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9837",
+      "provider": "WSDOT",
+      "name": "Deer Park Municipal Airport Southeast",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/dpse.jpg",
+      "roadName": "Airports",
+      "direction": "S",
+      "milepost": 10,
+      "location": {
+        "lat": 47.966944,
+        "lon": -117.428334
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9838",
+      "provider": "WSDOT",
+      "name": "Deer Park Municipal Airport West",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/dpwest.jpg",
+      "roadName": "Airports",
+      "direction": "W",
+      "milepost": 10,
+      "location": {
+        "lat": 47.966944,
+        "lon": -117.428334
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9839",
+      "provider": "WSDOT",
+      "name": "Easton Airport",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/EastonW.jpg",
+      "roadName": "Airports",
+      "direction": "W",
+      "milepost": 11,
+      "location": {
+        "lat": 47.254166,
+        "lon": -121.185278
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9840",
+      "provider": "WSDOT",
+      "name": "Ed Carlson Memorial – S Lewis County Airport East",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/toledoeast.jpg",
+      "roadName": "Airports",
+      "direction": "E",
+      "milepost": 12,
+      "location": {
+        "lat": 46.476944,
+        "lon": -122.806389
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9841",
+      "provider": "WSDOT",
+      "name": "Ed Carlson Memorial – S Lewis County Airport North",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/toledonorth.jpg",
+      "roadName": "Airports",
+      "direction": "N",
+      "milepost": 12,
+      "location": {
+        "lat": 46.476944,
+        "lon": -122.806389
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9843",
+      "provider": "WSDOT",
+      "name": "Ed Carlson Memorial – S Lewis County Airport West",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/toledowest.jpg",
+      "roadName": "Airports",
+      "direction": "W",
+      "milepost": 12,
+      "location": {
+        "lat": 46.476944,
+        "lon": -122.806389
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9908",
+      "provider": "WSDOT",
+      "name": "Felts Field Airport",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/traffic/FeltsField.jpg",
+      "roadName": "Airports",
+      "direction": "N",
+      "milepost": 13,
+      "location": {
+        "lat": 47.6805,
+        "lon": -117.32
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9844",
+      "provider": "WSDOT",
+      "name": "Ferry County Airport",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/ferry.jpg",
+      "roadName": "Airports",
+      "direction": "N",
+      "milepost": 14,
+      "location": {
+        "lat": 48.718055,
+        "lon": -118.656389
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9845",
+      "provider": "WSDOT",
+      "name": "Friday Harbor Airport Helipad",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/friday1.jpg",
+      "roadName": "Airports",
+      "direction": "S",
+      "milepost": 15,
+      "location": {
+        "lat": 48.521944,
+        "lon": -123.024167
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9846",
+      "provider": "WSDOT",
+      "name": "Friday Harbor Airport South",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/friday2.jpg",
+      "roadName": "Airports",
+      "direction": "S",
+      "milepost": 15,
+      "location": {
+        "lat": 48.521944,
+        "lon": -123.024167
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9847",
+      "provider": "WSDOT",
+      "name": "Friday Harbor Airport Windsock",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/friday3.jpg",
+      "roadName": "Airports",
+      "direction": "E",
+      "milepost": 15,
+      "location": {
+        "lat": 48.521944,
+        "lon": -123.024167
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9848",
+      "provider": "WSDOT",
+      "name": "Friday Harbor Airport North",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/friday4.jpg",
+      "roadName": "Airports",
+      "direction": "N",
+      "milepost": 15,
+      "location": {
+        "lat": 48.521944,
+        "lon": -123.024167
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9849",
+      "provider": "WSDOT",
+      "name": "Grove Field Airport",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/Grove.jpg",
+      "roadName": "Airports",
+      "direction": "N",
+      "milepost": 16,
+      "location": {
+        "lat": 45.627777,
+        "lon": -122.404167
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-1237",
+      "provider": "WSDOT",
+      "name": "Harvey Airfield(Snohomish)",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/traffic/HarveyAirfield.jpg",
+      "roadName": "Airports",
+      "direction": "S",
+      "milepost": 17,
+      "location": {
+        "lat": 47.907177,
+        "lon": -122.10015
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-10071",
+      "provider": "WSDOT",
+      "name": "Hyak Looking West-Northwest",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/hyakwnw.jpg",
+      "roadName": "Airports",
+      "direction": "W",
+      "milepost": 18,
+      "location": {
+        "lat": 47.390883,
+        "lon": -121.388573
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9971",
+      "provider": "WSDOT",
+      "name": "Hyak Looking East",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/hyakeast.jpg",
+      "roadName": "Airports",
+      "direction": "E",
+      "milepost": 18,
+      "location": {
+        "lat": 47.390883,
+        "lon": -121.388573
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-1294",
+      "provider": "WSDOT",
+      "name": "Jefferson County International Airport East",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/PortTownsendE.jpg",
+      "roadName": "Airports",
+      "direction": "W",
+      "milepost": 19,
+      "location": {
+        "lat": 48.05687,
+        "lon": -122.80953
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9851",
+      "provider": "WSDOT",
+      "name": "Jefferson County International Airport West",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/PortTownsendW.jpg",
+      "roadName": "Airports",
+      "direction": "W",
+      "milepost": 19,
+      "location": {
+        "lat": 48.053611,
+        "lon": -122.810556
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9852",
+      "provider": "WSDOT",
+      "name": "Lopez Island Airport North",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/lopezn.jpg",
+      "roadName": "Airports",
+      "direction": "N",
+      "milepost": 20,
+      "location": {
+        "lat": 48.483888,
+        "lon": -122.9375
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9853",
+      "provider": "WSDOT",
+      "name": "Lopez Island Airport South",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/lopezs.jpg",
+      "roadName": "Airports",
+      "direction": "S",
+      "milepost": 20,
+      "location": {
+        "lat": 48.483888,
+        "lon": -122.9375
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9854",
+      "provider": "WSDOT",
+      "name": "Lopez Island Airport West",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/lopezw.jpg",
+      "roadName": "Airports",
+      "direction": "W",
+      "milepost": 20,
+      "location": {
+        "lat": 48.483888,
+        "lon": -122.9375
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9855",
+      "provider": "WSDOT",
+      "name": "Mears Field (Concrete) Airport East",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/concrete1.jpg",
+      "roadName": "Airports",
+      "direction": "E",
+      "milepost": 21,
+      "location": {
+        "lat": 48.529722,
+        "lon": -121.758056
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-10077",
+      "provider": "WSDOT",
+      "name": "Woodland North",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/WoodlandN.jpg",
+      "roadName": "Airports",
+      "direction": "N",
+      "milepost": 21,
+      "location": {
+        "lat": 45.903654,
+        "lon": -122.740657
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-10078",
+      "provider": "WSDOT",
+      "name": "Woodland East",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/WoodlandE.jpg",
+      "roadName": "Airports",
+      "direction": "E",
+      "milepost": 21,
+      "location": {
+        "lat": 45.903654,
+        "lon": -122.740657
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-10079",
+      "provider": "WSDOT",
+      "name": "Woodland South",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/WoodlandS.jpg",
+      "roadName": "Airports",
+      "direction": "S",
+      "milepost": 21,
+      "location": {
+        "lat": 45.903654,
+        "lon": -122.740657
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9857",
+      "provider": "WSDOT",
+      "name": "Mears Field (Concrete) Airport West",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/concrete3.jpg",
+      "roadName": "Airports",
+      "direction": "W",
+      "milepost": 21,
+      "location": {
+        "lat": 48.529722,
+        "lon": -121.758056
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-10080",
+      "provider": "WSDOT",
+      "name": "Woodland West",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/WoodlandW.jpg",
+      "roadName": "Airports",
+      "direction": "W",
+      "milepost": 21,
+      "location": {
+        "lat": 45.903654,
+        "lon": -122.740657
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9860",
+      "provider": "WSDOT",
+      "name": "Methow Valley State Airport South",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/methows.jpg",
+      "roadName": "Airports",
+      "direction": "S",
+      "milepost": 22,
+      "location": {
+        "lat": 48.424722,
+        "lon": -120.145834
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9863",
+      "provider": "WSDOT",
+      "name": "Moses Lake Municipal Airport East",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/moseseast.jpg",
+      "roadName": "Airports",
+      "direction": "E",
+      "milepost": 23,
+      "location": {
+        "lat": 47.141944,
+        "lon": -119.237778
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9864",
+      "provider": "WSDOT",
+      "name": "Moses Lake Municipal Airport North",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/mosesnorth.jpg",
+      "roadName": "Airports",
+      "direction": "N",
+      "milepost": 23,
+      "location": {
+        "lat": 47.141944,
+        "lon": -119.237778
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9865",
+      "provider": "WSDOT",
+      "name": "Moses Lake Municipal Airport South",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/mosessouth.jpg",
+      "roadName": "Airports",
+      "direction": "S",
+      "milepost": 23,
+      "location": {
+        "lat": 47.141944,
+        "lon": -119.237778
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9866",
+      "provider": "WSDOT",
+      "name": "Moses Lake Municipal Airport West",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/moseswest.jpg",
+      "roadName": "Airports",
+      "direction": "W",
+      "milepost": 23,
+      "location": {
+        "lat": 47.141944,
+        "lon": -119.237778
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-1049",
+      "provider": "WSDOT",
+      "name": "Olympia Regional Airport South",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/olysoutht.jpg",
+      "roadName": "Airports",
+      "direction": "S",
+      "milepost": 24,
+      "location": {
+        "lat": 46.9704,
+        "lon": -122.9022
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-1050",
+      "provider": "WSDOT",
+      "name": "Olympia Regional Airport South Southwest",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/olyssw.jpg",
+      "roadName": "Airports",
+      "direction": "S",
+      "milepost": 24,
+      "location": {
+        "lat": 46.9704,
+        "lon": -122.9022
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-1051",
+      "provider": "WSDOT",
+      "name": "Olympia Regional Airport Southwest",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/olysw.jpg",
+      "roadName": "Airports",
+      "direction": "S",
+      "milepost": 24,
+      "location": {
+        "lat": 46.9704,
+        "lon": -122.9022
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-1271",
+      "provider": "WSDOT",
+      "name": "Olympia Regional Airport Weather Station",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/olysouthr.jpg",
+      "roadName": "Airports",
+      "direction": "E",
+      "milepost": 24,
+      "location": {
+        "lat": 46.9704,
+        "lon": -122.9022
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9867",
+      "provider": "WSDOT",
+      "name": "Orcas Island Airport North",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/OrcasN.jpg",
+      "roadName": "Airports",
+      "direction": "N",
+      "milepost": 25,
+      "location": {
+        "lat": 48.708333,
+        "lon": -122.910556
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9869",
+      "provider": "WSDOT",
+      "name": "Orcas Island Airport West",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/OrcasW.jpg",
+      "roadName": "Airports",
+      "direction": "S",
+      "milepost": 25,
+      "location": {
+        "lat": 48.708333,
+        "lon": -122.910556
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9870",
+      "provider": "WSDOT",
+      "name": "Orcas Island Airport Southwest",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/OrcasSW.jpg",
+      "roadName": "Airports",
+      "direction": "W",
+      "milepost": 25,
+      "location": {
+        "lat": 48.708333,
+        "lon": -122.910556
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-10150",
+      "provider": "WSDOT",
+      "name": "Orcas Island Airport South",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/OrcasS.jpg",
+      "roadName": "Airports",
+      "direction": "S",
+      "milepost": 25,
+      "location": {
+        "lat": 48.708333,
+        "lon": -122.910556
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9871",
+      "provider": "WSDOT",
+      "name": "Packwood Airport South",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/packwood5.jpg",
+      "roadName": "Airports",
+      "direction": "S",
+      "milepost": 26,
+      "location": {
+        "lat": 46.603888,
+        "lon": -121.677778
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9872",
+      "provider": "WSDOT",
+      "name": "Packwood Airport Southwest",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/packwood6.jpg",
+      "roadName": "Airports",
+      "direction": "W",
+      "milepost": 26,
+      "location": {
+        "lat": 46.603888,
+        "lon": -121.677778
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9873",
+      "provider": "WSDOT",
+      "name": "Packwood Airport Northwest",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/packwood7.jpg",
+      "roadName": "Airports",
+      "direction": "N",
+      "milepost": 26,
+      "location": {
+        "lat": 46.603888,
+        "lon": -121.677778
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9874",
+      "provider": "WSDOT",
+      "name": "Packwood Airport Northeast",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/packwood8.jpg",
+      "roadName": "Airports",
+      "direction": "E",
+      "milepost": 26,
+      "location": {
+        "lat": 46.603888,
+        "lon": -121.677778
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9909",
+      "provider": "WSDOT",
+      "name": "Pangborn Memorial Airport",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://cam.pangbornairport.com/webcam/pawebcam.jpg",
+      "roadName": "Airports",
+      "direction": "W",
+      "milepost": 28,
+      "location": {
+        "lat": 47.399,
+        "lon": -120.2065
+      },
+      "verified": true
+    },
+    {
+      "id": "wsdot-9875",
+      "provider": "WSDOT",
+      "name": "Prosser Airport East",
+      "kind": "public-camera",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/prossere.jpg",
+      "roadName": "Airports",
+      "direction": "E",
+      "milepost": 29,
+      "location": {
+        "lat": 46.213333,
+        "lon": -119.795556
+      },
+      "verified": true
     }
   ]
 }

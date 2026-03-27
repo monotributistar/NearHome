@@ -92,6 +92,19 @@ if ! check_health_optional yolo "$YOLO_URL/health" || ! check_health_optional me
 fi
 check_health dispatcher "$DISPATCHER_URL/health"
 check_health audio_runner "$AUDIORUNNER_URL/health"
+curl -fsS -X POST "$AUDIORUNNER_URL/v1/infer/audio" \
+  -H 'content-type: application/json' \
+  -d "{\"requestId\":\"smoke-audio\",\"jobId\":\"smoke-audio-job\",\"tenantId\":\"$TENANT_ID\",\"cameraId\":\"$CAM1\",\"taskType\":\"audio_event_classification\",\"modelRef\":\"audio-mvp@0.1.0\",\"mediaRef\":{\"source\":\"rtsp\",\"rtspUrl\":\"rtsp://demo/$CAM1\",\"rmsHint\":0.18,\"peakDbfsHint\":-10},\"options\":{\"minVolume\":0.05,\"windowMs\":500,\"overlapMs\":250,\"sampleRate\":16000,\"channels\":1}}" >/tmp/audio_infer.json
+node -e '
+  const fs = require("node:fs");
+  const body = JSON.parse(fs.readFileSync("/tmp/audio_infer.json", "utf8"));
+  const rows = Array.isArray(body.detections) ? body.detections : [];
+  const ok = rows.some((row) => row && row.mediaKind === "audio" && typeof row.label === "string" && row.label.length > 0);
+  if (!ok) {
+    console.error("audio runner did not return audio detections");
+    process.exit(1);
+  }
+'
 curl -fsS "$TEMPORAL_UI_URL" >/tmp/temporal_ui.html
 
 echo "Smoke planes PASS"

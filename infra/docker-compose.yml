@@ -12,6 +12,7 @@ services:
       STREAM_TOKEN_SECRET: dev-stream-token-secret
       DATABASE_URL: file:./dev.db
       STREAM_GATEWAY_URL: http://stream-gateway:3010
+      STREAM_GATEWAY_PUBLIC_URL: http://localhost:3010
       DETECTION_EXECUTION_MODE: temporal
       DETECTION_TEMPORAL_DISPATCH_URL: http://detection-dispatcher:8072
       AUDIO_DETECTION_RUNNER_URL: http://audio-detection-runner:8074
@@ -42,6 +43,9 @@ services:
       STREAM_STORAGE_DIR: /data/storage
       STREAM_TOKEN_SECRET: dev-stream-token-secret
       STREAM_PROBE_INTERVAL_MS: 5000
+      STREAM_MEDIA_ENGINE: ${STREAM_MEDIA_ENGINE:-process}
+      STREAM_TRANSCODER_PRESET: ${STREAM_TRANSCODER_PRESET:-ffmpeg-hls}
+      STREAM_TRANSCODER_DRY_RUN: ${STREAM_TRANSCODER_DRY_RUN:-0}
     ports:
       - "3010:3010"
     volumes:
@@ -105,6 +109,9 @@ services:
     command: ["pnpm", "--filter", "@app/audio-detection-runner", "dev"]
     environment:
       PORT: 8074
+      AUDIO_SOURCE_MODE: ${AUDIO_SOURCE_MODE:-auto}
+      AUDIO_SOURCE_TIMEOUT_MS: ${AUDIO_SOURCE_TIMEOUT_MS:-6000}
+      AUDIO_RTSP_TRANSPORT: ${AUDIO_RTSP_TRANSPORT:-tcp}
     ports:
       - "8074:8074"
     networks:

@@ -26,12 +26,19 @@ class MockSpeechTranscriptionHook {
 
 export async function buildApp() {
   const app = Fastify({ logger: true });
-  const sourceAdapter = new FallbackAudioSourceAdapter(
-    new FfmpegRtspAudioSourceAdapter(),
-    new RtspAudioSourceStubAdapter()
-  );
+  const sourceMode = (process.env.AUDIO_SOURCE_MODE ?? "auto").toLowerCase();
+  const sourceAdapter =
+    sourceMode === "ffmpeg"
+      ? new FfmpegRtspAudioSourceAdapter()
+      : sourceMode === "stub"
+        ? new RtspAudioSourceStubAdapter()
+        : new FallbackAudioSourceAdapter(new FfmpegRtspAudioSourceAdapter(), new RtspAudioSourceStubAdapter());
 
-  app.get("/health", async () => ({ ok: true, service: "audio-detection-runner" }));
+  app.get("/health", async () => ({
+    ok: true,
+    service: "audio-detection-runner",
+    sourceMode
+  }));
 
   app.post("/v1/infer/audio", async (request, reply) => {
     const body = InferAudioRequestSchema.parse(request.body ?? {});

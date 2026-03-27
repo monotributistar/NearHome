@@ -29,6 +29,7 @@
     "pilot:stack:down:onprem:remote": "bash scripts/pilot/stack-down.sh onprem-remote",
     "pilot:detection:export": "node scripts/detection/export-node-deployments.mjs",
     "pilot:smoke": "bash scripts/pilot/smoke-planes.sh",
+    "pilot:smoke:audio:async": "bash scripts/pilot/smoke-audio-async.sh",
     "pilot:smoke:detection-sync": "bash scripts/pilot/smoke-detection-sync.sh",
     "pilot:smoke:stack-sync-api": "bash scripts/pilot/smoke-stack-sync-api.sh",
     "pilot:harness:prepare": "bash scripts/pilot/virtual-harness.sh prepare",

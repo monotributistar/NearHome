@@ -185,4 +185,5 @@ Valida:
 - control-plane (`api`)
 - data-plane (`stream-gateway` + provision de 2 cámaras virtuales)
 - event-plane (`publish` + `replay`)
-- detection-plane (`inference-*`, `dispatcher`, `temporal-ui`)
+- detection-plane (`inference-*`, `audio-detection-runner`, `dispatcher`, `temporal-ui`)
+- smoke funcional audio (`POST /v1/infer/audio` en runner)

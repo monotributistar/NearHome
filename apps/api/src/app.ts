@@ -2327,6 +2327,7 @@ export async function buildApp() {
   const jwtSecret = process.env.JWT_SECRET ?? "dev-super-secret";
   const streamTokenSecret = process.env.STREAM_TOKEN_SECRET ?? "dev-stream-token-secret";
   const streamGatewayUrl = process.env.STREAM_GATEWAY_URL?.replace(/\/$/, "") ?? null;
+  const streamGatewayPublicUrl = process.env.STREAM_GATEWAY_PUBLIC_URL?.replace(/\/$/, "") ?? streamGatewayUrl;
   const detectionBridgeUrl = process.env.DETECTION_BRIDGE_URL?.replace(/\/$/, "") ?? null;
   const audioDetectionRunnerUrl = process.env.AUDIO_DETECTION_RUNNER_URL?.replace(/\/$/, "") ?? null;
   const temporalDispatchUrl = process.env.DETECTION_TEMPORAL_DISPATCH_URL?.replace(/\/$/, "") ?? null;
@@ -5413,7 +5414,7 @@ export async function buildApp() {
             `stream_gateway.provision_failed status=${provisionResponse.status} body=${errorBody.slice(0, 500)}`
           );
         }
-        playbackUrl = `${streamGatewayUrl}/playback/${ctx.tenantId}/${id}/index.m3u8?token=${encodeURIComponent(token)}`;
+        playbackUrl = `${streamGatewayPublicUrl}/playback/${ctx.tenantId}/${id}/index.m3u8?token=${encodeURIComponent(token)}`;
       } catch (error) {
         request.log.warn({ error, tenantId: ctx.tenantId, cameraId: id }, "stream_gateway.provision_failed");
       }
@@ -5566,7 +5567,7 @@ export async function buildApp() {
         ...payload.data,
         token,
         expiresAt: expiresAt.toISOString(),
-        playbackUrl: `${streamGatewayUrl}${payload.data.playbackPath}?token=${encodeURIComponent(token)}`
+        playbackUrl: `${streamGatewayPublicUrl}${payload.data.playbackPath}?token=${encodeURIComponent(token)}`
       }
     };
   });

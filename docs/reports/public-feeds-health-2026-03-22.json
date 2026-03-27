@@ -1,0 +1,591 @@
+{
+  "checkedAtUtc": "2026-03-22T16:46:03Z",
+  "localDate": "2026-03-22",
+  "total": 72,
+  "ok": 72,
+  "failed": 0,
+  "checks": [
+    {
+      "id": "wsdot-9818",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/anafuel.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9819",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/anagate.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9820",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/anarunwayn.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9821",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/anarunways.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-8216",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/arlwest.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-8217",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/arlrw11.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-8218",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/arlrw16.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-8219",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/arlsw.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9822",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/auburn1.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9823",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/auburn2.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9824",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/auburn3.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9825",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/auburn4.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9826",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/bham.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9827",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/BremertonRWN.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9828",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/BremertonRWS.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9829",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/chehalis9.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9830",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/chehalis10.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9831",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/chehalis11.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9832",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/chehalis12.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9248",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/sw/005vc07860.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "mux-x36xhzz",
+      "protocol": "hls",
+      "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+      "check": "http_status+ffprobe",
+      "value": {
+        "http": "200",
+        "probe": "codec_name=h264"
+      },
+      "ok": true
+    },
+    {
+      "id": "apple-bipbop",
+      "protocol": "hls",
+      "url": "https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_ts/master.m3u8",
+      "check": "http_status+ffprobe",
+      "value": {
+        "http": "200",
+        "probe": "codec_name=h264"
+      },
+      "ok": true
+    },
+    {
+      "id": "wsdot-9833",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/Dalles.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9834",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/colvilleE.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9835",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/dpeast.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9836",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/dpnorth.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9837",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/dpse.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9838",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/dpwest.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9839",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/EastonW.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9840",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/toledoeast.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9841",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/toledonorth.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9843",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/toledowest.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9908",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/traffic/FeltsField.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9844",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/ferry.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9845",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/friday1.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9846",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/friday2.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9847",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/friday3.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9848",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/friday4.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9849",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/Grove.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-1237",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/traffic/HarveyAirfield.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-10071",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/hyakwnw.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9971",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/hyakeast.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-1294",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/PortTownsendE.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9851",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/PortTownsendW.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9852",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/lopezn.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9853",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/lopezs.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9854",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/lopezw.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9855",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/concrete1.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-10077",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/WoodlandN.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-10078",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/WoodlandE.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-10079",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/WoodlandS.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9857",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/concrete3.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-10080",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/WoodlandW.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9860",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/methows.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9863",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/moseseast.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9864",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/mosesnorth.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9865",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/mosessouth.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9866",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/moseswest.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-1049",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/olysoutht.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-1050",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/olyssw.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-1051",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/olysw.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-1271",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/olysouthr.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9867",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/OrcasN.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9869",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/OrcasW.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9870",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/OrcasSW.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-10150",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/OrcasS.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9871",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/packwood5.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9872",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/packwood6.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9873",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/packwood7.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9874",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/packwood8.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9909",
+      "protocol": "jpeg-snapshot",
+      "url": "https://cam.pangbornairport.com/webcam/pawebcam.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    },
+    {
+      "id": "wsdot-9875",
+      "protocol": "jpeg-snapshot",
+      "url": "https://images.wsdot.wa.gov/airports/prossere.jpg",
+      "check": "http_status",
+      "value": "200",
+      "ok": true
+    }
+  ]
+}

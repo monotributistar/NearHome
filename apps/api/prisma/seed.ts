@@ -50,6 +50,7 @@ async function main() {
   const tenantPortalBrowser = await prisma.tenant.create({ data: { name: seedFixtures.tenants.portalBrowser } });
   const tenantPortalScopeA = await prisma.tenant.create({ data: { name: seedFixtures.tenants.portalScopeA } });
   const tenantPortalScopeB = await prisma.tenant.create({ data: { name: seedFixtures.tenants.portalScopeB } });
+  const tenantLivePublic = await prisma.tenant.create({ data: { name: "Seed Live Public Feeds" } });
 
   const passwordHash = await bcrypt.hash("demo1234", 10);
 
@@ -82,7 +83,10 @@ async function main() {
       { tenantId: tenantPortalScopeA.id, userId: monitor.id, role: "monitor" },
       { tenantId: tenantPortalScopeA.id, userId: clientUser.id, role: "client_user" },
       { tenantId: tenantPortalScopeB.id, userId: admin.id, role: "tenant_admin" },
-      { tenantId: tenantPortalScopeB.id, userId: monitor.id, role: "monitor" }
+      { tenantId: tenantPortalScopeB.id, userId: monitor.id, role: "monitor" },
+      { tenantId: tenantLivePublic.id, userId: admin.id, role: "tenant_admin" },
+      { tenantId: tenantLivePublic.id, userId: monitor.id, role: "monitor" },
+      { tenantId: tenantLivePublic.id, userId: clientUser.id, role: "client_user" }
     ]
   });
 
@@ -112,7 +116,7 @@ async function main() {
         tenantId: tenantA.id,
         name: "Front Door",
         description: "Main entrance coverage for visitors and deliveries",
-        rtspUrl: "rtsp://demo/a1",
+        rtspUrl: "lavfi:testsrc=size=1280x720:rate=15",
         location: "Entrance",
         tags: JSON.stringify(["entry", "public"]),
         isActive: true,
@@ -126,7 +130,7 @@ async function main() {
         tenantId: tenantA.id,
         name: "Warehouse",
         description: "Stock area aisle monitoring",
-        rtspUrl: "rtsp://demo/a2",
+        rtspUrl: "lavfi:smptebars=size=1280x720:rate=15",
         location: "Warehouse",
         tags: JSON.stringify(["stock"]),
         isActive: true,
@@ -140,7 +144,7 @@ async function main() {
         tenantId: tenantA.id,
         name: "Parking",
         description: "Outdoor parking lot overview",
-        rtspUrl: "rtsp://demo/a3",
+        rtspUrl: "lavfi:testsrc2=size=1280x720:rate=15",
         location: "Parking",
         tags: JSON.stringify(["outdoor"]),
         isActive: true,
@@ -154,7 +158,7 @@ async function main() {
         tenantId: tenantA.id,
         name: "Back Office",
         description: "Back office internal access",
-        rtspUrl: "rtsp://demo/a4",
+        rtspUrl: "lavfi:color=c=blue:s=1280x720:r=15",
         location: "Office",
         tags: JSON.stringify(["staff"]),
         isActive: true,
@@ -168,7 +172,7 @@ async function main() {
         tenantId: tenantA.id,
         name: "Cashier",
         description: "Checkout line and POS security",
-        rtspUrl: "rtsp://demo/a5",
+        rtspUrl: "lavfi:color=c=green:s=1280x720:r=15",
         location: "POS",
         tags: JSON.stringify(["sensitive"]),
         isActive: true,
@@ -375,6 +379,88 @@ async function main() {
     })
   ]);
 
+  const livePublicCameraSeeds = [
+    {
+      name: "WSDOT Live Cam 01",
+      description: "Anacortes Airport Fuel Pump",
+      url: "https://images.wsdot.wa.gov/airports/anafuel.jpg",
+      location: "Anacortes Airport"
+    },
+    {
+      name: "WSDOT Live Cam 02",
+      description: "Anacortes Airport Gate",
+      url: "https://images.wsdot.wa.gov/airports/anagate.jpg",
+      location: "Anacortes Airport"
+    },
+    {
+      name: "WSDOT Live Cam 03",
+      description: "Anacortes Airport North",
+      url: "https://images.wsdot.wa.gov/airports/anarunwayn.jpg",
+      location: "Anacortes Airport"
+    },
+    {
+      name: "WSDOT Live Cam 04",
+      description: "Anacortes Airport South",
+      url: "https://images.wsdot.wa.gov/airports/anarunways.jpg",
+      location: "Anacortes Airport"
+    },
+    {
+      name: "WSDOT Live Cam 05",
+      description: "Arlington Municipal Airport Northwest",
+      url: "https://images.wsdot.wa.gov/airports/arlwest.jpg",
+      location: "Arlington Municipal Airport"
+    },
+    {
+      name: "WSDOT Live Cam 06",
+      description: "Arlington Municipal Airport West",
+      url: "https://images.wsdot.wa.gov/airports/arlrw11.jpg",
+      location: "Arlington Municipal Airport"
+    },
+    {
+      name: "WSDOT Live Cam 07",
+      description: "Arlington Municipal Airport North",
+      url: "https://images.wsdot.wa.gov/airports/arlrw16.jpg",
+      location: "Arlington Municipal Airport"
+    },
+    {
+      name: "WSDOT Live Cam 08",
+      description: "Arlington Municipal Airport Southwest",
+      url: "https://images.wsdot.wa.gov/airports/arlsw.jpg",
+      location: "Arlington Municipal Airport"
+    },
+    {
+      name: "WSDOT Live Cam 09",
+      description: "Auburn Municipal Airport West",
+      url: "https://images.wsdot.wa.gov/airports/auburn1.jpg",
+      location: "Auburn Municipal Airport"
+    },
+    {
+      name: "WSDOT Live Cam 10",
+      description: "Auburn Municipal Airport North",
+      url: "https://images.wsdot.wa.gov/airports/auburn2.jpg",
+      location: "Auburn Municipal Airport"
+    }
+  ] as const;
+
+  const livePublicCameras = await Promise.all(
+    livePublicCameraSeeds.map((camera) =>
+      prisma.camera.create({
+        data: {
+          tenantId: tenantLivePublic.id,
+          name: camera.name,
+          description: `${camera.description} (public live snapshot)`,
+          rtspUrl: camera.url,
+          location: camera.location,
+          tags: JSON.stringify(["seed", "public-feed", "live", "wsdot"]),
+          isActive: true,
+          lifecycleStatus: "ready",
+          lastSeenAt: new Date(),
+          lastTransitionAt: new Date()
+        }
+      })
+    )
+  );
+
   const allCameras = [
     camA1,
     camA2,
@@ -394,7 +480,8 @@ async function main() {
     camPortalBrowserReady,
     camPortalBrowserEntry,
     camPortalScopeA,
-    camPortalScopeB
+    camPortalScopeB,
+    ...livePublicCameras
   ];
   await Promise.all(
     allCameras.map((camera) =>
@@ -634,6 +721,15 @@ async function main() {
   await prisma.subscription.create({
     data: {
       tenantId: tenantPortalScopeB.id,
+      planId: basic.id,
+      status: "active",
+      currentPeriodStart: new Date(),
+      currentPeriodEnd: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30)
+    }
+  });
+  await prisma.subscription.create({
+    data: {
+      tenantId: tenantLivePublic.id,
       planId: basic.id,
       status: "active",
       currentPeriodStart: new Date(),
@@ -1170,6 +1266,7 @@ async function main() {
     seedFixtures.tenants.portalScopeA,
     seedFixtures.tenants.portalScopeB
   );
+  console.log("Live public tenant:", "Seed Live Public Feeds", "- cameras:", livePublicCameras.length);
 }
 
 main()
