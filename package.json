@@ -53,7 +53,8 @@
     "test:stream": "pnpm --filter @app/stream-gateway test",
     "test:stream:load": "pnpm --filter @app/stream-gateway test:load",
     "test:stream:soak": "pnpm --filter @app/stream-gateway test:soak",
-    "test:stream:soak:record": "pnpm --filter @app/stream-gateway test:soak:record"
+    "test:stream:soak:record": "pnpm --filter @app/stream-gateway test:soak:record",
+    "pilot:smoke:prod-local": "bash scripts/pilot/smoke-production-local.sh"
   },
   "devDependencies": {
     "@eslint/js": "^9.22.0",

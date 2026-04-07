@@ -5791,3 +5791,330 @@ describe("NH-DP-26 node deploy definition", () => {
     }
   });
 });
+
+describe("NH-NET-01/02 vpn lifecycle and network space validation", () => {
+  it("creates a tenant-scoped vpn with network spaces", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const { tenantId } = await createTenantFixture(adminToken, `NHNET Create ${Date.now()}`);
+    const createCidr = `10.${100 + (Date.now() % 100)}.${1 + (Date.now() % 200)}.0/24`;
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/network/tenants/${tenantId}/vpns`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId,
+        "content-type": "application/json"
+      },
+      payload: {
+        name: "tenant-main-vpn",
+        provider: "wireguard",
+        topology: "site_to_site",
+        networkSpaces: [{ spaceType: "camera_lan", cidr: createCidr, isPrimary: true }]
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      data: {
+        tenantId,
+        name: "tenant-main-vpn",
+        provider: "wireguard",
+        topology: "site_to_site",
+        status: "draft",
+        networkSpaces: [
+          {
+            spaceType: "camera_lan",
+            cidr: createCidr,
+            isPrimary: true,
+            status: "planned"
+          }
+        ]
+      }
+    });
+  });
+
+  it("rejects vpn creation for monitor role", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const { tenantId } = await createTenantFixture(adminToken, `NHNET RBAC ${Date.now()}`, [
+      { email: "monitor@nearhome.dev", role: "monitor" }
+    ]);
+    const monitorToken = await login("monitor@nearhome.dev");
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/network/tenants/${tenantId}/vpns`,
+      headers: {
+        authorization: `Bearer ${monitorToken}`,
+        "x-tenant-id": tenantId,
+        "content-type": "application/json"
+      },
+      payload: {
+        name: "monitor-attempt-vpn",
+        provider: "wireguard",
+        topology: "site_to_site",
+        networkSpaces: [{ spaceType: "camera_lan", cidr: "10.121.10.0/24" }]
+      }
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("rejects validation when cidr overlaps another tenant vpn space", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const { tenantId: tenantA } = await createTenantFixture(adminToken, `NHNET Overlap A ${Date.now()}`);
+    const { tenantId: tenantB } = await createTenantFixture(adminToken, `NHNET Overlap B ${Date.now()}`);
+    const overlapSecondOctet = 100 + (Date.now() % 100);
+    const overlapThirdOctet = 1 + (Date.now() % 200);
+    const overlapBaseCidr = `10.${overlapSecondOctet}.${overlapThirdOctet}.0/24`;
+    const overlapNestedCidr = `10.${overlapSecondOctet}.${overlapThirdOctet}.128/25`;
+
+    const createA = await app.inject({
+      method: "POST",
+      url: `/network/tenants/${tenantA}/vpns`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantA,
+        "content-type": "application/json"
+      },
+      payload: {
+        name: "vpn-a",
+        provider: "wireguard",
+        topology: "site_to_site",
+        networkSpaces: [{ spaceType: "camera_lan", cidr: overlapBaseCidr }]
+      }
+    });
+    expect(createA.statusCode).toBe(200);
+
+    const createB = await app.inject({
+      method: "POST",
+      url: `/network/tenants/${tenantB}/vpns`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantB,
+        "content-type": "application/json"
+      },
+      payload: {
+        name: "vpn-b",
+        provider: "wireguard",
+        topology: "site_to_site",
+        networkSpaces: [{ spaceType: "camera_lan", cidr: overlapNestedCidr }]
+      }
+    });
+    expect(createB.statusCode).toBe(200);
+    const vpnBId = createB.json<{ data: { id: string } }>().data.id;
+
+    const validateResponse = await app.inject({
+      method: "POST",
+      url: `/network/tenants/${tenantB}/vpns/${vpnBId}/validate`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantB
+      }
+    });
+
+    expect(validateResponse.statusCode).toBe(409);
+    expect(validateResponse.json()).toMatchObject({
+      code: "VPN_CIDR_OVERLAP"
+    });
+  });
+
+  it("validates vpn network spaces when there is no overlap", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const { tenantId: tenantA } = await createTenantFixture(adminToken, `NHNET Validate A ${Date.now()}`);
+    const { tenantId: tenantB } = await createTenantFixture(adminToken, `NHNET Validate B ${Date.now()}`);
+    const baseSecondOctet = 100 + (Date.now() % 100);
+    const baseThirdOctet = 1 + (Date.now() % 200);
+    const noOverlapA = `10.${baseSecondOctet}.${baseThirdOctet}.0/24`;
+    const noOverlapB = `10.${baseSecondOctet}.${(baseThirdOctet + 1) % 255 || 1}.0/24`;
+
+    const createA = await app.inject({
+      method: "POST",
+      url: `/network/tenants/${tenantA}/vpns`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantA,
+        "content-type": "application/json"
+      },
+      payload: {
+        name: "vpn-a",
+        provider: "wireguard",
+        topology: "site_to_site",
+        networkSpaces: [{ spaceType: "camera_lan", cidr: noOverlapA }]
+      }
+    });
+    expect(createA.statusCode).toBe(200);
+
+    const createB = await app.inject({
+      method: "POST",
+      url: `/network/tenants/${tenantB}/vpns`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantB,
+        "content-type": "application/json"
+      },
+      payload: {
+        name: "vpn-b",
+        provider: "wireguard",
+        topology: "site_to_site",
+        networkSpaces: [{ spaceType: "camera_lan", cidr: noOverlapB }]
+      }
+    });
+    expect(createB.statusCode).toBe(200);
+    const vpnBId = createB.json<{ data: { id: string } }>().data.id;
+
+    const validateResponse = await app.inject({
+      method: "POST",
+      url: `/network/tenants/${tenantB}/vpns/${vpnBId}/validate`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantB
+      }
+    });
+
+    expect(validateResponse.statusCode).toBe(200);
+    expect(validateResponse.json()).toMatchObject({
+      data: {
+        vpnId: vpnBId,
+        status: "validating",
+        checks: expect.arrayContaining([expect.objectContaining({ name: "cidr_overlap", ok: true })])
+      }
+    });
+  });
+});
+
+describe("NH-NET-03/04 vpn lifecycle transitions and health endpoints", () => {
+  it("returns vpn detail with network spaces for tenant admin", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const { tenantId } = await createTenantFixture(adminToken, `NHNET Detail ${Date.now()}`);
+    const detailCidr = `10.${100 + (Date.now() % 100)}.${1 + (Date.now() % 200)}.0/24`;
+
+    const createResponse = await app.inject({
+      method: "POST",
+      url: `/network/tenants/${tenantId}/vpns`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId,
+        "content-type": "application/json"
+      },
+      payload: {
+        name: "vpn-detail",
+        provider: "wireguard",
+        topology: "site_to_site",
+        networkSpaces: [{ spaceType: "camera_lan", cidr: detailCidr, isPrimary: true }]
+      }
+    });
+    expect(createResponse.statusCode).toBe(200);
+    const vpnId = createResponse.json<{ data: { id: string } }>().data.id;
+
+    const detailResponse = await app.inject({
+      method: "GET",
+      url: `/network/tenants/${tenantId}/vpns/${vpnId}`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+
+    expect(detailResponse.statusCode).toBe(200);
+    expect(detailResponse.json()).toMatchObject({
+      data: {
+        id: vpnId,
+        tenantId,
+        name: "vpn-detail",
+        status: "draft",
+        networkSpaces: [expect.objectContaining({ cidr: detailCidr, spaceType: "camera_lan" })]
+      }
+    });
+  });
+
+  it("returns vpn health snapshot", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const { tenantId } = await createTenantFixture(adminToken, `NHNET Health ${Date.now()}`);
+    const healthCidr = `10.${100 + (Date.now() % 100)}.${1 + ((Date.now() + 17) % 200)}.0/24`;
+
+    const createResponse = await app.inject({
+      method: "POST",
+      url: `/network/tenants/${tenantId}/vpns`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId,
+        "content-type": "application/json"
+      },
+      payload: {
+        name: "vpn-health",
+        provider: "wireguard",
+        topology: "site_to_site",
+        networkSpaces: [{ spaceType: "camera_lan", cidr: healthCidr, isPrimary: true }]
+      }
+    });
+    expect(createResponse.statusCode).toBe(200);
+    const vpnId = createResponse.json<{ data: { id: string } }>().data.id;
+
+    const healthResponse = await app.inject({
+      method: "GET",
+      url: `/network/tenants/${tenantId}/vpns/${vpnId}/health`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+
+    expect(healthResponse.statusCode).toBe(200);
+    expect(healthResponse.json()).toMatchObject({
+      data: {
+        vpnId,
+        status: "draft",
+        latencyMsP95: expect.any(Number),
+        packetLossPct: expect.any(Number),
+        peerOnline: expect.any(Number),
+        peerTotal: expect.any(Number),
+        checkedAt: expect.any(String)
+      }
+    });
+  });
+
+  it("rejects invalid vpn lifecycle transitions", async () => {
+    const adminToken = await login("admin@nearhome.dev");
+    const { tenantId } = await createTenantFixture(adminToken, `NHNET Transition ${Date.now()}`);
+    const transitionCidr = `10.${100 + (Date.now() % 100)}.${1 + ((Date.now() + 37) % 200)}.0/24`;
+
+    const createResponse = await app.inject({
+      method: "POST",
+      url: `/network/tenants/${tenantId}/vpns`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId,
+        "content-type": "application/json"
+      },
+      payload: {
+        name: "vpn-transition",
+        provider: "wireguard",
+        topology: "site_to_site",
+        networkSpaces: [{ spaceType: "camera_lan", cidr: transitionCidr, isPrimary: true }]
+      }
+    });
+    expect(createResponse.statusCode).toBe(200);
+    const vpnId = createResponse.json<{ data: { id: string } }>().data.id;
+
+    await prisma.tenantVpn.update({
+      where: { id: vpnId },
+      data: { status: "active" }
+    });
+
+    const validateResponse = await app.inject({
+      method: "POST",
+      url: `/network/tenants/${tenantId}/vpns/${vpnId}/validate`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "x-tenant-id": tenantId
+      }
+    });
+
+    expect(validateResponse.statusCode).toBe(409);
+    expect(validateResponse.json()).toMatchObject({
+      code: "VPN_STATUS_TRANSITION_INVALID"
+    });
+  });
+});

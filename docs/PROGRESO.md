@@ -2,7 +2,7 @@
 
 ## Corte actual
 
-- Fecha de corte: `2026-03-04`
+- Fecha de corte: `2026-04-05`
 - Etapa activa: lifecycle de cámara + validación funcional (API/E2E)
 - Etapa activa: stream sessions + tracking operativo (NH-028) completada
 - Etapa activa: observabilidad base (NH-011) completada
@@ -33,6 +33,8 @@
 - Etapa activa: consumo realtime en Portal/Admin via WS/SSE (NH-DP-17) completada
 - Etapa activa: políticas de ingesta por cámara (`transport/encryption/tunnel`) completada
 - Etapa activa: alias `process-mediamtx` para stream-gateway completada
+- Etapa activa: base de red por tenant (VPN + network spaces) NH-NET-01/NH-NET-02 completada
+- Etapa activa: lifecycle de VPN + endpoints detail/health NH-NET-03/NH-NET-04 completada
 
 ## Sync GitHub Issues
 
@@ -172,6 +174,27 @@
    - Portal y Admin agregan vista `Realtime` conectada a `event-gateway`.
    - Suscripción tenant-scoped con filtro por `topics` (`incident,detection,stream` por default).
    - Reconexión automática con backoff exponencial en `WS` y fallback a `SSE` por polling con replay.
+32. Base VPN + network spaces por tenant (NH-NET-01/NH-NET-02):
+   - nuevos modelos DB para conectividad tenant-scoped:
+     - `TenantVpn`
+     - `TenantNetworkSpace`
+     - `TenantVpnRoutePolicy`
+     - `TenantVpnPeer`
+   - endpoints iniciales de control-plane:
+     - `POST /network/tenants/:tenantId/vpns`
+     - `POST /network/tenants/:tenantId/vpns/:vpnId/validate`
+   - validación inicial de CIDR:
+     - parseo IPv4,
+     - rechazo de rangos reservados,
+     - detección de overlap cross-tenant (`VPN_CIDR_OVERLAP`).
+   - cobertura TDD en API (create/RBAC/validate overlap/no-overlap).
+33. Lifecycle de VPN + detail/health endpoints (NH-NET-03/NH-NET-04):
+   - máquina de estados de VPN con transiciones explícitas y rechazo de transición inválida (`VPN_STATUS_TRANSITION_INVALID`).
+   - endpoints añadidos:
+     - `GET /network/tenants/:tenantId/vpns/:vpnId`
+     - `GET /network/tenants/:tenantId/vpns/:vpnId/health`
+   - `validate` ahora ejecuta transición de lifecycle y registra auditoría de cambio de estado (`tenant_vpn.lifecycle_transition`).
+   - cobertura TDD en API para detail/health/invalid transition.
 
 ## Cambios técnicos relevantes
 

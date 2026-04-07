@@ -78,11 +78,16 @@ Diagrama completo y extendido: `/Users/monotributistar/SOURCES/NearHome/docs/SIS
 ### Planificación y arquitectura
 
 - Plan general por etapas: `/Users/monotributistar/SOURCES/NearHome/docs/PLAN_GENERAL.md`
+- Descripción técnica del MVP: `/Users/monotributistar/SOURCES/NearHome/docs/MVP_TECNICO.md`
 - Diagrama completo del sistema (Mermaid): `/Users/monotributistar/SOURCES/NearHome/docs/SISTEMA_COMPLETO.md`
+- Diagramas por plane (Mermaid): `/Users/monotributistar/SOURCES/NearHome/docs/DIAGRAMAS_PLANES.md`
 - Runbook de piloto (local + on-prem): `/Users/monotributistar/SOURCES/NearHome/docs/PILOT_RUNBOOK.md`
+- Plan accionable local (4 tenants + GUI + VPN/router): `/Users/monotributistar/SOURCES/NearHome/docs/PLAN_ACCIONABLE_LOCAL_4_TENANTS.md`
 - Contratos por componente/interfaz: `/Users/monotributistar/SOURCES/NearHome/docs/CONTRATOS_COMPONENTES.md`
 - Contrato ControlPlane/DataPlane: `/Users/monotributistar/SOURCES/NearHome/docs/CONTROLPLANE_DATAPLANE_CONTRACT.md`
 - Contrato de seguridad/autenticación de nodos de detección: `/Users/monotributistar/SOURCES/NearHome/docs/NODE_AUTH_CONTRACT.md`
+- Contrato de VPN y espacios de red por tenant: `/Users/monotributistar/SOURCES/NearHome/docs/VPN_NETWORK_LIFECYCLE_CONTRACT.md`
+- Historias técnicas + plan TDD de VPN/red: `/Users/monotributistar/SOURCES/NearHome/docs/HISTORIAS_TECNICAS_VPN_TDD.md`
 - Contrato de Entitlements: `/Users/monotributistar/SOURCES/NearHome/docs/ENTITLEMENTS_CONTRACT.md`
 - Guía de storage vaults (local/LAN/VPN): `/Users/monotributistar/SOURCES/NearHome/docs/STORAGE_VAULTS.md`
 - Plan de evolución a streaming sólido (TDD): `/Users/monotributistar/SOURCES/NearHome/docs/PLAN_STREAMING_TDD.md`

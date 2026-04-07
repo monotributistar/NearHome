@@ -117,6 +117,15 @@ Cobertura incluida:
 - NH-DP-18 catálogo de modelos operativo
   - `POST/PUT /ops/model-catalog` permitido solo para superuser
   - `GET /ops/model-catalog` lista entradas filtrables por provider/task/quality/status
+- NH-NET-01/NH-NET-02 VPN + network spaces (fase inicial)
+  - `POST /network/tenants/:tenantId/vpns` crea VPN tenant-scoped con espacios de red
+  - RBAC: `monitor` no puede crear VPN (`403`)
+  - `POST /network/tenants/:tenantId/vpns/:vpnId/validate` detecta overlap CIDR cross-tenant (`409 VPN_CIDR_OVERLAP`)
+  - validate pasa en verde para CIDRs no superpuestos
+- NH-NET-03/NH-NET-04 lifecycle + observabilidad base de VPN
+  - `GET /network/tenants/:tenantId/vpns/:vpnId` devuelve detalle de VPN + `networkSpaces`
+  - `GET /network/tenants/:tenantId/vpns/:vpnId/health` devuelve snapshot de salud tenant-scoped
+  - `POST /network/tenants/:tenantId/vpns/:vpnId/validate` rechaza transición inválida (`409 VPN_STATUS_TRANSITION_INVALID`)
 
 ## Event-gateway tests
 
@@ -209,6 +218,36 @@ Cobertura incluida:
 4. `pnpm --filter @app/stream-gateway test:load`
 5. `pnpm --filter @app/stream-gateway test:soak`
 6. `pnpm test:stream:soak:record`
+
+## Simulación productiva local (todos los planos)
+
+Script: `scripts/pilot/smoke-production-local.sh`
+
+Objetivo:
+
+- levantar stack local,
+- validar salud de control/data/event/detection planes,
+- crear un usuario real por API y validar acceso tenant-scoped,
+- validar flujo de deploy de nodos (`deploy-bundle`, `export`, `stack-sync-detection` dry-run),
+- opcionalmente ejecutar smoke async de audio.
+
+Comando recomendado:
+
+- `pnpm pilot:smoke:prod-local`
+
+Variables útiles:
+
+- `START_STACK=1|0` (default `1`)
+- `STOP_STACK_ON_EXIT=1|0` (default `0`)
+- `RUN_BASE_SMOKE=1|0` (default `1`)
+- `RUN_DETECTION_SYNC_SMOKE_IF_GENERATED=1|0` (default `1`)
+- `RUN_AUDIO_ASYNC_SMOKE=1|0` (default `0`)
+- `DETECTION_DEPLOY_ADMIN_EMAIL` (default `admin@nearhome.dev`)
+- `DETECTION_DEPLOY_ADMIN_PASSWORD` (default `demo1234`)
+- `TEST_USER_EMAIL`, `TEST_USER_PASSWORD`, `TEST_USER_ROLE`
+- `STACK_SYNC_MODE` (default `onprem-remote`)
+- `STACK_SYNC_PROFILE` (default `tunnel`)
+- `STACK_SYNC_DRY_RUN=1|0` (default `1`)
 
 ## Data-plane soak report (NH-DP-10)
 

@@ -40,6 +40,89 @@ model Tenant {
   faceIdentities          FaceIdentity[]
   faceIdentityMembers     FaceIdentityMember[]
   faceIdentityMergeLogs   FaceIdentityMergeLog[]
+  vpns                    TenantVpn[]
+  networkSpaces           TenantNetworkSpace[]
+  vpnRoutePolicies        TenantVpnRoutePolicy[]
+  vpnPeers                TenantVpnPeer[]
+}
+
+model TenantVpn {
+  id                    String                @id @default(cuid())
+  tenantId              String
+  name                  String
+  provider              String
+  topology              String
+  status                String                @default("draft")
+  lifecycleStatusReason String?
+  credentialsRef        String?
+  tunnelInterface       String?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  activatedAt           DateTime?
+  revokedAt             DateTime?
+  tenant                Tenant                @relation(fields: [tenantId], references: [id])
+  networkSpaces         TenantNetworkSpace[]
+  routePolicies         TenantVpnRoutePolicy[]
+  peers                 TenantVpnPeer[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, status])
+}
+
+model TenantNetworkSpace {
+  id         String    @id @default(cuid())
+  tenantId   String
+  vpnId      String
+  spaceType  String
+  cidr       String
+  gatewayIp  String?
+  dnsServers String?
+  isPrimary  Boolean   @default(false)
+  status     String    @default("planned")
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  tenant     Tenant    @relation(fields: [tenantId], references: [id])
+  vpn        TenantVpn @relation(fields: [vpnId], references: [id])
+
+  @@index([tenantId, vpnId])
+  @@index([tenantId, cidr])
+}
+
+model TenantVpnRoutePolicy {
+  id              String    @id @default(cuid())
+  tenantId        String
+  vpnId           String
+  direction       String
+  destinationCidr String
+  nextHop         String?
+  priority        Int       @default(100)
+  status          String    @default("pending")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  tenant          Tenant    @relation(fields: [tenantId], references: [id])
+  vpn             TenantVpn @relation(fields: [vpnId], references: [id])
+
+  @@index([tenantId, vpnId, status])
+}
+
+model TenantVpnPeer {
+  id              String    @id @default(cuid())
+  tenantId        String
+  vpnId           String
+  peerId          String
+  peerRole        String
+  publicKeyRef    String
+  allowedCidrs    String
+  endpoint        String
+  status          String    @default("pending")
+  lastHandshakeAt DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  tenant          Tenant    @relation(fields: [tenantId], references: [id])
+  vpn             TenantVpn @relation(fields: [vpnId], references: [id])
+
+  @@unique([vpnId, peerId])
+  @@index([tenantId, vpnId, status])
 }
 
 model User {

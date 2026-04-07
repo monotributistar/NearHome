@@ -1,5 +1,56 @@
 # API Changelog
 
+## 2026-04-05 - v1.2.3
+
+### Added
+
+- NH-NET-03/NH-NET-04 (lifecycle y observabilidad base de VPN por tenant):
+  - máquina de estados de VPN con transiciones explícitas:
+    - `draft -> validating`
+    - `validating -> provisioning|failed`
+    - `provisioning -> active|degraded|failed`
+    - `active -> degraded|revoking`
+    - `degraded -> active|failed|revoking`
+    - `failed -> validating|revoking`
+    - `revoking -> revoked|failed`
+  - transiciones inválidas devuelven `409 VPN_STATUS_TRANSITION_INVALID`.
+  - nuevos endpoints:
+    - `GET /network/tenants/:tenantId/vpns/:vpnId`
+    - `GET /network/tenants/:tenantId/vpns/:vpnId/health`
+  - `POST /network/tenants/:tenantId/vpns/:vpnId/validate` ahora aplica transición de lifecycle con auditoría (`tenant_vpn.lifecycle_transition`).
+  - normalización de respuesta de `networkSpaces` en create/detail.
+
+### Compatibility
+
+- Compatible con endpoints NH-NET-01/NH-NET-02 ya existentes.
+- Sin cambios breaking para contratos previos de cámaras, stream y detección.
+
+## 2026-04-05 - v1.2.2
+
+### Added
+
+- NH-NET-01/NH-NET-02 (fase inicial VPN por tenant):
+  - nuevas entidades de dominio en API DB:
+    - `TenantVpn`
+    - `TenantNetworkSpace`
+    - `TenantVpnRoutePolicy`
+    - `TenantVpnPeer`
+  - nuevos endpoints iniciales de red:
+    - `POST /network/tenants/:tenantId/vpns`
+    - `POST /network/tenants/:tenantId/vpns/:vpnId/validate`
+  - validación inicial de `networkSpaces`:
+    - parseo de CIDR IPv4,
+    - rechazo de rangos reservados,
+    - detección de solapamiento de CIDR cross-tenant (`VPN_CIDR_OVERLAP`),
+    - error de shape/valor inválido (`VPN_NETWORK_SPACE_INVALID`).
+  - enforcement RBAC inicial:
+    - creación/validación de VPN permitida para `tenant_admin` en su tenant.
+
+### Compatibility
+
+- No rompe contratos existentes de cámaras/stream/event/detection.
+- Endpoints de red se agregan como capacidad nueva y opcional.
+
 ## 2026-03-11 - v1.2.1
 
 ### Added

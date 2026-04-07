@@ -1308,7 +1308,12 @@ function TenantsPage() {
 }
 
 function UsersPage() {
-  const usersList = useList({ resource: "users" } as any);
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
+  const usersList = useList({
+    resource: "users",
+    pagination: { currentPage: page, pageSize, mode: "server" }
+  } as any);
   const result = usersList.result;
   const { mutate: create } = useCreate();
   const { mutate: update } = useUpdate();
@@ -1333,6 +1338,12 @@ function UsersPage() {
   }, [result?.data]);
 
   const users = useMemo(() => result?.data ?? [], [result?.data]);
+  const total = result?.total ?? users.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
 
   return (
     <PageCard title="Users">
@@ -1487,6 +1498,22 @@ function UsersPage() {
           ))}
         </tbody>
       </DataTable>
+
+      <div className="mt-4 flex items-center justify-end gap-2">
+        <PrimaryButton className="px-2 py-1 text-xs" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+          Prev
+        </PrimaryButton>
+        <span className="text-sm">
+          Page {page} / {totalPages}
+        </span>
+        <PrimaryButton
+          className="px-2 py-1 text-xs"
+          disabled={page >= totalPages}
+          onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+        >
+          Next
+        </PrimaryButton>
+      </div>
     </PageCard>
   );
 }

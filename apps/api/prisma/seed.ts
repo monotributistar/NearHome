@@ -29,6 +29,10 @@ async function main() {
   await prisma.auditLog.deleteMany();
   await prisma.streamSessionTransition.deleteMany();
   await prisma.streamSession.deleteMany();
+  await prisma.tenantVpnPeer.deleteMany();
+  await prisma.tenantVpnRoutePolicy.deleteMany();
+  await prisma.tenantNetworkSpace.deleteMany();
+  await prisma.tenantVpn.deleteMany();
   await prisma.cameraProfile.deleteMany();
   await prisma.cameraLifecycleLog.deleteMany();
   await prisma.cameraHealthSnapshot.deleteMany();
