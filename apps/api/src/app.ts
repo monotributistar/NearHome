@@ -7,11 +7,18 @@ import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { EntitlementsSchema, LoginInputSchema, RoleSchema } from "@app/shared";
 import type { FastifyReply, FastifyRequest } from "fastify";
-import { createHmac } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+
+class NotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NotFoundError";
+  }
+}
 
 type Role = z.infer<typeof RoleSchema>;
 const RoleInputSchema = z.enum(["tenant_admin", "monitor", "client_user", "operator", "customer"]);
@@ -123,7 +130,11 @@ function normalizeObservedCapability(raw: Record<string, unknown>, index: number
     capabilityId: typeof raw.capabilityId === "string" ? raw.capabilityId : `cap-${index}`,
     taskTypes: Array.isArray(raw.taskTypes) ? raw.taskTypes.map(String) : [],
     qualities: Array.isArray(raw.qualities) ? raw.qualities.map(String) : [],
-    models: Array.isArray(raw.models) ? raw.models.map(String) : Array.isArray(raw.modelRefs) ? raw.modelRefs.map(String) : []
+    models: Array.isArray(raw.models)
+      ? raw.models.map(String)
+      : Array.isArray(raw.modelRefs)
+        ? raw.modelRefs.map(String)
+        : []
   };
 }
 
@@ -169,7 +180,7 @@ function parseIpv4Cidr(raw: string): ParsedIpv4Cidr | null {
   const ipInt = parseIpv4ToInt(ip);
   if (ipInt === null) return null;
   const hostBits = 32 - prefix;
-  const mask = hostBits === 32 ? 0 : ((0xffffffff << hostBits) >>> 0);
+  const mask = hostBits === 32 ? 0 : (0xffffffff << hostBits) >>> 0;
   const network = ipInt & mask;
   const broadcast = (network | (~mask >>> 0)) >>> 0;
   return {
@@ -186,7 +197,16 @@ function cidrOverlaps(a: ParsedIpv4Cidr, b: ParsedIpv4Cidr) {
 
 const TenantVpnProviderSchema = z.enum(["wireguard", "ipsec", "tailscale", "custom"]);
 const TenantVpnTopologySchema = z.enum(["site_to_site", "hub_spoke", "mesh"]);
-const TenantVpnStatusSchema = z.enum(["draft", "validating", "provisioning", "active", "degraded", "revoking", "revoked", "failed"]);
+const TenantVpnStatusSchema = z.enum([
+  "draft",
+  "validating",
+  "provisioning",
+  "active",
+  "degraded",
+  "revoking",
+  "revoked",
+  "failed"
+]);
 const TenantNetworkSpaceStatusSchema = z.enum(["planned", "allocated", "announced", "active", "retired"]);
 const TenantNetworkSpaceTypeSchema = z.enum(["camera_lan", "edge_nodes", "operations", "reserved"]);
 
@@ -373,7 +393,15 @@ type CameraNotificationRule = {
 type ProfileStatus = "pending" | "ready" | "error";
 type CameraLifecycleStatus = "draft" | "provisioning" | "ready" | "degraded" | "offline" | "error" | "retired";
 type StreamSessionStatus = "requested" | "issued" | "active" | "ended" | "expired";
-type TenantVpnStatus = "draft" | "validating" | "provisioning" | "active" | "degraded" | "revoking" | "revoked" | "failed";
+type TenantVpnStatus =
+  | "draft"
+  | "validating"
+  | "provisioning"
+  | "active"
+  | "degraded"
+  | "revoking"
+  | "revoked"
+  | "failed";
 type DetectionJobStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
 type DetectionMode = "realtime" | "batch";
 type DetectionSource = "snapshot" | "clip" | "range";
@@ -427,7 +455,15 @@ type BridgeNodeSnapshot = {
   contractVersion: string;
 };
 
-const CameraLifecycleStatusSchema = z.enum(["draft", "provisioning", "ready", "degraded", "offline", "error", "retired"]);
+const CameraLifecycleStatusSchema = z.enum([
+  "draft",
+  "provisioning",
+  "ready",
+  "degraded",
+  "offline",
+  "error",
+  "retired"
+]);
 const CameraConnectivitySchema = z.enum(["online", "degraded", "offline"]);
 const StreamSessionStatusSchema = z.enum(["requested", "issued", "active", "ended", "expired"]);
 const DetectionJobStatusSchema = z.enum(["queued", "running", "succeeded", "failed", "canceled"]);
@@ -672,7 +708,9 @@ function normalizeRecord(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function extractDetectionJobEffectiveConfig(options: Record<string, unknown> | null | undefined): DetectionJobEffectiveConfig | undefined {
+function extractDetectionJobEffectiveConfig(
+  options: Record<string, unknown> | null | undefined
+): DetectionJobEffectiveConfig | undefined {
   if (!options) return undefined;
   const parsed = DetectionJobEffectiveConfigSchema.safeParse(options.resolvedConfig);
   return parsed.success ? parsed.data : undefined;
@@ -686,7 +724,10 @@ function normalizeDesiredNodeCapabilities(
     const parsed = DesiredNodeCapabilitySchema.safeParse(raw);
     if (parsed.success) return parsed.data;
     return {
-      capabilityId: typeof (raw as Record<string, unknown>).capabilityId === "string" ? String((raw as Record<string, unknown>).capabilityId) : `cap-${index}`,
+      capabilityId:
+        typeof (raw as Record<string, unknown>).capabilityId === "string"
+          ? String((raw as Record<string, unknown>).capabilityId)
+          : `cap-${index}`,
       taskTypes: [],
       qualities: [],
       modelRefs: []
@@ -730,18 +771,16 @@ function normalizeDesiredNodeConfig(args: {
 
 function buildNodeConfigDiff(args: {
   desired: ReturnType<typeof normalizeDesiredNodeConfig> | null;
-  observed:
-    | {
-        runtime: string;
-        transport: string;
-        endpoint: string;
-        resources: Record<string, number>;
-        capabilities: BridgeNodeCapability[];
-        models: string[];
-        assignedTenantIds: string[];
-        maxConcurrent: number;
-      }
-    | null;
+  observed: {
+    runtime: string;
+    transport: string;
+    endpoint: string;
+    resources: Record<string, number>;
+    capabilities: BridgeNodeCapability[];
+    models: string[];
+    assignedTenantIds: string[];
+    maxConcurrent: number;
+  } | null;
 }) {
   if (!args.desired || !args.observed) {
     return {
@@ -814,12 +853,13 @@ function buildNodeDeployDefinition(args: {
   const runtime = base.runtime;
   const fallbackPort = runtime === "mediapipe" ? 8092 : 8091;
   const port = extractPortFromEndpoint(base.endpoint, fallbackPort);
-  const capabilityList =
-    "capabilities" in base && Array.isArray(base.capabilities)
-      ? base.capabilities
-      : [];
+  const capabilityList = "capabilities" in base && Array.isArray(base.capabilities) ? base.capabilities : [];
   const taskTypes = Array.from(
-    new Set(capabilityList.flatMap((capability: any) => capability.taskTypes ?? []).filter((value: unknown) => typeof value === "string"))
+    new Set(
+      capabilityList
+        .flatMap((capability: any) => capability.taskTypes ?? [])
+        .filter((value: unknown) => typeof value === "string")
+    )
   ) as string[];
   const modelRefs = Array.from(
     new Set(
@@ -836,10 +876,7 @@ function buildNodeDeployDefinition(args: {
         ? base.assignedTenantIds
         : [];
   const serviceName = `inference-node-${runtime}-${args.nodeId.replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase()}`;
-  const buildContext =
-    runtime === "mediapipe"
-      ? "../apps/inference-node-mediapipe"
-      : "../apps/inference-node-yolo";
+  const buildContext = runtime === "mediapipe" ? "../apps/inference-node-mediapipe" : "../apps/inference-node-yolo";
 
   const env = {
     INFERENCE_BRIDGE_URL: "http://inference-bridge:8090",
@@ -863,7 +900,11 @@ function buildNodeDeployDefinition(args: {
   const warnings: string[] = [];
   if (taskTypes.length === 0) warnings.push("Node does not declare any taskTypes");
   if (modelRefs.length === 0) warnings.push("Node does not declare any models");
-  if (runtime === "yolo" && taskTypes.includes("face_detection") && !modelRefs.some((model) => model.includes("face"))) {
+  if (
+    runtime === "yolo" &&
+    taskTypes.includes("face_detection") &&
+    !modelRefs.some((model) => model.includes("face"))
+  ) {
     warnings.push("Face detection is declared but no face-specific modelRef was found");
   }
 
@@ -873,7 +914,8 @@ function buildNodeDeployDefinition(args: {
     runtime,
     serviceName,
     deploymentContractVersion: "1.0",
-    imageHint: runtime === "mediapipe" ? "nearhome/inference-node-mediapipe:local" : "nearhome/inference-node-yolo:local",
+    imageHint:
+      runtime === "mediapipe" ? "nearhome/inference-node-mediapipe:local" : "nearhome/inference-node-yolo:local",
     build: {
       context: buildContext,
       dockerfile: "Dockerfile"
@@ -935,7 +977,9 @@ function renderYaml(value: unknown, indent = 0): string {
 }
 
 function buildDeployBundle(definitions: Array<ReturnType<typeof buildNodeDeployDefinition>>) {
-  const effectiveDefinitions = definitions.filter((definition): definition is NonNullable<typeof definition> => Boolean(definition));
+  const effectiveDefinitions = definitions.filter((definition): definition is NonNullable<typeof definition> =>
+    Boolean(definition)
+  );
   const services: Record<string, unknown> = {};
   for (const definition of effectiveDefinitions) {
     Object.assign(services, definition.composeService);
@@ -955,10 +999,7 @@ function buildDeployBundle(definitions: Array<ReturnType<typeof buildNodeDeployD
   };
 }
 
-async function persistDeployBundle(args: {
-  bundle: ReturnType<typeof buildDeployBundle>;
-  outputPath: string;
-}) {
+async function persistDeployBundle(args: { bundle: ReturnType<typeof buildDeployBundle>; outputPath: string }) {
   const resolvedPath = resolve(args.outputPath);
   await mkdir(dirname(resolvedPath), { recursive: true });
   await writeFile(resolvedPath, args.bundle.composeYaml, "utf8");
@@ -997,8 +1038,14 @@ function parseCameraRecordingPolicy(rulesProfileRaw: string | null): CameraRecor
     if (!recording || typeof recording !== "object") return fallback;
     const value = recording as Record<string, unknown>;
     const mode = value.mode;
-    const preSeconds = typeof value.eventClipPreSeconds === "number" ? Math.floor(value.eventClipPreSeconds) : fallback.eventClipPreSeconds;
-    const postSeconds = typeof value.eventClipPostSeconds === "number" ? Math.floor(value.eventClipPostSeconds) : fallback.eventClipPostSeconds;
+    const preSeconds =
+      typeof value.eventClipPreSeconds === "number"
+        ? Math.floor(value.eventClipPreSeconds)
+        : fallback.eventClipPreSeconds;
+    const postSeconds =
+      typeof value.eventClipPostSeconds === "number"
+        ? Math.floor(value.eventClipPostSeconds)
+        : fallback.eventClipPostSeconds;
     return {
       mode:
         mode === "event_only" || mode === "hybrid" || mode === "continuous" || mode === "observe_only"
@@ -1030,10 +1077,14 @@ function parseCameraNotificationRule(rulesProfileRaw: string | null): CameraNoti
     const notification = parsed.notification;
     if (!notification || typeof notification !== "object") return fallback;
     const value = notification as Record<string, unknown>;
-    const channelsRaw = value.channels && typeof value.channels === "object" ? (value.channels as Record<string, unknown>) : {};
-    const labels = Array.isArray(value.labels) ? value.labels.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0) : [];
+    const channelsRaw =
+      value.channels && typeof value.channels === "object" ? (value.channels as Record<string, unknown>) : {};
+    const labels = Array.isArray(value.labels)
+      ? value.labels.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+      : [];
     const minConfidenceRaw = typeof value.minConfidence === "number" ? value.minConfidence : fallback.minConfidence;
-    const cooldownRaw = typeof value.cooldownSeconds === "number" ? Math.floor(value.cooldownSeconds) : fallback.cooldownSeconds;
+    const cooldownRaw =
+      typeof value.cooldownSeconds === "number" ? Math.floor(value.cooldownSeconds) : fallback.cooldownSeconds;
     return {
       enabled: value.enabled === true,
       minConfidence: Math.max(0, Math.min(1, minConfidenceRaw)),
@@ -1453,7 +1504,9 @@ function summarizeIdentityFaces(
     current.sightings += 1;
   }
 
-  const appearances = Array.from(appearancesByCamera.values()).sort((left, right) => right.lastSeenAt.localeCompare(left.lastSeenAt));
+  const appearances = Array.from(appearancesByCamera.values()).sort((left, right) =>
+    right.lastSeenAt.localeCompare(left.lastSeenAt)
+  );
   const cameras = appearances.map(({ cameraId, cameraName, sightings }) => ({ cameraId, cameraName, sightings }));
   return {
     appearances,
@@ -1571,7 +1624,9 @@ function notificationDeliveryResponse(delivery: {
     error: delivery.error,
     responseCode: delivery.responseCode,
     requestPayload: delivery.requestPayload ? parseJson<Record<string, unknown>>(delivery.requestPayload) : undefined,
-    responsePayload: delivery.responsePayload ? parseJson<Record<string, unknown>>(delivery.responsePayload) : undefined,
+    responsePayload: delivery.responsePayload
+      ? parseJson<Record<string, unknown>>(delivery.responsePayload)
+      : undefined,
     createdAt: toISO(delivery.createdAt)
   };
 }
@@ -1739,10 +1794,7 @@ function extractFaceQualityScore(det: {
   return typeof candidate === "number" && Number.isFinite(candidate) ? candidate : null;
 }
 
-function extractEmbeddingRef(det: {
-  attributes?: Record<string, unknown>;
-  providerMeta?: Record<string, unknown>;
-}) {
+function extractEmbeddingRef(det: { attributes?: Record<string, unknown>; providerMeta?: Record<string, unknown> }) {
   const candidate = det.attributes?.embeddingRef ?? det.providerMeta?.embeddingRef;
   return typeof candidate === "string" && candidate.length > 0 ? candidate : null;
 }
@@ -1907,17 +1959,16 @@ async function attachFaceArtifacts(args: {
     }
   }
 
-  const cluster =
-    bestCluster
-      ? await args.tx.faceCluster.findUniqueOrThrow({ where: { id: bestCluster.id } })
-      : await args.tx.faceCluster.create({
-          data: {
-            tenantId: args.job.tenantId,
-            status: "open",
-            centroidEmbedding: JSON.stringify(embeddingVector),
-            memberCount: 0
-          }
-        });
+  const cluster = bestCluster
+    ? await args.tx.faceCluster.findUniqueOrThrow({ where: { id: bestCluster.id } })
+    : await args.tx.faceCluster.create({
+        data: {
+          tenantId: args.job.tenantId,
+          status: "open",
+          centroidEmbedding: JSON.stringify(embeddingVector),
+          memberCount: 0
+        }
+      });
 
   await args.tx.faceClusterMember.create({
     data: {
@@ -2130,7 +2181,9 @@ async function transitionCameraLifecycle(args: {
   reason?: string | null;
   actorUserId?: string;
 }) {
-  const camera = await prisma.camera.findFirst({ where: { id: args.cameraId, tenantId: args.tenantId, deletedAt: null } });
+  const camera = await prisma.camera.findFirst({
+    where: { id: args.cameraId, tenantId: args.tenantId, deletedAt: null }
+  });
   if (!camera) throw new Error("CAMERA_NOT_FOUND");
   const fromStatus = camera.lifecycleStatus as CameraLifecycleStatus;
 
@@ -2493,7 +2546,8 @@ export async function buildApp() {
   const inferenceBridgeUrl =
     process.env.INFERENCE_BRIDGE_URL?.replace(/\/$/, "") ?? detectionBridgeUrl ?? "http://inference-bridge:8090";
   const nodeAuthAdminSecret = process.env.NODE_AUTH_ADMIN_SECRET ?? "dev-node-auth-admin-secret";
-  const detectionDeployOutputPath = process.env.DETECTION_DEPLOY_OUTPUT_PATH ?? resolveDefaultDetectionDeployOutputPath();
+  const detectionDeployOutputPath =
+    process.env.DETECTION_DEPLOY_OUTPUT_PATH ?? resolveDefaultDetectionDeployOutputPath();
   const detectionStackSyncCommand = process.env.DETECTION_STACK_SYNC_COMMAND ?? "";
   const detectionStackSyncTimeoutMsRaw = Number(process.env.DETECTION_STACK_SYNC_TIMEOUT_MS ?? 600_000);
   const detectionStackSyncMaxRetriesRaw = Number(process.env.DETECTION_STACK_SYNC_MAX_RETRIES ?? 0);
@@ -2976,14 +3030,17 @@ export async function buildApp() {
         const det = args.detections[i];
         const label = typeof det.label === "string" && det.label.length > 0 ? det.label : "unknown";
         const confidence = typeof det.confidence === "number" ? det.confidence : 0;
-        const mediaKind = DetectionMediaKindSchema.safeParse(det.mediaKind).success ? (det.mediaKind as "image" | "audio") : "image";
+        const mediaKind = DetectionMediaKindSchema.safeParse(det.mediaKind).success
+          ? (det.mediaKind as "image" | "audio")
+          : "image";
         const bbox = {
           x: typeof det.bbox?.x === "number" ? det.bbox.x : 0,
           y: typeof det.bbox?.y === "number" ? det.bbox.y : 0,
           w: typeof det.bbox?.w === "number" ? det.bbox.w : 0.1,
           h: typeof det.bbox?.h === "number" ? det.bbox.h : 0.1
         };
-        const tsInput = typeof det.frameTs === "string" ? det.frameTs : typeof det.startedAt === "string" ? det.startedAt : undefined;
+        const tsInput =
+          typeof det.frameTs === "string" ? det.frameTs : typeof det.startedAt === "string" ? det.startedAt : undefined;
         const frameTs = tsInput ? new Date(tsInput) : new Date();
         const zoneId = mediaKind === "image" ? resolveZoneFromProfile(job.camera.profile?.zoneMap ?? null, bbox) : null;
         const incident = deriveIncidentFromDetection({ label, zoneId, location: job.camera.location, mediaKind });
@@ -3055,7 +3112,10 @@ export async function buildApp() {
             tenantId: job.tenantId,
             cameraId: job.cameraId,
             jobId: job.id,
-            type: mediaKind === "audio" ? `audio_detected.${label.toLowerCase()}` : `object_detected.${label.toLowerCase()}`,
+            type:
+              mediaKind === "audio"
+                ? `audio_detected.${label.toLowerCase()}`
+                : `object_detected.${label.toLowerCase()}`,
             severity: confidence >= 0.8 ? "high" : confidence >= 0.5 ? "medium" : "low",
             startedAt: frameTs,
             payload: JSON.stringify({
@@ -3206,11 +3266,16 @@ export async function buildApp() {
         const assignedTenantIds = Array.from(new Set(node.assignments.map((assignment) => assignment.tenantId)));
         if (assignedTenantIds.length > 0 && !assignedTenantIds.includes(args.tenantId)) return false;
         const models = parseJson<string[]>(node.models);
-        const capabilities = parseJson<Array<Record<string, unknown>>>(node.capabilities).map(normalizeObservedCapability);
-        const supportsModel = models.includes(args.modelRef) || capabilities.some((capability) => capability.models.includes(args.modelRef));
+        const capabilities = parseJson<Array<Record<string, unknown>>>(node.capabilities).map(
+          normalizeObservedCapability
+        );
+        const supportsModel =
+          models.includes(args.modelRef) ||
+          capabilities.some((capability) => capability.models.includes(args.modelRef));
         const supportsTask = capabilities.some((capability) => {
           const taskSupported = capability.taskTypes.includes(args.pipeline.taskType);
-          const qualitySupported = capability.qualities.length === 0 || capability.qualities.includes(args.pipeline.quality);
+          const qualitySupported =
+            capability.qualities.length === 0 || capability.qualities.includes(args.pipeline.quality);
           const modelSupported = capability.models.length === 0 || capability.models.includes(args.modelRef);
           return taskSupported && qualitySupported && modelSupported;
         });
@@ -3241,7 +3306,9 @@ export async function buildApp() {
   };
 
   const selectPrimaryNodeCandidate = (candidates: DetectionPipelineNodeCandidate[]) =>
-    candidates.find((candidate) => !candidate.isDrained && (candidate.status === "online" || candidate.status === "degraded")) ??
+    candidates.find(
+      (candidate) => !candidate.isDrained && (candidate.status === "online" || candidate.status === "degraded")
+    ) ??
     candidates[0] ??
     null;
 
@@ -3615,7 +3682,9 @@ export async function buildApp() {
       new Set(
         pipelines.flatMap((pipeline) =>
           pipeline.candidates
-            .filter((candidate) => !candidate.isDrained && (candidate.status === "online" || candidate.status === "degraded"))
+            .filter(
+              (candidate) => !candidate.isDrained && (candidate.status === "online" || candidate.status === "degraded")
+            )
             .map((candidate) => candidate.nodeId)
         )
       )
@@ -3806,7 +3875,9 @@ export async function buildApp() {
   app.addHook("onRequest", async (request, reply) => {
     const incomingRequestId = request.headers["x-request-id"];
     const requestId =
-      typeof incomingRequestId === "string" && incomingRequestId.trim().length > 0 ? incomingRequestId.trim() : request.id;
+      typeof incomingRequestId === "string" && incomingRequestId.trim().length > 0
+        ? incomingRequestId.trim()
+        : request.id;
     request.requestId = requestId;
     request.requestStartedAt = Date.now();
     reply.header("x-request-id", requestId);
@@ -3994,7 +4065,12 @@ export async function buildApp() {
       statusCode = error.statusCode;
     }
 
-    const code = error instanceof z.ZodError ? "VALIDATION_ERROR" : error instanceof ApiDomainError ? error.apiCode : statusToCode(statusCode);
+    const code =
+      error instanceof z.ZodError
+        ? "VALIDATION_ERROR"
+        : error instanceof ApiDomainError
+          ? error.apiCode
+          : statusToCode(statusCode);
     const defaultMessage = statusCode >= 500 ? "Internal server error" : "Request failed";
 
     const body: ApiErrorBody = {
@@ -4008,15 +4084,15 @@ export async function buildApp() {
               ? "Invalid camera lifecycle transition"
               : err.message === "CAMERA_NOT_FOUND"
                 ? "Camera not found"
-              : err.message === "STREAM_SESSION_NOT_FOUND"
+                : err.message === "STREAM_SESSION_NOT_FOUND"
                   ? "Stream session not found"
                   : err.message === "INVALID_STREAM_SESSION_TRANSITION"
                     ? "Invalid stream session transition"
                     : error instanceof ApiDomainError
                       ? error.message
-            : error instanceof z.ZodError
-              ? "Validation failed"
-              : err.message || defaultMessage
+                      : error instanceof z.ZodError
+                        ? "Validation failed"
+                        : err.message || defaultMessage
     };
 
     if (error instanceof z.ZodError) {
@@ -4060,7 +4136,10 @@ export async function buildApp() {
 
     if (tenantHeader) {
       if (isSuperuser) {
-        const tenant = await prisma.tenant.findFirst({ where: { id: tenantHeader, deletedAt: null }, select: { id: true } });
+        const tenant = await prisma.tenant.findFirst({
+          where: { id: tenantHeader, deletedAt: null },
+          select: { id: true }
+        });
         if (!tenant) {
           throw app.httpErrors.forbidden("Invalid tenant context");
         }
@@ -4179,12 +4258,18 @@ export async function buildApp() {
       return {
         capabilityId:
           typeof entry.capabilityId === "string" && entry.capabilityId.length > 0 ? entry.capabilityId : `cap-${index}`,
-        taskTypes: Array.isArray(entry.taskTypes) ? entry.taskTypes.filter((x): x is string => typeof x === "string") : [],
+        taskTypes: Array.isArray(entry.taskTypes)
+          ? entry.taskTypes.filter((x): x is string => typeof x === "string")
+          : [],
         models: Array.isArray(entry.models) ? entry.models.filter((x): x is string => typeof x === "string") : []
       };
     });
-    const models = Array.isArray(nodeRaw.models) ? nodeRaw.models.filter((x): x is string => typeof x === "string") : [];
-    const maxConcurrent = Number.isFinite(Number(nodeRaw.maxConcurrent)) ? Math.max(1, Number(nodeRaw.maxConcurrent)) : 1;
+    const models = Array.isArray(nodeRaw.models)
+      ? nodeRaw.models.filter((x): x is string => typeof x === "string")
+      : [];
+    const maxConcurrent = Number.isFinite(Number(nodeRaw.maxConcurrent))
+      ? Math.max(1, Number(nodeRaw.maxConcurrent))
+      : 1;
     const queueDepth = Number.isFinite(Number(nodeRaw.queueDepth)) ? Math.max(0, Number(nodeRaw.queueDepth)) : 0;
     const isDrained = nodeRaw.isDrained === true;
     const parsedHeartbeat =
@@ -4309,7 +4394,13 @@ export async function buildApp() {
   const syncInferenceNodeSnapshots = async (nodesRaw: Array<Record<string, unknown>>) => {
     const normalized = nodesRaw.map(normalizeBridgeNode).filter((item): item is BridgeNodeSnapshot => Boolean(item));
     if (!normalized.length) return;
-    const tenantIds = Array.from(new Set(normalized.flatMap((node) => [node.tenantId, ...node.tenantIds]).filter((tenantId): tenantId is string => Boolean(tenantId))));
+    const tenantIds = Array.from(
+      new Set(
+        normalized
+          .flatMap((node) => [node.tenantId, ...node.tenantIds])
+          .filter((tenantId): tenantId is string => Boolean(tenantId))
+      )
+    );
     const existingTenants = tenantIds.length
       ? await prisma.tenant.findMany({
           where: { id: { in: tenantIds }, deletedAt: null },
@@ -4321,7 +4412,9 @@ export async function buildApp() {
     for (const node of normalized) {
       const bridgeTenantIds = Array.from(
         new Set(
-          [node.tenantId, ...node.tenantIds].filter((tenantId): tenantId is string => Boolean(tenantId && validTenantIds.has(tenantId)))
+          [node.tenantId, ...node.tenantIds].filter((tenantId): tenantId is string =>
+            Boolean(tenantId && validTenantIds.has(tenantId))
+          )
         )
       );
       const existing = await prisma.inferenceNodeSnapshot.findUnique({
@@ -4533,7 +4626,8 @@ export async function buildApp() {
   app.get("/tenants/:id", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
     const id = (request.params as { id: string }).id;
     if (request.ctx?.isSuperuser && request.ctx?.isImpersonating) {
-      if (request.ctx.tenantId !== id) throw app.httpErrors.forbidden("Impersonated context can only access active tenant");
+      if (request.ctx.tenantId !== id)
+        throw app.httpErrors.forbidden("Impersonated context can only access active tenant");
     } else if (!hasGlobalSuperuserPrivileges(request)) {
       const membership = await prisma.membership.findFirst({
         where: {
@@ -4554,7 +4648,8 @@ export async function buildApp() {
     const body = z.object({ name: z.string().min(2) }).parse(request.body);
     if (request.ctx?.isSuperuser && request.ctx?.isImpersonating) {
       if (request.ctx.role !== "tenant_admin") throw app.httpErrors.forbidden();
-      if (request.ctx.tenantId !== id) throw app.httpErrors.forbidden("Impersonated context can only edit active tenant");
+      if (request.ctx.tenantId !== id)
+        throw app.httpErrors.forbidden("Impersonated context can only edit active tenant");
     } else if (!hasGlobalSuperuserPrivileges(request)) {
       const membership = await prisma.membership.findFirst({
         where: {
@@ -4573,7 +4668,8 @@ export async function buildApp() {
     const id = (request.params as { id: string }).id;
     if (request.ctx?.isSuperuser && request.ctx?.isImpersonating) {
       if (request.ctx.role !== "tenant_admin") throw app.httpErrors.forbidden();
-      if (request.ctx.tenantId !== id) throw app.httpErrors.forbidden("Impersonated context can only delete active tenant");
+      if (request.ctx.tenantId !== id)
+        throw app.httpErrors.forbidden("Impersonated context can only delete active tenant");
     } else if (!hasGlobalSuperuserPrivileges(request)) {
       const membership = await prisma.membership.findFirst({
         where: {
@@ -4750,7 +4846,9 @@ export async function buildApp() {
   });
 
   app.post("/memberships", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
-    const body = z.object({ userId: z.string(), role: RoleInputSchema, tenantId: z.string().optional() }).parse(request.body);
+    const body = z
+      .object({ userId: z.string(), role: RoleInputSchema, tenantId: z.string().optional() })
+      .parse(request.body);
     const normalizedRole = normalizeRoleInput(body.role);
 
     const tenantId = (() => {
@@ -4785,111 +4883,115 @@ export async function buildApp() {
     };
   });
 
-  app.post("/network/tenants/:tenantId/vpns", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
-    const ctx = getTenantContext(request);
-    assertRole(request, ["tenant_admin"]);
-    const { tenantId } = request.params as { tenantId: string };
-    if (tenantId !== ctx.tenantId) throw app.httpErrors.forbidden();
+  app.post(
+    "/network/tenants/:tenantId/vpns",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest) => {
+      const ctx = getTenantContext(request);
+      assertRole(request, ["tenant_admin"]);
+      const { tenantId } = request.params as { tenantId: string };
+      if (tenantId !== ctx.tenantId) throw app.httpErrors.forbidden();
 
-    const body = z
-      .object({
-        name: z.string().trim().min(2),
-        provider: TenantVpnProviderSchema.default("wireguard"),
-        topology: TenantVpnTopologySchema.default("site_to_site"),
-        networkSpaces: z
-          .array(
-            z.object({
-              spaceType: TenantNetworkSpaceTypeSchema.default("camera_lan"),
-              cidr: z.string().trim().min(3),
-              gatewayIp: z.string().trim().min(3).optional(),
-              dnsServers: z.array(z.string().trim().min(3)).optional(),
-              isPrimary: z.boolean().optional()
-            })
-          )
-          .min(1)
-      })
-      .parse(request.body ?? {});
+      const body = z
+        .object({
+          name: z.string().trim().min(2),
+          provider: TenantVpnProviderSchema.default("wireguard"),
+          topology: TenantVpnTopologySchema.default("site_to_site"),
+          networkSpaces: z
+            .array(
+              z.object({
+                spaceType: TenantNetworkSpaceTypeSchema.default("camera_lan"),
+                cidr: z.string().trim().min(3),
+                gatewayIp: z.string().trim().min(3).optional(),
+                dnsServers: z.array(z.string().trim().min(3)).optional(),
+                isPrimary: z.boolean().optional()
+              })
+            )
+            .min(1)
+        })
+        .parse(request.body ?? {});
 
-    const parsedSpaces = body.networkSpaces.map((space, index) => {
-      const parsed = parseIpv4Cidr(space.cidr);
-      if (!parsed) {
-        throw new ApiDomainError({
-          statusCode: 422,
-          apiCode: "VPN_NETWORK_SPACE_INVALID",
-          message: `invalid cidr at networkSpaces[${index}]`,
-          details: { cidr: space.cidr, index }
-        });
-      }
-      if (overlapsReservedIpv4(parsed)) {
+      const parsedSpaces = body.networkSpaces.map((space, index) => {
+        const parsed = parseIpv4Cidr(space.cidr);
+        if (!parsed) {
+          throw new ApiDomainError({
+            statusCode: 422,
+            apiCode: "VPN_NETWORK_SPACE_INVALID",
+            message: `invalid cidr at networkSpaces[${index}]`,
+            details: { cidr: space.cidr, index }
+          });
+        }
+        if (overlapsReservedIpv4(parsed)) {
+          throw new ApiDomainError({
+            statusCode: 409,
+            apiCode: "VPN_RESERVED_RANGE_CONFLICT",
+            message: "network space conflicts with reserved ranges",
+            details: { cidr: space.cidr, index }
+          });
+        }
+        return {
+          ...space,
+          parsed
+        };
+      });
+
+      const existing = await prisma.tenantVpn.findFirst({
+        where: { tenantId, name: body.name }
+      });
+      if (existing) {
         throw new ApiDomainError({
           statusCode: 409,
-          apiCode: "VPN_RESERVED_RANGE_CONFLICT",
-          message: "network space conflicts with reserved ranges",
-          details: { cidr: space.cidr, index }
+          apiCode: "CONFLICT",
+          message: "vpn name already exists for tenant",
+          details: { tenantId, name: body.name }
         });
       }
+
+      const created = await prisma.$transaction(async (tx) => {
+        const vpn = await tx.tenantVpn.create({
+          data: {
+            tenantId,
+            name: body.name,
+            provider: body.provider,
+            topology: body.topology,
+            status: "draft"
+          }
+        });
+
+        const spaces = await Promise.all(
+          parsedSpaces.map((space) =>
+            tx.tenantNetworkSpace.create({
+              data: {
+                tenantId,
+                vpnId: vpn.id,
+                spaceType: space.spaceType,
+                cidr: space.parsed.cidr,
+                gatewayIp: space.gatewayIp ?? null,
+                dnsServers: JSON.stringify(space.dnsServers ?? []),
+                isPrimary: Boolean(space.isPrimary),
+                status: "planned"
+              }
+            })
+          )
+        );
+
+        return { vpn, spaces };
+      });
+
       return {
-        ...space,
-        parsed
-      };
-    });
-
-    const existing = await prisma.tenantVpn.findFirst({
-      where: { tenantId, name: body.name }
-    });
-    if (existing) {
-      throw new ApiDomainError({
-        statusCode: 409,
-        apiCode: "CONFLICT",
-        message: "vpn name already exists for tenant",
-        details: { tenantId, name: body.name }
-      });
-    }
-
-    const created = await prisma.$transaction(async (tx) => {
-      const vpn = await tx.tenantVpn.create({
         data: {
-          tenantId,
-          name: body.name,
-          provider: body.provider,
-          topology: body.topology,
-          status: "draft"
+          id: created.vpn.id,
+          tenantId: created.vpn.tenantId,
+          name: created.vpn.name,
+          provider: created.vpn.provider,
+          topology: created.vpn.topology,
+          status: created.vpn.status,
+          createdAt: toISO(created.vpn.createdAt),
+          networkSpaces: created.spaces.map(serializeNetworkSpace)
         }
-      });
-
-      const spaces = await Promise.all(
-        parsedSpaces.map((space) =>
-          tx.tenantNetworkSpace.create({
-            data: {
-              tenantId,
-              vpnId: vpn.id,
-              spaceType: space.spaceType,
-              cidr: space.parsed.cidr,
-              gatewayIp: space.gatewayIp ?? null,
-              dnsServers: JSON.stringify(space.dnsServers ?? []),
-              isPrimary: Boolean(space.isPrimary),
-              status: "planned"
-            }
-          })
-        )
-      );
-
-      return { vpn, spaces };
-    });
-
-    return {
-      data: {
-        id: created.vpn.id,
-        tenantId: created.vpn.tenantId,
-        name: created.vpn.name,
-        provider: created.vpn.provider,
-        topology: created.vpn.topology,
-        status: created.vpn.status,
-        createdAt: toISO(created.vpn.createdAt),
-        networkSpaces: created.spaces.map(serializeNetworkSpace)
-      }
-    };
-  });
+      };
+    }
+  );
 
   app.get(
     "/network/tenants/:tenantId/vpns/:vpnId",
@@ -4968,7 +5070,9 @@ export async function buildApp() {
       });
       const parsedOthers = otherTenantSpaces
         .map((space) => ({ space, parsed: parseIpv4Cidr(space.cidr) }))
-        .filter((entry): entry is { space: (typeof otherTenantSpaces)[number]; parsed: ParsedIpv4Cidr } => Boolean(entry.parsed));
+        .filter((entry): entry is { space: (typeof otherTenantSpaces)[number]; parsed: ParsedIpv4Cidr } =>
+          Boolean(entry.parsed)
+        );
 
       for (const current of parsedCurrent) {
         const overlap = parsedOthers.find((entry) => cidrOverlaps(current.parsed, entry.parsed));
@@ -5051,28 +5155,32 @@ export async function buildApp() {
     }
   );
 
-  app.get("/households", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const ctx = getTenantContext(request);
-    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
-    const query = request.query as Record<string, unknown>;
-    const { skip, take } = parseListQuery(query);
-    const name = typeof query.name === "string" && query.name.length > 0 ? query.name : undefined;
-    const where = {
-      tenantId: ctx.tenantId,
-      ...(name ? { name: { contains: name, mode: "insensitive" as const } } : {})
-    };
-    const [rows, total] = await Promise.all([
-      prisma.household.findMany({
-        where,
-        skip,
-        take,
-        orderBy: { createdAt: "desc" }
-      }),
-      prisma.household.count({ where })
-    ]);
-    reply.header("x-total-count", String(total));
-    return { data: rows.map(householdResponse), total };
-  });
+  app.get(
+    "/households",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const ctx = getTenantContext(request);
+      assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+      const query = request.query as Record<string, unknown>;
+      const { skip, take } = parseListQuery(query);
+      const name = typeof query.name === "string" && query.name.length > 0 ? query.name : undefined;
+      const where = {
+        tenantId: ctx.tenantId,
+        ...(name ? { name: { contains: name, mode: "insensitive" as const } } : {})
+      };
+      const [rows, total] = await Promise.all([
+        prisma.household.findMany({
+          where,
+          skip,
+          take,
+          orderBy: { createdAt: "desc" }
+        }),
+        prisma.household.count({ where })
+      ]);
+      reply.header("x-total-count", String(total));
+      return { data: rows.map(householdResponse), total };
+    }
+  );
 
   app.post("/households", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
     const ctx = getTenantContext(request);
@@ -5118,9 +5226,16 @@ export async function buildApp() {
         notes: z.string().max(4000).optional().nullable(),
         isActive: z.boolean().optional()
       })
-      .refine((value) => value.name !== undefined || value.address !== undefined || value.notes !== undefined || value.isActive !== undefined, {
-        message: "At least one field must be provided"
-      })
+      .refine(
+        (value) =>
+          value.name !== undefined ||
+          value.address !== undefined ||
+          value.notes !== undefined ||
+          value.isActive !== undefined,
+        {
+          message: "At least one field must be provided"
+        }
+      )
       .parse(request.body);
     const existing = await prisma.household.findFirst({ where: { id, tenantId: ctx.tenantId } });
     if (!existing) throw app.httpErrors.notFound("Household not found");
@@ -5165,26 +5280,30 @@ export async function buildApp() {
     return { data: householdResponse(existing) };
   });
 
-  app.get("/households/:id/members", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const ctx = getTenantContext(request);
-    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
-    const id = (request.params as { id: string }).id;
-    const household = await prisma.household.findFirst({ where: { id, tenantId: ctx.tenantId } });
-    if (!household) throw app.httpErrors.notFound("Household not found");
-    const query = request.query as Record<string, unknown>;
-    const { skip, take } = parseListQuery(query);
-    const [rows, total] = await Promise.all([
-      prisma.householdMember.findMany({
-        where: { tenantId: ctx.tenantId, householdId: id },
-        skip,
-        take,
-        orderBy: { createdAt: "desc" }
-      }),
-      prisma.householdMember.count({ where: { tenantId: ctx.tenantId, householdId: id } })
-    ]);
-    reply.header("x-total-count", String(total));
-    return { data: rows.map(householdMemberResponse), total };
-  });
+  app.get(
+    "/households/:id/members",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const ctx = getTenantContext(request);
+      assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+      const id = (request.params as { id: string }).id;
+      const household = await prisma.household.findFirst({ where: { id, tenantId: ctx.tenantId } });
+      if (!household) throw app.httpErrors.notFound("Household not found");
+      const query = request.query as Record<string, unknown>;
+      const { skip, take } = parseListQuery(query);
+      const [rows, total] = await Promise.all([
+        prisma.householdMember.findMany({
+          where: { tenantId: ctx.tenantId, householdId: id },
+          skip,
+          take,
+          orderBy: { createdAt: "desc" }
+        }),
+        prisma.householdMember.count({ where: { tenantId: ctx.tenantId, householdId: id } })
+      ]);
+      reply.header("x-total-count", String(total));
+      return { data: rows.map(householdMemberResponse), total };
+    }
+  );
 
   app.post("/households/:id/members", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
     const ctx = getTenantContext(request);
@@ -5270,7 +5389,12 @@ export async function buildApp() {
       resource: "household_member",
       action: "update",
       resourceId: row.id,
-      payload: { householdId: row.householdId, fullName: row.fullName, relationship: row.relationship, isActive: row.isActive },
+      payload: {
+        householdId: row.householdId,
+        fullName: row.fullName,
+        relationship: row.relationship,
+        isActive: row.isActive
+      },
       context: request.ctx
     });
     return { data: householdMemberResponse(row) };
@@ -5295,39 +5419,43 @@ export async function buildApp() {
     return { data: householdMemberResponse(existing) };
   });
 
-  app.get("/camera-assignments", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const ctx = getTenantContext(request);
-    assertRole(request, ["tenant_admin", "monitor"]);
-    const query = request.query as Record<string, unknown>;
-    const userId = typeof query.userId === "string" && query.userId.length > 0 ? query.userId : undefined;
-    const rows = await prisma.cameraAssignment.findMany({
-      where: {
-        tenantId: ctx.tenantId,
-        ...(userId ? { userId } : {})
-      },
-      include: { camera: true, user: true },
-      orderBy: [{ userId: "asc" }, { createdAt: "asc" }]
-    });
-    const data = rows.map((row) => ({
-      id: row.id,
-      tenantId: row.tenantId,
-      userId: row.userId,
-      cameraId: row.cameraId,
-      createdAt: toISO(row.createdAt),
-      user: {
-        id: row.user.id,
-        email: row.user.email,
-        name: row.user.name
-      },
-      camera: {
-        id: row.camera.id,
-        name: row.camera.name,
-        isActive: row.camera.isActive
-      }
-    }));
-    reply.header("x-total-count", String(data.length));
-    return { data, total: data.length };
-  });
+  app.get(
+    "/camera-assignments",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const ctx = getTenantContext(request);
+      assertRole(request, ["tenant_admin", "monitor"]);
+      const query = request.query as Record<string, unknown>;
+      const userId = typeof query.userId === "string" && query.userId.length > 0 ? query.userId : undefined;
+      const rows = await prisma.cameraAssignment.findMany({
+        where: {
+          tenantId: ctx.tenantId,
+          ...(userId ? { userId } : {})
+        },
+        include: { camera: true, user: true },
+        orderBy: [{ userId: "asc" }, { createdAt: "asc" }]
+      });
+      const data = rows.map((row) => ({
+        id: row.id,
+        tenantId: row.tenantId,
+        userId: row.userId,
+        cameraId: row.cameraId,
+        createdAt: toISO(row.createdAt),
+        user: {
+          id: row.user.id,
+          email: row.user.email,
+          name: row.user.name
+        },
+        camera: {
+          id: row.camera.id,
+          name: row.camera.name,
+          isActive: row.camera.isActive
+        }
+      }));
+      reply.header("x-total-count", String(data.length));
+      return { data, total: data.length };
+    }
+  );
 
   app.put("/camera-assignments/:userId", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
     const ctx = getTenantContext(request);
@@ -5394,50 +5522,58 @@ export async function buildApp() {
     };
   });
 
-  app.get("/audit-logs", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const ctx = getTenantContext(request);
-    assertRole(request, ["tenant_admin"]);
-    const query = request.query as Record<string, unknown>;
-    const { skip, take } = parseListQuery(query);
-    const resource = typeof query.resource === "string" ? query.resource : undefined;
-    const action = typeof query.action === "string" ? query.action : undefined;
+  app.get(
+    "/audit-logs",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const ctx = getTenantContext(request);
+      assertRole(request, ["tenant_admin"]);
+      const query = request.query as Record<string, unknown>;
+      const { skip, take } = parseListQuery(query);
+      const resource = typeof query.resource === "string" ? query.resource : undefined;
+      const action = typeof query.action === "string" ? query.action : undefined;
 
-    const where = {
-      tenantId: ctx.tenantId,
-      ...(resource ? { resource } : {}),
-      ...(action ? { action } : {})
-    };
+      const where = {
+        tenantId: ctx.tenantId,
+        ...(resource ? { resource } : {}),
+        ...(action ? { action } : {})
+      };
 
-    const [rows, total] = await Promise.all([
-      prisma.auditLog.findMany({
-        where,
-        skip,
-        take,
-        orderBy: { createdAt: "desc" }
-      }),
-      prisma.auditLog.count({ where })
-    ]);
+      const [rows, total] = await Promise.all([
+        prisma.auditLog.findMany({
+          where,
+          skip,
+          take,
+          orderBy: { createdAt: "desc" }
+        }),
+        prisma.auditLog.count({ where })
+      ]);
 
-    reply.header("x-total-count", String(total));
-    return { data: rows.map(auditLogResponse), total };
-  });
+      reply.header("x-total-count", String(total));
+      return { data: rows.map(auditLogResponse), total };
+    }
+  );
 
-  app.get("/notification-channels", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const ctx = getTenantContext(request);
-    assertRole(request, ["tenant_admin", "monitor"]);
-    const { skip, take } = parseListQuery(request.query as Record<string, unknown>);
-    const [rows, total] = await Promise.all([
-      prisma.notificationChannel.findMany({
-        where: { tenantId: ctx.tenantId },
-        skip,
-        take,
-        orderBy: { createdAt: "desc" }
-      }),
-      prisma.notificationChannel.count({ where: { tenantId: ctx.tenantId } })
-    ]);
-    reply.header("x-total-count", String(total));
-    return { data: rows.map(notificationChannelResponse), total };
-  });
+  app.get(
+    "/notification-channels",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const ctx = getTenantContext(request);
+      assertRole(request, ["tenant_admin", "monitor"]);
+      const { skip, take } = parseListQuery(request.query as Record<string, unknown>);
+      const [rows, total] = await Promise.all([
+        prisma.notificationChannel.findMany({
+          where: { tenantId: ctx.tenantId },
+          skip,
+          take,
+          orderBy: { createdAt: "desc" }
+        }),
+        prisma.notificationChannel.count({ where: { tenantId: ctx.tenantId } })
+      ]);
+      reply.header("x-total-count", String(total));
+      return { data: rows.map(notificationChannelResponse), total };
+    }
+  );
 
   app.post("/notification-channels", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
     const ctx = getTenantContext(request);
@@ -5453,8 +5589,10 @@ export async function buildApp() {
         isActive: z.boolean().optional()
       })
       .parse(request.body);
-    if (body.type === "webhook" && !body.endpoint) throw app.httpErrors.badRequest("endpoint is required for webhook channel");
-    if (body.type === "email" && !body.emailTo) throw app.httpErrors.badRequest("emailTo is required for email channel");
+    if (body.type === "webhook" && !body.endpoint)
+      throw app.httpErrors.badRequest("endpoint is required for webhook channel");
+    if (body.type === "email" && !body.emailTo)
+      throw app.httpErrors.badRequest("emailTo is required for email channel");
 
     const created = await prisma.notificationChannel.create({
       data: {
@@ -5513,28 +5651,32 @@ export async function buildApp() {
     return { data: { id } };
   });
 
-  app.get("/notifications/deliveries", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const ctx = getTenantContext(request);
-    assertRole(request, ["tenant_admin", "monitor"]);
-    const q = request.query as Record<string, unknown>;
-    const { skip, take } = parseListQuery(q);
-    const cameraId = typeof q.cameraId === "string" && q.cameraId.length > 0 ? q.cameraId : undefined;
-    const where = {
-      tenantId: ctx.tenantId,
-      ...(cameraId ? { cameraId } : {})
-    };
-    const [rows, total] = await Promise.all([
-      prisma.notificationDelivery.findMany({
-        where,
-        skip,
-        take,
-        orderBy: { createdAt: "desc" }
-      }),
-      prisma.notificationDelivery.count({ where })
-    ]);
-    reply.header("x-total-count", String(total));
-    return { data: rows.map(notificationDeliveryResponse), total };
-  });
+  app.get(
+    "/notifications/deliveries",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const ctx = getTenantContext(request);
+      assertRole(request, ["tenant_admin", "monitor"]);
+      const q = request.query as Record<string, unknown>;
+      const { skip, take } = parseListQuery(q);
+      const cameraId = typeof q.cameraId === "string" && q.cameraId.length > 0 ? q.cameraId : undefined;
+      const where = {
+        tenantId: ctx.tenantId,
+        ...(cameraId ? { cameraId } : {})
+      };
+      const [rows, total] = await Promise.all([
+        prisma.notificationDelivery.findMany({
+          where,
+          skip,
+          take,
+          orderBy: { createdAt: "desc" }
+        }),
+        prisma.notificationDelivery.count({ where })
+      ]);
+      reply.header("x-total-count", String(total));
+      return { data: rows.map(notificationDeliveryResponse), total };
+    }
+  );
 
   app.get("/cameras", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
     const ctx = getTenantContext(request);
@@ -5820,7 +5962,9 @@ export async function buildApp() {
             tenantId: ctx.tenantId,
             cameraId: id,
             rtspUrl: camera.rtspUrl,
-            ...(entitlements ? { planCode: entitlements.planCode, retentionDays: entitlements.limits.retentionDays } : {}),
+            ...(entitlements
+              ? { planCode: entitlements.planCode, retentionDays: entitlements.limits.retentionDays }
+              : {}),
             recordingMode: recordingPolicy.mode,
             eventClipPreSeconds: recordingPolicy.eventClipPreSeconds,
             eventClipPostSeconds: recordingPolicy.eventClipPostSeconds
@@ -5935,7 +6079,11 @@ export async function buildApp() {
       })
     });
     if (!response.ok) {
-      const errorBody = (await response.json().catch(() => null)) as { code?: string; message?: string; details?: unknown } | null;
+      const errorBody = (await response.json().catch(() => null)) as {
+        code?: string;
+        message?: string;
+        details?: unknown;
+      } | null;
       throw new ApiDomainError({
         statusCode: response.status === 409 ? 409 : 502,
         apiCode: errorBody?.code ?? "STREAM_GATEWAY_EVENT_CLIP_ERROR",
@@ -5990,36 +6138,40 @@ export async function buildApp() {
     };
   });
 
-  app.get("/stream-sessions", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const ctx = getTenantContext(request);
-    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
-    await expireStaleStreamSessions(ctx.tenantId);
+  app.get(
+    "/stream-sessions",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const ctx = getTenantContext(request);
+      assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+      await expireStaleStreamSessions(ctx.tenantId);
 
-    const query = request.query as Record<string, unknown>;
-    const { skip, take, sort, order } = parseListQuery(query);
-    const cameraId = typeof query.cameraId === "string" ? query.cameraId : undefined;
-    const status = StreamSessionStatusSchema.safeParse(query.status);
+      const query = request.query as Record<string, unknown>;
+      const { skip, take, sort, order } = parseListQuery(query);
+      const cameraId = typeof query.cameraId === "string" ? query.cameraId : undefined;
+      const status = StreamSessionStatusSchema.safeParse(query.status);
 
-    const where = {
-      tenantId: ctx.tenantId,
-      ...(cameraId ? { cameraId } : {}),
-      ...(status.success ? { status: status.data } : {}),
-      ...(ctx.role === "client_user" ? { userId: ctx.userId } : {})
-    };
+      const where = {
+        tenantId: ctx.tenantId,
+        ...(cameraId ? { cameraId } : {}),
+        ...(status.success ? { status: status.data } : {}),
+        ...(ctx.role === "client_user" ? { userId: ctx.userId } : {})
+      };
 
-    const [data, total] = await Promise.all([
-      prisma.streamSession.findMany({
-        where,
-        skip,
-        take,
-        orderBy: { [sort]: order }
-      }),
-      prisma.streamSession.count({ where })
-    ]);
+      const [data, total] = await Promise.all([
+        prisma.streamSession.findMany({
+          where,
+          skip,
+          take,
+          orderBy: { [sort]: order }
+        }),
+        prisma.streamSession.count({ where })
+      ]);
 
-    reply.header("x-total-count", String(total));
-    return { data: data.map(streamSessionResponse), total };
-  });
+      reply.header("x-total-count", String(total));
+      return { data: data.map(streamSessionResponse), total };
+    }
+  );
 
   app.get("/stream-sessions/:id", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
     const ctx = getTenantContext(request);
@@ -6189,12 +6341,18 @@ export async function buildApp() {
         ...(body.detectorConfigKey !== undefined ? { detectorConfigKey: body.detectorConfigKey } : {}),
         ...(body.detectorResultsKey !== undefined ? { detectorResultsKey: body.detectorResultsKey } : {}),
         ...(body.zoneMap !== undefined ? { zoneMap: body.zoneMap ? JSON.stringify(body.zoneMap) : null } : {}),
-        ...(body.homography !== undefined ? { homography: body.homography ? JSON.stringify(body.homography) : null } : {}),
+        ...(body.homography !== undefined
+          ? { homography: body.homography ? JSON.stringify(body.homography) : null }
+          : {}),
         ...(body.sceneTags !== undefined ? { sceneTags: JSON.stringify(body.sceneTags) } : {}),
-        ...(body.rulesProfile !== undefined ? { rulesProfile: body.rulesProfile ? JSON.stringify(body.rulesProfile) : null } : {}),
+        ...(body.rulesProfile !== undefined
+          ? { rulesProfile: body.rulesProfile ? JSON.stringify(body.rulesProfile) : null }
+          : {}),
         ...(body.detectorFlags !== undefined ? { detectorFlags: JSON.stringify(body.detectorFlags) } : {}),
         ...(body.status !== undefined ? { status: body.status } : {}),
-        ...(body.lastHealthAt !== undefined ? { lastHealthAt: body.lastHealthAt ? new Date(body.lastHealthAt) : null } : {}),
+        ...(body.lastHealthAt !== undefined
+          ? { lastHealthAt: body.lastHealthAt ? new Date(body.lastHealthAt) : null }
+          : {}),
         ...(body.lastError !== undefined ? { lastError: body.lastError } : {})
       },
       create: {
@@ -6205,12 +6363,18 @@ export async function buildApp() {
         ...(body.detectorConfigKey !== undefined ? { detectorConfigKey: body.detectorConfigKey } : {}),
         ...(body.detectorResultsKey !== undefined ? { detectorResultsKey: body.detectorResultsKey } : {}),
         ...(body.zoneMap !== undefined ? { zoneMap: body.zoneMap ? JSON.stringify(body.zoneMap) : null } : {}),
-        ...(body.homography !== undefined ? { homography: body.homography ? JSON.stringify(body.homography) : null } : {}),
+        ...(body.homography !== undefined
+          ? { homography: body.homography ? JSON.stringify(body.homography) : null }
+          : {}),
         ...(body.sceneTags !== undefined ? { sceneTags: JSON.stringify(body.sceneTags) } : {}),
-        ...(body.rulesProfile !== undefined ? { rulesProfile: body.rulesProfile ? JSON.stringify(body.rulesProfile) : null } : {}),
+        ...(body.rulesProfile !== undefined
+          ? { rulesProfile: body.rulesProfile ? JSON.stringify(body.rulesProfile) : null }
+          : {}),
         ...(body.detectorFlags !== undefined ? { detectorFlags: JSON.stringify(body.detectorFlags) } : {}),
         ...(body.status !== undefined ? { status: body.status } : {}),
-        ...(body.lastHealthAt !== undefined ? { lastHealthAt: body.lastHealthAt ? new Date(body.lastHealthAt) : null } : {}),
+        ...(body.lastHealthAt !== undefined
+          ? { lastHealthAt: body.lastHealthAt ? new Date(body.lastHealthAt) : null }
+          : {}),
         ...(body.lastError !== undefined ? { lastError: body.lastError } : {})
       }
     });
@@ -6321,32 +6485,40 @@ export async function buildApp() {
     return { data: nextProfile };
   });
 
-  app.post("/cameras/:id/detection-profile/validate", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
-    const ctx = getTenantContext(request);
-    assertRole(request, ["tenant_admin"]);
-    const id = (request.params as { id: string }).id;
+  app.post(
+    "/cameras/:id/detection-profile/validate",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest) => {
+      const ctx = getTenantContext(request);
+      assertRole(request, ["tenant_admin"]);
+      const id = (request.params as { id: string }).id;
 
-    const camera = await prisma.camera.findFirst({
-      where: { id, tenantId: ctx.tenantId, deletedAt: null }
-    });
-    if (!camera) throw app.httpErrors.notFound();
+      const camera = await prisma.camera.findFirst({
+        where: { id, tenantId: ctx.tenantId, deletedAt: null }
+      });
+      if (!camera) throw app.httpErrors.notFound();
 
-    return { data: await resolveDetectionProfileValidation({ tenantId: ctx.tenantId, cameraId: id }) };
-  });
+      return { data: await resolveDetectionProfileValidation({ tenantId: ctx.tenantId, cameraId: id }) };
+    }
+  );
 
-  app.get("/cameras/:id/detection-topology", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
-    const ctx = getTenantContext(request);
-    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
-    const id = (request.params as { id: string }).id;
-    await assertCameraAccess({ ...ctx, cameraId: id });
+  app.get(
+    "/cameras/:id/detection-topology",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest) => {
+      const ctx = getTenantContext(request);
+      assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+      const id = (request.params as { id: string }).id;
+      await assertCameraAccess({ ...ctx, cameraId: id });
 
-    const camera = await prisma.camera.findFirst({
-      where: { id, tenantId: ctx.tenantId, deletedAt: null }
-    });
-    if (!camera) throw app.httpErrors.notFound();
+      const camera = await prisma.camera.findFirst({
+        where: { id, tenantId: ctx.tenantId, deletedAt: null }
+      });
+      if (!camera) throw app.httpErrors.notFound();
 
-    return { data: await resolveDetectionTopology({ tenantId: ctx.tenantId, cameraId: id }) };
-  });
+      return { data: await resolveDetectionTopology({ tenantId: ctx.tenantId, cameraId: id }) };
+    }
+  );
 
   app.get("/cameras/:id/lifecycle", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
     const ctx = getTenantContext(request);
@@ -6739,29 +6911,33 @@ export async function buildApp() {
     }
   );
 
-  app.get("/subscriptions/requests", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const ctx = getTenantContext(request);
-    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
-    const query = request.query as Record<string, unknown>;
-    const { skip, take } = parseListQuery(query);
-    const status = typeof query.status === "string" && query.status.length > 0 ? query.status : undefined;
-    const where = {
-      tenantId: ctx.tenantId,
-      ...(status ? { status } : {})
-    };
-    const [rows, total] = await Promise.all([
-      prisma.subscriptionRequest.findMany({
-        where,
-        skip,
-        take,
-        include: { plan: true },
-        orderBy: { createdAt: "desc" }
-      }),
-      prisma.subscriptionRequest.count({ where })
-    ]);
-    reply.header("x-total-count", String(total));
-    return { data: rows.map(subscriptionRequestResponse), total };
-  });
+  app.get(
+    "/subscriptions/requests",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const ctx = getTenantContext(request);
+      assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+      const query = request.query as Record<string, unknown>;
+      const { skip, take } = parseListQuery(query);
+      const status = typeof query.status === "string" && query.status.length > 0 ? query.status : undefined;
+      const where = {
+        tenantId: ctx.tenantId,
+        ...(status ? { status } : {})
+      };
+      const [rows, total] = await Promise.all([
+        prisma.subscriptionRequest.findMany({
+          where,
+          skip,
+          take,
+          include: { plan: true },
+          orderBy: { createdAt: "desc" }
+        }),
+        prisma.subscriptionRequest.count({ where })
+      ]);
+      reply.header("x-total-count", String(total));
+      return { data: rows.map(subscriptionRequestResponse), total };
+    }
+  );
 
   app.post("/subscriptions/requests", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
     const ctx = getTenantContext(request);
@@ -6816,71 +6992,75 @@ export async function buildApp() {
     return { data: subscriptionRequestResponse(created) };
   });
 
-  app.put("/subscriptions/requests/:id/review", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
-    const ctx = getTenantContext(request);
-    assertRole(request, ["tenant_admin"]);
-    const id = (request.params as { id: string }).id;
-    const body = z
-      .object({
-        status: z.enum(["approved", "rejected"]),
-        reviewNotes: z.string().max(2000).optional().nullable()
-      })
-      .parse(request.body);
+  app.put(
+    "/subscriptions/requests/:id/review",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest) => {
+      const ctx = getTenantContext(request);
+      assertRole(request, ["tenant_admin"]);
+      const id = (request.params as { id: string }).id;
+      const body = z
+        .object({
+          status: z.enum(["approved", "rejected"]),
+          reviewNotes: z.string().max(2000).optional().nullable()
+        })
+        .parse(request.body);
 
-    const current = await prisma.subscriptionRequest.findFirst({
-      where: { id, tenantId: ctx.tenantId },
-      include: { plan: true }
-    });
-    if (!current) throw app.httpErrors.notFound();
-    if (current.status !== "pending_review") {
-      throw app.httpErrors.conflict("Subscription request is not pending review");
-    }
-
-    const reviewed = await prisma.subscriptionRequest.update({
-      where: { id },
-      data: {
-        status: body.status,
-        reviewedByUserId: ctx.userId,
-        reviewNotes: body.reviewNotes ?? null,
-        reviewedAt: new Date()
-      },
-      include: { plan: true }
-    });
-
-    if (body.status === "approved") {
-      await prisma.subscription.upsert({
-        where: { tenantId: ctx.tenantId },
-        update: {
-          planId: reviewed.planId,
-          status: "active",
-          currentPeriodStart: new Date(),
-          currentPeriodEnd: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30)
-        },
-        create: {
-          tenantId: ctx.tenantId,
-          planId: reviewed.planId,
-          status: "active",
-          currentPeriodStart: new Date(),
-          currentPeriodEnd: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30)
-        }
+      const current = await prisma.subscriptionRequest.findFirst({
+        where: { id, tenantId: ctx.tenantId },
+        include: { plan: true }
       });
+      if (!current) throw app.httpErrors.notFound();
+      if (current.status !== "pending_review") {
+        throw app.httpErrors.conflict("Subscription request is not pending review");
+      }
+
+      const reviewed = await prisma.subscriptionRequest.update({
+        where: { id },
+        data: {
+          status: body.status,
+          reviewedByUserId: ctx.userId,
+          reviewNotes: body.reviewNotes ?? null,
+          reviewedAt: new Date()
+        },
+        include: { plan: true }
+      });
+
+      if (body.status === "approved") {
+        await prisma.subscription.upsert({
+          where: { tenantId: ctx.tenantId },
+          update: {
+            planId: reviewed.planId,
+            status: "active",
+            currentPeriodStart: new Date(),
+            currentPeriodEnd: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30)
+          },
+          create: {
+            tenantId: ctx.tenantId,
+            planId: reviewed.planId,
+            status: "active",
+            currentPeriodStart: new Date(),
+            currentPeriodEnd: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30)
+          }
+        });
+      }
+
+      await appendAuditLog({
+        tenantId: ctx.tenantId,
+        actorUserId: ctx.userId,
+        resource: "subscription_request",
+        action: "review",
+        resourceId: reviewed.id,
+        payload: {
+          status: reviewed.status,
+          planId: reviewed.planId
+        },
+        context: request.ctx
+      });
+
+      return { data: subscriptionRequestResponse(reviewed) };
     }
-
-    await appendAuditLog({
-      tenantId: ctx.tenantId,
-      actorUserId: ctx.userId,
-      resource: "subscription_request",
-      action: "review",
-      resourceId: reviewed.id,
-      payload: {
-        status: reviewed.status,
-        planId: reviewed.planId
-      },
-      context: request.ctx
-    });
-
-    return { data: subscriptionRequestResponse(reviewed) };
-  });
+  );
 
   app.post("/internal/detections/jobs/:id/complete", async (request: FastifyRequest, reply: FastifyReply) => {
     const providedSecret = request.headers["x-detection-callback-secret"];
@@ -7026,31 +7206,35 @@ export async function buildApp() {
     return { data: detectionJobResponse(job) };
   });
 
-  app.get("/detections/jobs/:id/results", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const ctx = getTenantContext(request);
-    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
-    const id = (request.params as { id: string }).id;
+  app.get(
+    "/detections/jobs/:id/results",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const ctx = getTenantContext(request);
+      assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+      const id = (request.params as { id: string }).id;
 
-    const job = await prisma.detectionJob.findFirst({
-      where: { id, tenantId: ctx.tenantId }
-    });
-    if (!job) throw app.httpErrors.notFound();
+      const job = await prisma.detectionJob.findFirst({
+        where: { id, tenantId: ctx.tenantId }
+      });
+      if (!job) throw app.httpErrors.notFound();
 
-    const query = request.query as Record<string, unknown>;
-    const { skip, take } = parseListQuery(query);
-    const [rows, total] = await Promise.all([
-      prisma.detectionObservation.findMany({
-        where: { jobId: id, tenantId: ctx.tenantId },
-        orderBy: { frameTs: "desc" },
-        skip,
-        take
-      }),
-      prisma.detectionObservation.count({ where: { jobId: id, tenantId: ctx.tenantId } })
-    ]);
+      const query = request.query as Record<string, unknown>;
+      const { skip, take } = parseListQuery(query);
+      const [rows, total] = await Promise.all([
+        prisma.detectionObservation.findMany({
+          where: { jobId: id, tenantId: ctx.tenantId },
+          orderBy: { frameTs: "desc" },
+          skip,
+          take
+        }),
+        prisma.detectionObservation.count({ where: { jobId: id, tenantId: ctx.tenantId } })
+      ]);
 
-    reply.header("x-total-count", String(total));
-    return { data: rows.map(detectionObservationResponse), total, job: detectionJobResponse(job) };
-  });
+      reply.header("x-total-count", String(total));
+      return { data: rows.map(detectionObservationResponse), total, job: detectionJobResponse(job) };
+    }
+  );
 
   app.post("/detections/jobs/:id/cancel", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
     const ctx = getTenantContext(request);
@@ -7088,200 +7272,351 @@ export async function buildApp() {
     return { data: detectionJobResponse(updated) };
   });
 
-  app.get("/cameras/:id/detections", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const ctx = getTenantContext(request);
-    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
-    const cameraId = (request.params as { id: string }).id;
-    await assertCameraAccess({ ...ctx, cameraId });
-    const camera = await prisma.camera.findFirst({
-      where: { id: cameraId, tenantId: ctx.tenantId, deletedAt: null }
-    });
-    if (!camera) throw app.httpErrors.notFound();
+  app.get(
+    "/cameras/:id/detections",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const ctx = getTenantContext(request);
+      assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+      const cameraId = (request.params as { id: string }).id;
+      await assertCameraAccess({ ...ctx, cameraId });
+      const camera = await prisma.camera.findFirst({
+        where: { id: cameraId, tenantId: ctx.tenantId, deletedAt: null }
+      });
+      if (!camera) throw app.httpErrors.notFound();
 
-    const query = request.query as Record<string, unknown>;
-    const { skip, take, order, sort } = parseListQuery(query);
-    const from = typeof query.from === "string" ? new Date(query.from) : undefined;
-    const to = typeof query.to === "string" ? new Date(query.to) : undefined;
-    const label = typeof query.label === "string" ? query.label : undefined;
-    const minConfidence = typeof query.minConfidence === "string" ? Number(query.minConfidence) : undefined;
-    const orderByKey = sort === "confidence" ? "confidence" : "frameTs";
+      const query = request.query as Record<string, unknown>;
+      const { skip, take, order, sort } = parseListQuery(query);
+      const from = typeof query.from === "string" ? new Date(query.from) : undefined;
+      const to = typeof query.to === "string" ? new Date(query.to) : undefined;
+      const label = typeof query.label === "string" ? query.label : undefined;
+      const minConfidence = typeof query.minConfidence === "string" ? Number(query.minConfidence) : undefined;
+      const orderByKey = sort === "confidence" ? "confidence" : "frameTs";
 
-    const where = {
-      tenantId: ctx.tenantId,
-      cameraId,
-      ...(label ? { label } : {}),
-      ...(Number.isFinite(minConfidence) ? { confidence: { gte: minConfidence as number } } : {}),
-      ...(from || to
-        ? {
-            frameTs: {
-              ...(from ? { gte: from } : {}),
-              ...(to ? { lte: to } : {})
+      const where = {
+        tenantId: ctx.tenantId,
+        cameraId,
+        ...(label ? { label } : {}),
+        ...(Number.isFinite(minConfidence) ? { confidence: { gte: minConfidence as number } } : {}),
+        ...(from || to
+          ? {
+              frameTs: {
+                ...(from ? { gte: from } : {}),
+                ...(to ? { lte: to } : {})
+              }
             }
-          }
-        : {})
-    };
+          : {})
+      };
 
-    const [rows, total] = await Promise.all([
-      prisma.detectionObservation.findMany({
-        where,
-        orderBy: { [orderByKey]: order },
-        skip,
-        take
-      }),
-      prisma.detectionObservation.count({ where })
-    ]);
+      const [rows, total] = await Promise.all([
+        prisma.detectionObservation.findMany({
+          where,
+          orderBy: { [orderByKey]: order },
+          skip,
+          take
+        }),
+        prisma.detectionObservation.count({ where })
+      ]);
 
-    reply.header("x-total-count", String(total));
-    return { data: rows.map(detectionObservationResponse), total };
-  });
+      reply.header("x-total-count", String(total));
+      return { data: rows.map(detectionObservationResponse), total };
+    }
+  );
 
-  app.get("/cameras/:id/faces", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const ctx = getTenantContext(request);
-    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
-    const cameraId = (request.params as { id: string }).id;
-    await assertCameraAccess({ ...ctx, cameraId });
-    const camera = await prisma.camera.findFirst({
-      where: { id: cameraId, tenantId: ctx.tenantId, deletedAt: null }
-    });
-    if (!camera) throw app.httpErrors.notFound();
+  app.get(
+    "/cameras/:id/faces",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const ctx = getTenantContext(request);
+      assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+      const cameraId = (request.params as { id: string }).id;
+      await assertCameraAccess({ ...ctx, cameraId });
+      const camera = await prisma.camera.findFirst({
+        where: { id: cameraId, tenantId: ctx.tenantId, deletedAt: null }
+      });
+      if (!camera) throw app.httpErrors.notFound();
 
-    const query = request.query as Record<string, unknown>;
-    const { skip, take } = parseListQuery(query);
-    const clusterId = typeof query.clusterId === "string" ? query.clusterId : undefined;
-    const identityId = typeof query.identityId === "string" ? query.identityId : undefined;
+      const query = request.query as Record<string, unknown>;
+      const { skip, take } = parseListQuery(query);
+      const clusterId = typeof query.clusterId === "string" ? query.clusterId : undefined;
+      const identityId = typeof query.identityId === "string" ? query.identityId : undefined;
 
-    const where = {
-      tenantId: ctx.tenantId,
-      cameraId,
-      ...(clusterId ? { clusterMembership: { clusterId } } : {}),
-      ...(identityId ? { identityMembership: { identityId } } : {})
-    };
+      const where = {
+        tenantId: ctx.tenantId,
+        cameraId,
+        ...(clusterId ? { clusterMembership: { clusterId } } : {}),
+        ...(identityId ? { identityMembership: { identityId } } : {})
+      };
 
-    const [rows, total] = await Promise.all([
-      prismaUnsafe.faceDetection.findMany({
-        where,
+      const [rows, total] = await Promise.all([
+        prismaUnsafe.faceDetection.findMany({
+          where,
+          include: {
+            embedding: true,
+            clusterMembership: { include: { cluster: true } },
+            identityMembership: { include: { identity: true } }
+          },
+          orderBy: { frameTs: "desc" },
+          skip,
+          take
+        }),
+        prismaUnsafe.faceDetection.count({ where })
+      ]);
+
+      reply.header("x-total-count", String(total));
+      return { data: rows.map(faceDetectionResponse), total };
+    }
+  );
+
+  app.get(
+    "/faces/detections/:id/similar",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const ctx = getTenantContext(request);
+      assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+      const id = (request.params as { id: string }).id;
+      const query = request.query as Record<string, unknown>;
+      const { skip, take } = parseListQuery(query);
+      const minSimilarity = Math.max(-1, Math.min(1, Number(query.minSimilarity ?? 0.7)));
+      const sameCameraOnly = String(query.sameCameraOnly ?? "false").toLowerCase() === "true";
+
+      const sourceFace = await prismaUnsafe.faceDetection.findFirst({
+        where: { id, tenantId: ctx.tenantId },
         include: {
           embedding: true,
           clusterMembership: { include: { cluster: true } },
           identityMembership: { include: { identity: true } }
-        },
-        orderBy: { frameTs: "desc" },
-        skip,
-        take
-      }),
-      prismaUnsafe.faceDetection.count({ where })
-    ]);
-
-    reply.header("x-total-count", String(total));
-    return { data: rows.map(faceDetectionResponse), total };
-  });
-
-  app.get("/faces/detections/:id/similar", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const ctx = getTenantContext(request);
-    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
-    const id = (request.params as { id: string }).id;
-    const query = request.query as Record<string, unknown>;
-    const { skip, take } = parseListQuery(query);
-    const minSimilarity = Math.max(-1, Math.min(1, Number(query.minSimilarity ?? 0.7)));
-    const sameCameraOnly = String(query.sameCameraOnly ?? "false").toLowerCase() === "true";
-
-    const sourceFace = await prismaUnsafe.faceDetection.findFirst({
-      where: { id, tenantId: ctx.tenantId },
-      include: {
-        embedding: true,
-        clusterMembership: { include: { cluster: true } },
-        identityMembership: { include: { identity: true } }
-      }
-    });
-    if (!sourceFace) throw app.httpErrors.notFound();
-    if (!sourceFace.embedding?.embeddingVector) {
-      throw new ApiDomainError({
-        statusCode: 409,
-        apiCode: "FACE_SIMILARITY_UNAVAILABLE",
-        message: "The requested face does not have a stored embedding vector",
-        details: { faceDetectionId: id }
-      });
-    }
-
-    const sourceVector = parseEmbeddingCandidate(parseJson<unknown>(sourceFace.embedding.embeddingVector));
-    if (!sourceVector) {
-      throw new ApiDomainError({
-        statusCode: 409,
-        apiCode: "FACE_SIMILARITY_UNAVAILABLE",
-        message: "The requested face embedding vector is invalid",
-        details: { faceDetectionId: id }
-      });
-    }
-
-    const candidateRows = await prismaUnsafe.faceDetection.findMany({
-      where: {
-        tenantId: ctx.tenantId,
-        id: { not: id },
-        ...(sameCameraOnly ? { cameraId: sourceFace.cameraId } : {}),
-        embedding: {
-          embeddingVector: {
-            not: null
-          }
         }
-      },
-      include: {
-        embedding: true,
-        clusterMembership: { include: { cluster: true } },
-        identityMembership: { include: { identity: true } }
-      }
-    });
-
-    const rankedMatches = (candidateRows as Array<any>).reduce((acc: FaceSimilarityMatchResponse[], candidate: any) => {
-        const rawVector = candidate.embedding?.embeddingVector;
-        if (!rawVector) return acc;
-        const candidateVector = parseEmbeddingCandidate(parseJson<unknown>(rawVector));
-        if (!candidateVector) return acc;
-        const similarityScore = cosineSimilarity(sourceVector, candidateVector);
-        if (similarityScore < minSimilarity) return acc;
-        const face = faceDetectionResponse(candidate);
-        acc.push({
-          similarityScore,
-          sameCamera: candidate.cameraId === sourceFace.cameraId,
-          face
+      });
+      if (!sourceFace) throw app.httpErrors.notFound();
+      if (!sourceFace.embedding?.embeddingVector) {
+        throw new ApiDomainError({
+          statusCode: 409,
+          apiCode: "FACE_SIMILARITY_UNAVAILABLE",
+          message: "The requested face does not have a stored embedding vector",
+          details: { faceDetectionId: id }
         });
-        return acc;
-      }, [] as FaceSimilarityMatchResponse[])
-      .sort((left: FaceSimilarityMatchResponse, right: FaceSimilarityMatchResponse) => {
-        if (right.similarityScore !== left.similarityScore) return right.similarityScore - left.similarityScore;
-        return right.face.frameTs.localeCompare(left.face.frameTs);
+      }
+
+      const sourceVector = parseEmbeddingCandidate(parseJson<unknown>(sourceFace.embedding.embeddingVector));
+      if (!sourceVector) {
+        throw new ApiDomainError({
+          statusCode: 409,
+          apiCode: "FACE_SIMILARITY_UNAVAILABLE",
+          message: "The requested face embedding vector is invalid",
+          details: { faceDetectionId: id }
+        });
+      }
+
+      const candidateRows = await prismaUnsafe.faceDetection.findMany({
+        where: {
+          tenantId: ctx.tenantId,
+          id: { not: id },
+          ...(sameCameraOnly ? { cameraId: sourceFace.cameraId } : {}),
+          embedding: {
+            embeddingVector: {
+              not: null
+            }
+          }
+        },
+        include: {
+          embedding: true,
+          clusterMembership: { include: { cluster: true } },
+          identityMembership: { include: { identity: true } }
+        }
       });
 
-    const pagedMatches = rankedMatches.slice(skip, skip + take);
-    reply.header("x-total-count", String(rankedMatches.length));
-    return {
-      data: {
-        sourceFaceId: sourceFace.id,
+      const rankedMatches = (candidateRows as Array<any>)
+        .reduce((acc: FaceSimilarityMatchResponse[], candidate: any) => {
+          const rawVector = candidate.embedding?.embeddingVector;
+          if (!rawVector) return acc;
+          const candidateVector = parseEmbeddingCandidate(parseJson<unknown>(rawVector));
+          if (!candidateVector) return acc;
+          const similarityScore = cosineSimilarity(sourceVector, candidateVector);
+          if (similarityScore < minSimilarity) return acc;
+          const face = faceDetectionResponse(candidate);
+          acc.push({
+            similarityScore,
+            sameCamera: candidate.cameraId === sourceFace.cameraId,
+            face
+          });
+          return acc;
+        }, [] as FaceSimilarityMatchResponse[])
+        .sort((left: FaceSimilarityMatchResponse, right: FaceSimilarityMatchResponse) => {
+          if (right.similarityScore !== left.similarityScore) return right.similarityScore - left.similarityScore;
+          return right.face.frameTs.localeCompare(left.face.frameTs);
+        });
+
+      const pagedMatches = rankedMatches.slice(skip, skip + take);
+      reply.header("x-total-count", String(rankedMatches.length));
+      return {
+        data: {
+          sourceFaceId: sourceFace.id,
+          tenantId: ctx.tenantId,
+          total: rankedMatches.length,
+          matches: pagedMatches
+        }
+      };
+    }
+  );
+
+  app.get(
+    "/faces/clusters",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const ctx = getTenantContext(request);
+      assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+      const query = request.query as Record<string, unknown>;
+      const { skip, take } = parseListQuery(query);
+      const status = typeof query.status === "string" ? query.status : undefined;
+
+      const where = {
         tenantId: ctx.tenantId,
-        total: rankedMatches.length,
-        matches: pagedMatches
-      }
-    };
-  });
+        ...(status ? { status } : {})
+      };
 
-  app.get("/faces/clusters", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const ctx = getTenantContext(request);
-    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
-    const query = request.query as Record<string, unknown>;
-    const { skip, take } = parseListQuery(query);
-    const status = typeof query.status === "string" ? query.status : undefined;
+      const [rows, total] = await Promise.all([
+        prismaUnsafe.faceCluster.findMany({
+          where,
+          include: {
+            members: {
+              orderBy: { createdAt: "desc" },
+              take: 6,
+              include: {
+                faceDetection: {
+                  include: {
+                    embedding: true,
+                    clusterMembership: { include: { cluster: true } },
+                    identityMembership: { include: { identity: true } }
+                  }
+                }
+              }
+            }
+          },
+          orderBy: { updatedAt: "desc" },
+          skip,
+          take
+        }),
+        prismaUnsafe.faceCluster.count({ where })
+      ]);
 
-    const where = {
-      tenantId: ctx.tenantId,
-      ...(status ? { status } : {})
-    };
+      reply.header("x-total-count", String(total));
+      return {
+        data: rows.map((cluster: any) => ({
+          id: cluster.id,
+          tenantId: cluster.tenantId,
+          status: cluster.status,
+          displayName: cluster.displayName,
+          memberCount: cluster.memberCount,
+          confirmedIdentityId: cluster.confirmedIdentityId,
+          createdAt: toISO(cluster.createdAt),
+          updatedAt: toISO(cluster.updatedAt),
+          faces: cluster.members.map((member: any) => faceDetectionResponse(member.faceDetection))
+        })),
+        total
+      };
+    }
+  );
 
-    const [rows, total] = await Promise.all([
-      prismaUnsafe.faceCluster.findMany({
-        where,
+  app.post(
+    "/faces/clusters/:id/confirm-identity",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest) => {
+      const ctx = getTenantContext(request);
+      assertRole(request, ["tenant_admin", "monitor"]);
+      const id = (request.params as { id: string }).id;
+      const body = z
+        .object({
+          identityId: z.string().optional(),
+          displayName: z.string().min(1).max(120).optional()
+        })
+        .parse(request.body);
+
+      const cluster = await prismaUnsafe.faceCluster.findFirst({
+        where: { id, tenantId: ctx.tenantId },
         include: {
           members: {
-            orderBy: { createdAt: "desc" },
-            take: 6,
+            include: {
+              faceDetection: true,
+              faceEmbedding: true
+            }
+          }
+        }
+      });
+      if (!cluster) throw app.httpErrors.notFound();
+
+      const identity = body.identityId
+        ? await prismaUnsafe.faceIdentity.findFirst({
+            where: { id: body.identityId, tenantId: ctx.tenantId, mergedIntoIdentityId: null }
+          })
+        : null;
+      if (body.identityId && !identity) throw app.httpErrors.notFound("identity not found");
+
+      const resolvedIdentity =
+        identity ??
+        (await prismaUnsafe.faceIdentity.create({
+          data: {
+            tenantId: ctx.tenantId,
+            displayName: body.displayName ?? cluster.displayName ?? `Identity ${cluster.id.slice(-6)}`,
+            status: "confirmed"
+          }
+        }));
+
+      await prisma.$transaction(async (tx) => {
+        const faceTx = tx as any;
+        await faceTx.faceCluster.update({
+          where: { id: cluster.id },
+          data: {
+            confirmedIdentityId: resolvedIdentity.id,
+            status: "confirmed",
+            displayName: body.displayName ?? cluster.displayName
+          }
+        });
+
+        await faceTx.faceIdentity.update({
+          where: { id: resolvedIdentity.id },
+          data: {
+            status: "confirmed",
+            displayName: body.displayName ?? resolvedIdentity.displayName
+          }
+        });
+
+        for (const member of cluster.members) {
+          await faceTx.faceIdentityMember.upsert({
+            where: { faceDetectionId: member.faceDetectionId },
+            update: {
+              identityId: resolvedIdentity.id,
+              faceEmbeddingId: member.faceEmbeddingId,
+              sourceClusterId: cluster.id
+            },
+            create: {
+              tenantId: ctx.tenantId,
+              identityId: resolvedIdentity.id,
+              faceDetectionId: member.faceDetectionId,
+              faceEmbeddingId: member.faceEmbeddingId,
+              sourceClusterId: cluster.id
+            }
+          });
+        }
+      });
+
+      await appendAuditLog({
+        tenantId: ctx.tenantId,
+        actorUserId: ctx.userId,
+        resource: "face_cluster",
+        action: "confirm_identity",
+        resourceId: cluster.id,
+        payload: {
+          identityId: resolvedIdentity.id,
+          memberCount: cluster.members.length
+        },
+        context: request.ctx
+      });
+
+      const updated = await prismaUnsafe.faceIdentity.findUniqueOrThrow({
+        where: { id: resolvedIdentity.id },
+        include: {
+          members: {
             include: {
               faceDetection: {
                 include: {
@@ -7292,223 +7627,96 @@ export async function buildApp() {
               }
             }
           }
-        },
-        orderBy: { updatedAt: "desc" },
-        skip,
-        take
-      }),
-      prismaUnsafe.faceCluster.count({ where })
-    ]);
-
-    reply.header("x-total-count", String(total));
-    return {
-      data: rows.map((cluster: any) => ({
-        id: cluster.id,
-        tenantId: cluster.tenantId,
-        status: cluster.status,
-        displayName: cluster.displayName,
-        memberCount: cluster.memberCount,
-        confirmedIdentityId: cluster.confirmedIdentityId,
-        createdAt: toISO(cluster.createdAt),
-        updatedAt: toISO(cluster.updatedAt),
-        faces: cluster.members.map((member: any) => faceDetectionResponse(member.faceDetection))
-      })),
-      total
-    };
-  });
-
-  app.post("/faces/clusters/:id/confirm-identity", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
-    const ctx = getTenantContext(request);
-    assertRole(request, ["tenant_admin", "monitor"]);
-    const id = (request.params as { id: string }).id;
-    const body = z
-      .object({
-        identityId: z.string().optional(),
-        displayName: z.string().min(1).max(120).optional()
-      })
-      .parse(request.body);
-
-    const cluster = await prismaUnsafe.faceCluster.findFirst({
-      where: { id, tenantId: ctx.tenantId },
-      include: {
-        members: {
-          include: {
-            faceDetection: true,
-            faceEmbedding: true
-          }
-        }
-      }
-    });
-    if (!cluster) throw app.httpErrors.notFound();
-
-    const identity =
-      body.identityId
-        ? await prismaUnsafe.faceIdentity.findFirst({
-            where: { id: body.identityId, tenantId: ctx.tenantId, mergedIntoIdentityId: null }
-          })
-        : null;
-    if (body.identityId && !identity) throw app.httpErrors.notFound("identity not found");
-
-    const resolvedIdentity =
-      identity ??
-      (await prismaUnsafe.faceIdentity.create({
-        data: {
-          tenantId: ctx.tenantId,
-          displayName: body.displayName ?? cluster.displayName ?? `Identity ${cluster.id.slice(-6)}`,
-          status: "confirmed"
-        }
-      }));
-
-    await prisma.$transaction(async (tx) => {
-      const faceTx = tx as any;
-      await faceTx.faceCluster.update({
-        where: { id: cluster.id },
-        data: {
-          confirmedIdentityId: resolvedIdentity.id,
-          status: "confirmed",
-          displayName: body.displayName ?? cluster.displayName
         }
       });
 
-      await faceTx.faceIdentity.update({
-        where: { id: resolvedIdentity.id },
+      return {
         data: {
-          status: "confirmed",
-          displayName: body.displayName ?? resolvedIdentity.displayName
+          id: updated.id,
+          tenantId: updated.tenantId,
+          displayName: updated.displayName,
+          status: updated.status,
+          mergedIntoIdentityId: updated.mergedIntoIdentityId,
+          createdAt: toISO(updated.createdAt),
+          updatedAt: toISO(updated.updatedAt),
+          memberCount: updated.members.length,
+          faces: updated.members.map((member: any) => faceDetectionResponse(member.faceDetection))
         }
-      });
+      };
+    }
+  );
 
-      for (const member of cluster.members) {
-        await faceTx.faceIdentityMember.upsert({
-          where: { faceDetectionId: member.faceDetectionId },
-          update: {
-            identityId: resolvedIdentity.id,
-            faceEmbeddingId: member.faceEmbeddingId,
-            sourceClusterId: cluster.id
-          },
-          create: {
-            tenantId: ctx.tenantId,
-            identityId: resolvedIdentity.id,
-            faceDetectionId: member.faceDetectionId,
-            faceEmbeddingId: member.faceEmbeddingId,
-            sourceClusterId: cluster.id
-          }
-        });
-      }
-    });
+  app.get(
+    "/faces/identities",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const ctx = getTenantContext(request);
+      assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+      const query = request.query as Record<string, unknown>;
+      const { skip, take } = parseListQuery(query);
+      const status = typeof query.status === "string" ? query.status : undefined;
+      const includeMerged = String(query.includeMerged ?? "false").toLowerCase() === "true";
+      const where = {
+        tenantId: ctx.tenantId,
+        ...(status ? { status } : {}),
+        ...(includeMerged ? {} : { mergedIntoIdentityId: null })
+      };
 
-    await appendAuditLog({
-      tenantId: ctx.tenantId,
-      actorUserId: ctx.userId,
-      resource: "face_cluster",
-      action: "confirm_identity",
-      resourceId: cluster.id,
-      payload: {
-        identityId: resolvedIdentity.id,
-        memberCount: cluster.members.length
-      },
-      context: request.ctx
-    });
-
-    const updated = await prismaUnsafe.faceIdentity.findUniqueOrThrow({
-      where: { id: resolvedIdentity.id },
-      include: {
-        members: {
+      const [rows, total] = await Promise.all([
+        prismaUnsafe.faceIdentity.findMany({
+          where,
           include: {
-            faceDetection: {
+            members: {
               include: {
-                embedding: true,
-                clusterMembership: { include: { cluster: true } },
-                identityMembership: { include: { identity: true } }
-              }
-            }
-          }
-        }
-      }
-    });
-
-    return {
-      data: {
-        id: updated.id,
-        tenantId: updated.tenantId,
-        displayName: updated.displayName,
-        status: updated.status,
-        mergedIntoIdentityId: updated.mergedIntoIdentityId,
-        createdAt: toISO(updated.createdAt),
-        updatedAt: toISO(updated.updatedAt),
-        memberCount: updated.members.length,
-        faces: updated.members.map((member: any) => faceDetectionResponse(member.faceDetection))
-      }
-    };
-  });
-
-  app.get("/faces/identities", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const ctx = getTenantContext(request);
-    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
-    const query = request.query as Record<string, unknown>;
-    const { skip, take } = parseListQuery(query);
-    const status = typeof query.status === "string" ? query.status : undefined;
-    const includeMerged = String(query.includeMerged ?? "false").toLowerCase() === "true";
-    const where = {
-      tenantId: ctx.tenantId,
-      ...(status ? { status } : {}),
-      ...(includeMerged ? {} : { mergedIntoIdentityId: null })
-    };
-
-    const [rows, total] = await Promise.all([
-      prismaUnsafe.faceIdentity.findMany({
-        where,
-        include: {
-          members: {
-            include: {
-              faceDetection: {
-                include: {
-                  embedding: true,
-                  clusterMembership: { include: { cluster: true } },
-                  identityMembership: { include: { identity: true } },
-                  camera: true
+                faceDetection: {
+                  include: {
+                    embedding: true,
+                    clusterMembership: { include: { cluster: true } },
+                    identityMembership: { include: { identity: true } },
+                    camera: true
+                  }
                 }
               }
             }
-          }
-        },
-        orderBy: { updatedAt: "desc" },
-        skip,
-        take
-      }),
-      prismaUnsafe.faceIdentity.count({ where })
-    ]);
+          },
+          orderBy: { updatedAt: "desc" },
+          skip,
+          take
+        }),
+        prismaUnsafe.faceIdentity.count({ where })
+      ]);
 
-    reply.header("x-total-count", String(total));
-    return {
-      data: rows.map((identity: any): FaceIdentitySummaryResponse => {
-        const faces = identity.members
-          .map((member: any) => {
-            const face = faceDetectionResponse(member.faceDetection);
-            return {
-              ...face,
-              cameraName: member.faceDetection.camera?.name ?? member.faceDetection.cameraId
-            };
-          })
-          .sort((left: any, right: any) => right.frameTs.localeCompare(left.frameTs));
-        const summary = summarizeIdentityFaces(faces);
-        return {
-          id: identity.id,
-          tenantId: identity.tenantId,
-          displayName: identity.displayName,
-          status: identity.status,
-          mergedIntoIdentityId: identity.mergedIntoIdentityId,
-          createdAt: toISO(identity.createdAt),
-          updatedAt: toISO(identity.updatedAt),
-          memberCount: identity.members.length,
-          latestSeenAt: summary.latestSeenAt,
-          cameras: summary.cameras,
-          faces: faces.slice(0, 6)
-        };
-      }),
-      total
-    };
-  });
+      reply.header("x-total-count", String(total));
+      return {
+        data: rows.map((identity: any): FaceIdentitySummaryResponse => {
+          const faces = identity.members
+            .map((member: any) => {
+              const face = faceDetectionResponse(member.faceDetection);
+              return {
+                ...face,
+                cameraName: member.faceDetection.camera?.name ?? member.faceDetection.cameraId
+              };
+            })
+            .sort((left: any, right: any) => right.frameTs.localeCompare(left.frameTs));
+          const summary = summarizeIdentityFaces(faces);
+          return {
+            id: identity.id,
+            tenantId: identity.tenantId,
+            displayName: identity.displayName,
+            status: identity.status,
+            mergedIntoIdentityId: identity.mergedIntoIdentityId,
+            createdAt: toISO(identity.createdAt),
+            updatedAt: toISO(identity.updatedAt),
+            memberCount: identity.members.length,
+            latestSeenAt: summary.latestSeenAt,
+            cameras: summary.cameras,
+            faces: faces.slice(0, 6)
+          };
+        }),
+        total
+      };
+    }
+  );
 
   app.get("/faces/identities/:id", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
     const ctx = getTenantContext(request);
@@ -7714,34 +7922,38 @@ export async function buildApp() {
     };
   });
 
-  app.get("/incidents", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const ctx = getTenantContext(request);
-    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
-    const query = request.query as Record<string, unknown>;
-    const { skip, take, sort, order } = parseListQuery(query);
-    const cameraId = typeof query.cameraId === "string" ? query.cameraId : undefined;
-    const status = typeof query.status === "string" ? query.status : undefined;
+  app.get(
+    "/incidents",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const ctx = getTenantContext(request);
+      assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+      const query = request.query as Record<string, unknown>;
+      const { skip, take, sort, order } = parseListQuery(query);
+      const cameraId = typeof query.cameraId === "string" ? query.cameraId : undefined;
+      const status = typeof query.status === "string" ? query.status : undefined;
 
-    const where = {
-      tenantId: ctx.tenantId,
-      ...(cameraId ? { cameraId } : {}),
-      ...(status ? { status } : {})
-    };
-    const orderByKey = sort === "createdAt" ? "createdAt" : "startedAt";
+      const where = {
+        tenantId: ctx.tenantId,
+        ...(cameraId ? { cameraId } : {}),
+        ...(status ? { status } : {})
+      };
+      const orderByKey = sort === "createdAt" ? "createdAt" : "startedAt";
 
-    const [rows, total] = await Promise.all([
-      prisma.incidentEvent.findMany({
-        where,
-        orderBy: { [orderByKey]: order },
-        skip,
-        take
-      }),
-      prisma.incidentEvent.count({ where })
-    ]);
+      const [rows, total] = await Promise.all([
+        prisma.incidentEvent.findMany({
+          where,
+          orderBy: { [orderByKey]: order },
+          skip,
+          take
+        }),
+        prisma.incidentEvent.count({ where })
+      ]);
 
-    reply.header("x-total-count", String(total));
-    return { data: rows.map(incidentEventResponse), total };
-  });
+      reply.header("x-total-count", String(total));
+      return { data: rows.map(incidentEventResponse), total };
+    }
+  );
 
   app.get("/incidents/:id", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
     const ctx = getTenantContext(request);
@@ -7754,58 +7966,66 @@ export async function buildApp() {
     return { data: incidentEventResponse(incident) };
   });
 
-  app.get("/incidents/:id/evidence", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const ctx = getTenantContext(request);
-    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
-    const id = (request.params as { id: string }).id;
-    const incident = await prisma.incidentEvent.findFirst({
-      where: { id, tenantId: ctx.tenantId }
-    });
-    if (!incident) throw app.httpErrors.notFound();
+  app.get(
+    "/incidents/:id/evidence",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const ctx = getTenantContext(request);
+      assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+      const id = (request.params as { id: string }).id;
+      const incident = await prisma.incidentEvent.findFirst({
+        where: { id, tenantId: ctx.tenantId }
+      });
+      if (!incident) throw app.httpErrors.notFound();
 
-    const query = request.query as Record<string, unknown>;
-    const { skip, take } = parseListQuery(query);
-    const [rows, total] = await Promise.all([
-      prisma.incidentEvidence.findMany({
-        where: { incidentId: id, tenantId: ctx.tenantId },
-        orderBy: { createdAt: "desc" },
-        skip,
-        take
-      }),
-      prisma.incidentEvidence.count({ where: { incidentId: id, tenantId: ctx.tenantId } })
-    ]);
+      const query = request.query as Record<string, unknown>;
+      const { skip, take } = parseListQuery(query);
+      const [rows, total] = await Promise.all([
+        prisma.incidentEvidence.findMany({
+          where: { incidentId: id, tenantId: ctx.tenantId },
+          orderBy: { createdAt: "desc" },
+          skip,
+          take
+        }),
+        prisma.incidentEvidence.count({ where: { incidentId: id, tenantId: ctx.tenantId } })
+      ]);
 
-    reply.header("x-total-count", String(total));
-    return { data: rows.map(incidentEvidenceResponse), total };
-  });
+      reply.header("x-total-count", String(total));
+      return { data: rows.map(incidentEvidenceResponse), total };
+    }
+  );
 
-  app.get("/events/ws-token", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const ctx = getTenantContext(request);
-    assertRole(request, ["tenant_admin", "monitor", "client_user"]);
+  app.get(
+    "/events/ws-token",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const ctx = getTenantContext(request);
+      assertRole(request, ["tenant_admin", "monitor", "client_user"]);
 
-    const topicsAllowed =
-      ctx.role === "tenant_admin"
-        ? ["camera.status", "stream.session", "detection.job", "detection.object", "incident", "system.alert"]
-        : ["camera.status", "stream.session", "detection.job", "detection.object", "incident"];
-    const expiresInSec = 60;
-    const exp = Math.floor(Date.now() / 1000) + expiresInSec;
-    const token = await reply.jwtSign({
-      sub: ctx.userId,
-      tenantId: ctx.tenantId,
-      topics: topicsAllowed,
-      typ: "ws",
-      exp
-    });
-
-    return {
-      data: {
-        token,
+      const topicsAllowed =
+        ctx.role === "tenant_admin"
+          ? ["camera.status", "stream.session", "detection.job", "detection.object", "incident", "system.alert"]
+          : ["camera.status", "stream.session", "detection.job", "detection.object", "incident"];
+      const expiresInSec = 60;
+      const exp = Math.floor(Date.now() / 1000) + expiresInSec;
+      const token = await reply.jwtSign({
+        sub: ctx.userId,
         tenantId: ctx.tenantId,
-        topicsAllowed,
-        expiresAt: new Date(exp * 1000).toISOString()
-      }
-    };
-  });
+        topics: topicsAllowed,
+        typ: "ws",
+        exp
+      });
+
+      return {
+        data: {
+          token,
+          tenantId: ctx.tenantId,
+          topicsAllowed,
+          expiresAt: new Date(exp * 1000).toISOString()
+        }
+      };
+    }
+  );
 
   app.get("/events/stream", { preHandler: tenantScopedPreHandler }, async (request, reply) => {
     const ctx = getTenantContext(request);
@@ -7928,7 +8148,9 @@ export async function buildApp() {
     const services = await Promise.all(checks);
 
     const nodesProbe = await probeService("inference-bridge-nodes", `${inferenceBridgeUrl}/v1/nodes`);
-    const nodesRaw = Array.isArray(nodesProbe.payload?.data) ? (nodesProbe.payload?.data as Array<Record<string, unknown>>) : [];
+    const nodesRaw = Array.isArray(nodesProbe.payload?.data)
+      ? (nodesProbe.payload?.data as Array<Record<string, unknown>>)
+      : [];
     if (nodesProbe.ok && nodesRaw.length > 0) {
       try {
         await syncInferenceNodeSnapshots(nodesRaw);
@@ -7989,21 +8211,25 @@ export async function buildApp() {
     }
   };
 
-  app.get("/ops/model-catalog", { preHandler: authPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const query = request.query as Record<string, unknown>;
-    const where = {
-      ...(typeof query.provider === "string" ? { provider: query.provider } : {}),
-      ...(typeof query.taskType === "string" ? { taskType: query.taskType } : {}),
-      ...(typeof query.quality === "string" ? { quality: query.quality } : {}),
-      ...(typeof query.status === "string" ? { status: query.status } : {})
-    };
-    const rows = await prisma.modelCatalogEntry.findMany({
-      where,
-      orderBy: [{ provider: "asc" }, { taskType: "asc" }, { quality: "asc" }, { displayName: "asc" }]
-    });
-    reply.header("x-total-count", String(rows.length));
-    return { data: rows.map(modelCatalogEntryResponse), total: rows.length };
-  });
+  app.get(
+    "/ops/model-catalog",
+    { preHandler: authPreHandler },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const query = request.query as Record<string, unknown>;
+      const where = {
+        ...(typeof query.provider === "string" ? { provider: query.provider } : {}),
+        ...(typeof query.taskType === "string" ? { taskType: query.taskType } : {}),
+        ...(typeof query.quality === "string" ? { quality: query.quality } : {}),
+        ...(typeof query.status === "string" ? { status: query.status } : {})
+      };
+      const rows = await prisma.modelCatalogEntry.findMany({
+        where,
+        orderBy: [{ provider: "asc" }, { taskType: "asc" }, { quality: "asc" }, { displayName: "asc" }]
+      });
+      reply.header("x-total-count", String(rows.length));
+      return { data: rows.map(modelCatalogEntryResponse), total: rows.length };
+    }
+  );
 
   app.post("/ops/model-catalog", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
     if (!request.ctx?.isSuperuser) throw app.httpErrors.forbidden("Only superuser can create catalog entries");
@@ -8134,7 +8360,10 @@ export async function buildApp() {
 
     const desiredByNodeId = new Map(desiredRows.map((row) => [row.nodeId, normalizeDesiredNodeConfig(row)]));
     const observedByNodeId = new Map(observedRows.map((row) => [row.nodeId, nodeObservedConfigResponse(row)]));
-    const nodeIds = requestedNodeIds.length > 0 ? requestedNodeIds : Array.from(new Set([...desiredByNodeId.keys(), ...observedByNodeId.keys()])).sort();
+    const nodeIds =
+      requestedNodeIds.length > 0
+        ? requestedNodeIds
+        : Array.from(new Set([...desiredByNodeId.keys(), ...observedByNodeId.keys()])).sort();
     if (nodeIds.length === 0) {
       return {
         data: {
@@ -8183,7 +8412,10 @@ export async function buildApp() {
 
     const desiredByNodeId = new Map(desiredRows.map((row) => [row.nodeId, normalizeDesiredNodeConfig(row)]));
     const observedByNodeId = new Map(observedRows.map((row) => [row.nodeId, nodeObservedConfigResponse(row)]));
-    const nodeIds = requestedNodeIds.length > 0 ? requestedNodeIds : Array.from(new Set([...desiredByNodeId.keys(), ...observedByNodeId.keys()])).sort();
+    const nodeIds =
+      requestedNodeIds.length > 0
+        ? requestedNodeIds
+        : Array.from(new Set([...desiredByNodeId.keys(), ...observedByNodeId.keys()])).sort();
     const definitions = nodeIds
       .map((nodeId) =>
         buildNodeDeployDefinition({
@@ -8410,7 +8642,9 @@ export async function buildApp() {
     const q = request.query as { sync?: string };
     if (q.sync !== "0") {
       const nodesProbe = await probeService("inference-bridge-nodes", `${inferenceBridgeUrl}/v1/nodes`);
-      const nodesRaw = Array.isArray(nodesProbe.payload?.data) ? (nodesProbe.payload?.data as Array<Record<string, unknown>>) : [];
+      const nodesRaw = Array.isArray(nodesProbe.payload?.data)
+        ? (nodesProbe.payload?.data as Array<Record<string, unknown>>)
+        : [];
       if (nodesProbe.ok && nodesRaw.length > 0) {
         try {
           await syncInferenceNodeSnapshots(nodesRaw);
@@ -8452,7 +8686,8 @@ export async function buildApp() {
   });
 
   app.put("/ops/nodes/:nodeId/tenants", { preHandler: authPreHandler }, async (request: FastifyRequest) => {
-    if (!hasGlobalSuperuserPrivileges(request)) throw app.httpErrors.forbidden("Only superuser can assign node tenants");
+    if (!hasGlobalSuperuserPrivileges(request))
+      throw app.httpErrors.forbidden("Only superuser can assign node tenants");
     const { nodeId } = request.params as { nodeId: string };
     const body = z.object({ tenantIds: z.array(z.string().min(1)).default([]) }).parse(request.body ?? {});
     const normalizedTenantIds = Array.from(new Set(body.tenantIds.map((tenantId) => tenantId.trim()).filter(Boolean)));
@@ -8744,6 +8979,478 @@ export async function buildApp() {
       };
     }
   });
+
+  // ============================================
+  // Edge Gateway API Routes
+  // ============================================
+
+  // POST /api/v1/edge-gateways/register - Register a new edge gateway
+  app.post("/api/v1/edge-gateways/register", async (request: FastifyRequest, reply: FastifyReply) => {
+    const body = z
+      .object({
+        balenaDeviceUUID: z.string().uuid(),
+        balenaAppId: z.string().optional(),
+        balenaFleetId: z.string().optional(),
+        deviceName: z.string().min(1).max(100),
+        osVersion: z.string().optional(),
+        supervisorVersion: z.string().optional(),
+        tenantId: z.string().optional(), // Optional - can be assigned later
+        networkConfig: z
+          .object({
+            type: z.enum(["ethernet", "wifi"]),
+            ssid: z.string().optional(),
+            password: z.string().optional(),
+            security: z.enum(["wpa2", "wpa3", "wpa2-enterprise"]).optional()
+          })
+          .optional()
+      })
+      .parse(request.body);
+
+    // Check if device already registered
+    const existing = await prisma.edgeGateway.findUnique({
+      where: { balenaDeviceUUID: body.balenaDeviceUUID }
+    });
+
+    if (existing) {
+      return reply.status(409).send({
+        error: "DEVICE_ALREADY_REGISTERED",
+        message: "Device with this UUID is already registered"
+      });
+    }
+
+    // Generate API token
+    const apiToken = randomBytes(32).toString("hex");
+
+    const edgeGateway = await prisma.edgeGateway.create({
+      data: {
+        balenaDeviceUUID: body.balenaDeviceUUID,
+        balenaAppId: body.balenaAppId,
+        balenaFleetId: body.balenaFleetId,
+        deviceName: body.deviceName,
+        osVersion: body.osVersion,
+        supervisorVersion: body.supervisorVersion,
+        tenantId: body.tenantId ?? "pending", // Default to pending if not provided
+        status: "pending",
+        apiToken,
+        networkConfig: body.networkConfig ? JSON.stringify(body.networkConfig) : null
+      }
+    });
+
+    return reply.status(201).send({
+      id: edgeGateway.id,
+      apiToken: edgeGateway.apiToken,
+      tenantId: edgeGateway.tenantId,
+      status: edgeGateway.status
+    });
+  });
+
+  // GET /api/v1/edge-gateways - List edge gateways (tenant scoped)
+  app.get("/api/v1/edge-gateways", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
+    const ctx = getTenantContext(request);
+
+    const edgeGateways = await prisma.edgeGateway.findMany({
+      where: { tenantId: ctx.tenantId },
+      orderBy: { registeredAt: "desc" }
+    });
+
+    return { data: edgeGateways };
+  });
+
+  // GET /api/v1/edge-gateways/:id - Get edge gateway details
+  app.get("/api/v1/edge-gateways/:id", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
+    const ctx = getTenantContext(request);
+    const { id } = z.object({ id: z.string() }).parse(request.params);
+
+    const edgeGateway = await prisma.edgeGateway.findFirst({
+      where: { id, tenantId: ctx.tenantId },
+      include: {
+        discoveredCameras: {
+          orderBy: { lastSeenAt: "desc" }
+        }
+      }
+    });
+
+    if (!edgeGateway) {
+      throw new NotFoundError("Edge gateway not found");
+    }
+
+    return { data: edgeGateway };
+  });
+
+  // POST /api/v1/edge-gateways/:id/heartbeat - Device heartbeat
+  app.post("/api/v1/edge-gateways/:id/heartbeat", async (request: FastifyRequest, reply: FastifyReply) => {
+    const { id } = z.object({ id: z.string() }).parse(request.params);
+
+    const edgeGateway = await prisma.edgeGateway.findUnique({ where: { id } });
+    if (!edgeGateway) {
+      return reply.status(404).send({ error: "NOT_FOUND", message: "Edge gateway not found" });
+    }
+
+    const body = z
+      .object({
+        timestamp: z.string().datetime(),
+        supervisorStatus: z
+          .object({
+            deviceStatus: z.string(),
+            isOnline: z.boolean(),
+            updateStatus: z.string(),
+            supervisorVersion: z.string().optional(),
+            osVersion: z.string().optional()
+          })
+          .optional(),
+        customMetrics: z
+          .object({
+            cpuUsagePercent: z.number(),
+            cpuTemperatureCelsius: z.number(),
+            memoryUsedBytes: z.number().optional(),
+            memoryTotalBytes: z.number().optional(),
+            vpnLatencyMs: z.number().optional(),
+            tunnelStatus: z
+              .object({
+                activeTunnels: z.number(),
+                failedTunnels: z.number(),
+                lastFailure: z.string().optional()
+              })
+              .optional(),
+            discoveredCamerasCount: z.number(),
+            registeredCamerasCount: z.number()
+          })
+          .optional(),
+        version: z.string().optional()
+      })
+      .parse(request.body);
+
+    // Update edge gateway with latest metrics
+    const updated = await prisma.edgeGateway.update({
+      where: { id },
+      data: {
+        lastHeartbeatAt: new Date(body.timestamp),
+        latestMetrics: body.customMetrics ? JSON.stringify(body.customMetrics) : null,
+        status: edgeGateway.status === "pending" ? "active" : edgeGateway.status,
+        activatedAt: edgeGateway.status === "pending" ? new Date() : undefined
+      }
+    });
+
+    return reply.send({
+      accepted: true,
+      nextHeartbeatIntervalSeconds: 30,
+      status: updated.status
+    });
+  });
+
+  // POST /api/v1/edge-gateways/:id/cameras/discover - Report discovered cameras
+  app.post("/api/v1/edge-gateways/:id/cameras/discover", async (request: FastifyRequest, reply: FastifyReply) => {
+    const { id } = z.object({ id: z.string() }).parse(request.params);
+
+    const edgeGateway = await prisma.edgeGateway.findUnique({ where: { id } });
+    if (!edgeGateway) {
+      return reply.status(404).send({ error: "NOT_FOUND", message: "Edge gateway not found" });
+    }
+
+    const body = z
+      .object({
+        cameras: z.array(
+          z.object({
+            ipAddress: z.string().ip(),
+            macAddress: z.string(),
+            rtspUrl: z.string().optional(),
+            onvifInfo: z
+              .object({
+                manufacturer: z.string(),
+                model: z.string(),
+                firmware: z.string()
+              })
+              .optional(),
+            ports: z.array(z.number()).optional()
+          })
+        ),
+        discoveryTimestamp: z.string().datetime()
+      })
+      .parse(request.body);
+
+    const discovered: Array<{ ipAddress: string; macAddress: string; manufacturer?: string; model?: string }> = [];
+    const alreadyRegistered: Array<{ ipAddress: string; macAddress: string; cameraId: string }> = [];
+
+    for (const camera of body.cameras) {
+      // Check if camera already exists by MAC address
+      const existing = await prisma.discoveredCamera.findUnique({
+        where: { macAddress: camera.macAddress }
+      });
+
+      if (existing && existing.status !== "discovered") {
+        alreadyRegistered.push({
+          ipAddress: camera.ipAddress,
+          macAddress: camera.macAddress,
+          cameraId: existing.id
+        });
+        continue;
+      }
+
+      // Create or update discovered camera
+      const discoveredCamera = await prisma.discoveredCamera.upsert({
+        where: { macAddress: camera.macAddress },
+        create: {
+          edgeGatewayId: id,
+          tenantId: edgeGateway.tenantId,
+          macAddress: camera.macAddress,
+          ipAddress: camera.ipAddress,
+          hostname: camera.rtspUrl ? new URL(camera.rtspUrl).hostname : undefined,
+          manufacturer: camera.onvifInfo?.manufacturer,
+          model: camera.onvifInfo?.model,
+          firmwareVersion: camera.onvifInfo?.firmware,
+          rtspPort: camera.ports?.find((p) => p === 554 || p === 8554),
+          onvifPort: camera.ports?.find((p) => p === 80 || p === 8000),
+          status: "discovered",
+          lastSeenAt: new Date(body.discoveryTimestamp)
+        },
+        update: {
+          ipAddress: camera.ipAddress,
+          manufacturer: camera.onvifInfo?.manufacturer,
+          model: camera.onvifInfo?.model,
+          firmwareVersion: camera.onvifInfo?.firmware,
+          lastSeenAt: new Date(body.discoveryTimestamp),
+          status: "discovered"
+        }
+      });
+
+      discovered.push({
+        ipAddress: camera.ipAddress,
+        macAddress: camera.macAddress,
+        manufacturer: camera.onvifInfo?.manufacturer,
+        model: camera.onvifInfo?.model
+      });
+    }
+
+    return reply.send({ discovered, alreadyRegistered });
+  });
+
+  // POST /api/v1/edge-gateways/:id/cameras/confirm - Confirm and register a discovered camera
+  app.post(
+    "/api/v1/edge-gateways/:id/cameras/confirm",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const ctx = getTenantContext(request);
+      const { id } = z.object({ id: z.string() }).parse(request.params);
+
+      const edgeGateway = await prisma.edgeGateway.findFirst({
+        where: { id, tenantId: ctx.tenantId }
+      });
+
+      if (!edgeGateway) {
+        throw new NotFoundError("Edge gateway not found");
+      }
+
+      const body = z
+        .object({
+          macAddress: z.string(),
+          rtspUrl: z.string().url(),
+          username: z.string().optional(),
+          password: z.string().optional()
+        })
+        .parse(request.body);
+
+      const discoveredCamera = await prisma.discoveredCamera.findFirst({
+        where: {
+          macAddress: body.macAddress,
+          edgeGatewayId: id,
+          tenantId: ctx.tenantId
+        }
+      });
+
+      if (!discoveredCamera) {
+        return reply.status(404).send({
+          error: "CAMERA_NOT_FOUND",
+          message: "Discovered camera not found for this gateway"
+        });
+      }
+
+      // Update camera with credentials and set to registered
+      const updated = await prisma.discoveredCamera.update({
+        where: { id: discoveredCamera.id },
+        data: {
+          rtspUrl: body.rtspUrl,
+          username: body.username,
+          passwordEncrypted: body.password ? Buffer.from(body.password).toString("base64") : null,
+          status: "registered",
+          // Assign a local tunnel port (starting from 8554)
+          tunnelPort: 8554 + Math.floor(Math.random() * 1000) // Random port in range
+        }
+      });
+
+      // Optionally create a Camera record in the main cameras table
+      const camera = await prisma.camera.create({
+        data: {
+          tenantId: ctx.tenantId,
+          name: `${discoveredCamera.manufacturer ?? "Camera"} ${discoveredCamera.model ?? discoveredCamera.macAddress.slice(-5)}`,
+          rtspUrl: body.rtspUrl,
+          location: discoveredCamera.ipAddress,
+          tags: JSON.stringify(["edge-gateway", "discovered"]),
+          isActive: true,
+          lifecycleStatus: "provisioning"
+        }
+      });
+
+      return reply.status(201).send({
+        cameraId: camera.id,
+        discoveredCameraId: updated.id,
+        status: "registered",
+        tunnelPort: updated.tunnelPort
+      });
+    }
+  );
+
+  // GET /api/v1/edge-gateways/:id/cameras - List discovered cameras
+  app.get(
+    "/api/v1/edge-gateways/:id/cameras",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest) => {
+      const ctx = getTenantContext(request);
+      const { id } = z.object({ id: z.string() }).parse(request.params);
+      const { status } = z
+        .object({ status: z.enum(["discovered", "pending", "registered"]).optional() })
+        .parse(request.query);
+
+      const edgeGateway = await prisma.edgeGateway.findFirst({
+        where: { id, tenantId: ctx.tenantId }
+      });
+
+      if (!edgeGateway) {
+        throw new NotFoundError("Edge gateway not found");
+      }
+
+      const cameras = await prisma.discoveredCamera.findMany({
+        where: {
+          edgeGatewayId: id,
+          tenantId: ctx.tenantId,
+          ...(status ? { status } : {})
+        },
+        orderBy: { lastSeenAt: "desc" }
+      });
+
+      return { data: cameras };
+    }
+  );
+
+  // POST /api/v1/edge-gateways/:id/tunnels - Configure tunnels for cameras
+  app.post(
+    "/api/v1/edge-gateways/:id/tunnels",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest) => {
+      const ctx = getTenantContext(request);
+      const { id } = z.object({ id: z.string() }).parse(request.params);
+
+      const edgeGateway = await prisma.edgeGateway.findFirst({
+        where: { id, tenantId: ctx.tenantId }
+      });
+
+      if (!edgeGateway) {
+        throw new NotFoundError("Edge gateway not found");
+      }
+
+      const body = z
+        .object({
+          cameras: z.array(
+            z.object({
+              cameraId: z.string(),
+              rtspPort: z.number().min(1).max(65535),
+              localPort: z.number().min(8000).max(9000)
+            })
+          )
+        })
+        .parse(request.body);
+
+      const configured: Array<{ cameraId: string; localPort: number; status: string; error?: string }> = [];
+
+      for (const cam of body.cameras) {
+        const discovered = await prisma.discoveredCamera.findFirst({
+          where: { id: cam.cameraId, edgeGatewayId: id, tenantId: ctx.tenantId }
+        });
+
+        if (!discovered) {
+          configured.push({
+            cameraId: cam.cameraId,
+            localPort: cam.localPort,
+            status: "failed",
+            error: "Camera not found"
+          });
+          continue;
+        }
+
+        // Update tunnel port
+        await prisma.discoveredCamera.update({
+          where: { id: discovered.id },
+          data: { tunnelPort: cam.localPort }
+        });
+
+        configured.push({ cameraId: cam.cameraId, localPort: cam.localPort, status: "active" });
+      }
+
+      return { configured };
+    }
+  );
+
+  // GET /api/v1/edge-gateways/:id/tunnels/status - Get tunnel status
+  app.get(
+    "/api/v1/edge-gateways/:id/tunnels/status",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest) => {
+      const ctx = getTenantContext(request);
+      const { id } = z.object({ id: z.string() }).parse(request.params);
+
+      const edgeGateway = await prisma.edgeGateway.findFirst({
+        where: { id, tenantId: ctx.tenantId }
+      });
+
+      if (!edgeGateway) {
+        throw new NotFoundError("Edge gateway not found");
+      }
+
+      const cameras = await prisma.discoveredCamera.findMany({
+        where: { edgeGatewayId: id, tenantId: ctx.tenantId, status: "registered" }
+      });
+
+      return {
+        tunnels: cameras.map((c) => ({
+          cameraId: c.id,
+          localPort: c.tunnelPort,
+          status: c.lastSeenAt && Date.now() - new Date(c.lastSeenAt).getTime() < 300000 ? "active" : "disconnected",
+          lastHealthCheck: c.lastSeenAt?.toISOString()
+        }))
+      };
+    }
+  );
+
+  // DELETE /api/v1/edge-gateways/:id - Decommission edge gateway
+  app.delete(
+    "/api/v1/edge-gateways/:id",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const ctx = getTenantContext(request);
+      const { id } = z.object({ id: z.string() }).parse(request.params);
+
+      const edgeGateway = await prisma.edgeGateway.findFirst({
+        where: { id, tenantId: ctx.tenantId }
+      });
+
+      if (!edgeGateway) {
+        throw new NotFoundError("Edge gateway not found");
+      }
+
+      // Soft delete - mark as decommissioned
+      await prisma.edgeGateway.update({
+        where: { id },
+        data: { status: "decommissioned" }
+      });
+
+      // Also mark discovered cameras as offline
+      await prisma.discoveredCamera.updateMany({
+        where: { edgeGatewayId: id },
+        data: { status: "offline" }
+      });
+
+      return reply.status(204).send();
+    }
+  );
 
   return app;
 }

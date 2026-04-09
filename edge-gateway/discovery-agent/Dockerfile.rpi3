@@ -1,0 +1,51 @@
+# Dockerfile for Raspberry Pi 3B+ (armv7hf)
+# Build for Raspberry Pi 3B+ (32-bit) or use balenalib/raspberrypi4-64 for Pi 4 (64-bit)
+
+# For Pi 3B+ use this base:
+FROM balenalib/raspberrypi3-alpine:latest
+
+# For Pi 4 (64-bit) use:
+# FROM balenalib/raspberrypi4-64:latest
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies for network scanning
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    arp-scan \
+    iproute2 \
+    iputils-ping \
+    curl \
+    python3 \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Enable Pi 3B+ architecture support for Python packages
+RUN echo "armhf" > /etc/arch && \
+    echo "armv7hl" > /etc/arch
+
+# Copy requirements first for better layer caching
+COPY requirements.txt .
+
+# Install Python dependencies (with architecture-specific builds)
+RUN pip3 install --no-cache-dir --only-binary :all: -r requirements.txt || \
+    pip3 install --no-cache-dir --no-binary :all: -r requirements.txt
+
+# Copy application code
+COPY src/ ./src/
+COPY config.yaml .
+
+# Create non-root user for security
+RUN useradd -m -u 1000 -s /bin/bash appuser && \
+    chown -R appuser:appuser /app
+USER appuser
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+# Expose health check port
+EXPOSE 8080
+
+# Run discovery agent
+CMD ["python3", "-u", "src/discovery_agent.py"]

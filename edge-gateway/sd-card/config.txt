@@ -1,0 +1,36 @@
+# Raspberry Pi Configuration
+# This config.txt enables UART and basic settings
+
+# Enable UART (for debugging)
+enable_uart=1
+
+# Disable Bluetooth (if not needed, frees UART)
+dtoverlay=disable-bt
+
+# Set serial console (optional, for debugging)
+enable_jtag=0
+
+# Disable power LED (optional)
+dtparam=pwr_led_trigger=none
+
+# Performance settings
+dtparam=audio=on
+
+# Camera settings (if using Pi camera module)
+start_x=0
+disable_camera_led=0
+
+# Memory split (give GPU minimal memory, this is headless)
+gpu_mem=16
+
+# Boot settings
+boot_wait=1
+boot_order=0xf461
+
+# Optional: Disable splash screen
+disable_splash=1
+
+# Optional: Overclock (safe for Pi 3B+)
+# arm_freq=1300
+# core_freq=500
+# sdram_freq=500

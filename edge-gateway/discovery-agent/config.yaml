@@ -1,0 +1,46 @@
+# Edge Gateway Discovery Agent Configuration
+# This file is mounted as a volume in the balena container
+
+# Discovery settings
+discovery_interval: 60 # seconds between discovery cycles
+heartbeat_interval: 30 # seconds between heartbeat sends
+
+# Network settings
+network_interface: eth0 # Interface to use for scanning
+scan_subnet: auto # Auto-detect from interface IP, or specify like 192.168.1.0/24
+
+# Port scanning
+rtsp_ports:
+  - 554 # Standard RTSP
+  - 8554 # RTSP alternate
+  - 8080 # HTTP-RTSP
+  - 8000 # ONVIF-RTSP
+
+onvif_ports:
+  - 80 # HTTP
+  - 8000 # ONVIF
+  - 8080 # ONVIF over HTTP
+
+# Camera detection thresholds
+detection:
+  timeout_seconds: 10 # Timeout for port checks
+  max_devices: 50 # Maximum devices to scan
+  skip_localhost: true
+  skip_broadcasts: true
+
+# API settings (can be overridden by environment variables)
+api:
+  base_url: http://api:3001
+  timeout: 30
+  retry_attempts: 3
+  retry_delay: 5
+
+# Logging
+logging:
+  level: INFO # DEBUG, INFO, WARNING, ERROR
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Camera credential defaults (used if not provided by API)
+camera_defaults:
+  rtsp_transport: tcp # tcp, udp, udp_multicast
+  stream_path: /stream

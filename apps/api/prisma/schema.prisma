@@ -44,6 +44,58 @@ model Tenant {
   networkSpaces           TenantNetworkSpace[]
   vpnRoutePolicies        TenantVpnRoutePolicy[]
   vpnPeers                TenantVpnPeer[]
+  edgeGateways            EdgeGateway[]
+  discoveredCameras       DiscoveredCamera[]
+}
+
+model EdgeGateway {
+  id                  String            @id @default(cuid())
+  tenantId            String
+  balenaDeviceUUID   String            @unique
+  balenaAppId         String?
+  balenaFleetId       String?
+  deviceName          String
+  osVersion           String?
+  supervisorVersion   String?
+  status              String            @default("pending")
+  apiToken            String?
+  networkConfig       String?
+  lastHeartbeatAt     DateTime?
+  latestMetrics       String?
+  registeredAt        DateTime          @default(now())
+  activatedAt         DateTime?
+  tenant              Tenant            @relation(fields: [tenantId], references: [id])
+  discoveredCameras   DiscoveredCamera[]
+
+  @@index([tenantId, status])
+  @@index([balenaDeviceUUID])
+}
+
+model DiscoveredCamera {
+  id                String        @id @default(cuid())
+  edgeGatewayId     String
+  tenantId          String
+  macAddress        String        @unique
+  ipAddress         String
+  hostname          String?
+  manufacturer      String?
+  model             String?
+  firmwareVersion   String?
+  onvifUuid         String?
+  rtspPort          Int?
+  onvifPort         Int?
+  status            String        @default("discovered")
+  rtspUrl           String?
+  username          String?
+  passwordEncrypted String?
+  tunnelPort        Int?
+  lastSeenAt        DateTime      @default(now())
+  createdAt         DateTime      @default(now())
+  edgeGateway       EdgeGateway   @relation(fields: [edgeGatewayId], references: [id], onDelete: Cascade)
+  tenant            Tenant        @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, edgeGatewayId])
+  @@index([tenantId, status])
 }
 
 model TenantVpn {

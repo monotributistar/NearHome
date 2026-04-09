@@ -4,6 +4,27 @@ import websocket from "@fastify/websocket";
 import jwt from "@fastify/jwt";
 import type { FastifyRequest } from "fastify";
 
+// Edge Gateway heartbeat processing endpoint
+// Extends the event gateway to handle edge gateway health events
+
+type EdgeGatewayHealthEvent = {
+  eventType: "edge_gateway.health";
+  gatewayId: string;
+  tenantId: string;
+  timestamp: string;
+  payload: {
+    cpuTemperature: number;
+    cpuUsage: number;
+    memoryUsage: number;
+    vpnLatency: number;
+    tunnelStatus: {
+      activeTunnels: number;
+      failedTunnels: number;
+    };
+    status: "healthy" | "unhealthy" | "degraded";
+  };
+};
+
 type WsClaims = {
   sub: string;
   tenantId: string;
@@ -153,8 +174,10 @@ export async function buildApp() {
       eventType,
       tenantId,
       cameraId: typeof body.cameraId === "string" ? body.cameraId : undefined,
-      occurredAt: typeof body.occurredAt === "string" && body.occurredAt.length > 0 ? body.occurredAt : new Date().toISOString(),
-      correlationId: typeof body.correlationId === "string" && body.correlationId.length > 0 ? body.correlationId : request.id,
+      occurredAt:
+        typeof body.occurredAt === "string" && body.occurredAt.length > 0 ? body.occurredAt : new Date().toISOString(),
+      correlationId:
+        typeof body.correlationId === "string" && body.correlationId.length > 0 ? body.correlationId : request.id,
       sequence: typeof body.sequence === "number" ? body.sequence : nextSequence(tenantId),
       payload: typeof body.payload === "object" && body.payload ? (body.payload as Record<string, unknown>) : {}
     };
@@ -287,6 +310,126 @@ export async function buildApp() {
       }
     }
   );
+
+  // ============================================
+  // Edge Gateway Heartbeat Processing
+  // ============================================
+
+  // POST /health/edge-gateway - Process edge gateway heartbeat
+  // This endpoint receives heartbeat events from edge gateways
+  // and publishes them as events for real-time monitoring
+  app.post("/health/edge-gateway", async (request, reply) => {
+    const body = request.body as {
+      gatewayId: string;
+      tenantId: string;
+      timestamp: string;
+      metrics?: {
+        cpuTemperatureCelsius?: number;
+        cpuUsagePercent?: number;
+        memoryUsedBytes?: number;
+        memoryTotalBytes?: number;
+        vpnLatencyMs?: number;
+        tunnelStatus?: {
+          activeTunnels: number;
+          failedTunnels: number;
+          lastFailure?: string;
+        };
+        discoveredCamerasCount?: number;
+        registeredCamerasCount?: number;
+      };
+      supervisorStatus?: {
+        deviceStatus: string;
+        isOnline: boolean;
+        updateStatus: string;
+      };
+      version?: string;
+    };
+
+    if (!body.gatewayId || !body.tenantId) {
+      return reply.status(400).send({
+        error: "MISSING_FIELDS",
+        message: "gatewayId and tenantId are required"
+      });
+    }
+
+    // Determine health status based on metrics
+    let healthStatus: "healthy" | "unhealthy" | "degraded" = "healthy";
+
+    if (body.metrics) {
+      if (body.metrics.cpuTemperatureCelsius && body.metrics.cpuTemperatureCelsius > 80) {
+        healthStatus = "degraded";
+      }
+      if (body.metrics.tunnelStatus?.failedTunnels && body.metrics.tunnelStatus.failedTunnels > 0) {
+        healthStatus = "degraded";
+      }
+      if (body.supervisorStatus && !body.supervisorStatus.isOnline) {
+        healthStatus = "unhealthy";
+      }
+    }
+
+    // Create health event for real-time distribution
+    const healthEvent = createEvent({
+      tenantId: body.tenantId,
+      eventType: "edge_gateway.health",
+      correlationId: body.gatewayId,
+      payload: {
+        gatewayId: body.gatewayId,
+        timestamp: body.timestamp,
+        status: healthStatus,
+        metrics: body.metrics,
+        supervisorStatus: body.supervisorStatus,
+        version: body.version
+      }
+    });
+
+    // Distribute to subscribers
+    const tenantSubscribers = wsSubscribers.get(body.tenantId);
+    if (tenantSubscribers) {
+      for (const subscriber of tenantSubscribers) {
+        if (eventMatchesTopics("edge_gateway.*", subscriber.topics)) {
+          subscriber.socket.send(JSON.stringify(healthEvent));
+        }
+      }
+    }
+
+    const sseTenantSubscribers = sseSubscribers.get(body.tenantId);
+    if (sseTenantSubscribers) {
+      const eventData = `id: ${healthEvent.eventId}\nevent: ${healthEvent.eventType}\ndata: ${JSON.stringify(healthEvent)}\n\n`;
+      for (const subscriber of sseTenantSubscribers) {
+        if (eventMatchesTopics("edge_gateway.*", subscriber.topics)) {
+          subscriber.write(eventData);
+        }
+      }
+    }
+
+    // Log health status changes
+    if (healthStatus === "unhealthy") {
+      app.log.warn(
+        { gatewayId: body.gatewayId, tenantId: body.tenantId, metrics: body.metrics },
+        "edge_gateway.unhealthy"
+      );
+    }
+
+    return reply.send({
+      accepted: true,
+      eventId: healthEvent.eventId,
+      status: healthStatus
+    });
+  });
+
+  // GET /health/edge-gateway/:gatewayId/history - Get heartbeat history
+  app.get("/health/edge-gateway/:gatewayId/history", async (request, reply) => {
+    const { gatewayId } = request.params as { gatewayId: string };
+    const { limit = "50" } = request.query as { limit?: string };
+
+    // In a production system, this would query from a time-series store
+    // For now, return a placeholder response
+    return reply.send({
+      gatewayId,
+      history: [],
+      message: "Heartbeat history not yet implemented - requires time-series storage"
+    });
+  });
 
   return app;
 }

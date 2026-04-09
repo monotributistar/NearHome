@@ -1,0 +1,40 @@
+# Edge Gateway Fleet Configuration for balena
+# Use: balena push <fleet> --source .
+
+name: Edge Gateways
+description: NearHome Edge Gateway devices for IP camera monitoring
+
+# Device type - Raspberry Pi 4 (64-bit)
+deviceType: raspberrypi4-64
+
+# Default application configuration
+defaultConfig:
+  # Network mode - host required for camera subnet access
+  NETWORK_MODE: host
+
+  # Enable UART for debugging
+  ENABLE_UART: "1"
+
+  # Prevent network manager from controlling network
+  # BALENA_HOST_CONFIG_dhcpcd: ""
+
+# Environment variables for all devices
+environment:
+  # API endpoint - override in balena dashboard or device-specific
+  API_BASE_URL: https://api.nearhome.dev
+
+  # Discovery interval in seconds
+  DISCOVERY_INTERVAL: "60"
+
+  # Heartbeat interval in seconds
+  HEARTBEAT_INTERVAL: "30"
+
+# Volumes for persistent data
+volumes:
+  discovery-data:
+  tunnel-data:
+
+# Labels for organization
+labels:
+  com.nearhome.product: edge-gateway
+  com.nearhome.version: "1.0"

@@ -1,0 +1,190 @@
+# openbalena self-hosted deployment
+# https://github.com/balena-io/openbalena
+#
+# Usage:
+# 1. Copy .env.example to .env and configure
+# 2. Run: docker-compose up -d
+
+name: openbalena
+
+services:
+  # PostgreSQL database for device registry
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: openbalena
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-openbalena}
+      POSTGRES_DB: openbalena
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    networks:
+      - openbalena_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openbalena"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis for caching and pub/sub
+  redis:
+    image: redis:7-alpine
+    networks:
+      - openbalena_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # openbalena API server
+  api:
+    image: balena/open-balena-api:${OPENBALENA_VERSION:-latest}
+    environment:
+      # Database
+      DATABASE_HOST: db
+      DATABASE_PORT: 5432
+      DATABASE_USER: openbalena
+      DATABASE_PASSWORD: ${DB_PASSWORD:-openbalena}
+      DATABASE_NAME: openbalena
+
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
+      # VPN configuration
+      VPN_HOST: vpn
+      VPN_PORT: 443
+
+      # Registry configuration
+      REGISTRY_HOST: registry
+      REGISTRY_PORT: 80
+
+      # S3 storage
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-openbalena}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-openbalena}
+      S3_BUCKET: ${S3_BUCKET:-openbalena}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_ENDPOINT: http://s3:9000
+
+      # Device configuration
+      DEVICE_CONFIG_ENDPOINT: ${DEVICE_CONFIG_ENDPOINT:-https://api.balena}
+
+      # Authentication
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+
+      # Network configuration - use IP from .env for device access
+      API_HOST: 192.168.0.114
+      BALENA_API_HOST: 192.168.0.114
+      BALENA_VPN_HOST: 192.168.0.114
+
+      # Optional: Mixpanel for analytics
+      MIXPANEL_TOKEN: ${MIXPANEL_TOKEN:-}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      s3:
+        condition: service_healthy
+    networks:
+      - openbalena_net
+    ports:
+      - "3002:3000"
+    volumes:
+      - ./certs:/certs:ro
+
+  # openbalena VPN for device connectivity
+  vpn:
+    image: balena/open-balena-vpn:${OPENBALENA_VERSION:-latest}
+    environment:
+      VPN_HOST: ${VPN_HOST:-vpn.balena}
+      VPN_PORT: 443
+
+      # Shared secret for API communication
+      VPN_API_KEY: ${VPN_API_KEY:-change-me}
+
+      # Device port range
+      VPN_DEVICE_PORT_RANGE: "30000-40000"
+
+      # Redis for session storage
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    networks:
+      - openbalena_net
+    ports:
+      - "8443:443"
+      - "30000-40000:30000-40000/udp"
+    cap_add:
+      - NET_ADMIN
+    depends_on:
+      - redis
+
+  # openbalena Registry (Docker registry for containers)
+  registry:
+    image: balena/open-balena-registry:${OPENBALENA_VERSION:-latest}
+    environment:
+      REGISTRY_HOST: registry
+      REGISTRY_PORT: 80
+
+      # S3 storage for blobs
+      REGISTRY_STORAGE: s3
+      REGISTRY_S3_BUCKET: ${S3_BUCKET:-openbalena}
+      REGISTRY_S3_REGION: ${S3_REGION:-us-east-1}
+      REGISTRY_S3_ENDPOINT: http://s3:9000
+      REGISTRY_S3_ACCESS_KEY: ${S3_ACCESS_KEY:-openbalena}
+      REGISTRY_S3_SECRET_KEY: ${S3_SECRET_KEY:-openbalena}
+
+      # Authentication
+      REGISTRY_AUTH_USER: ${REGISTRY_USER:-admin}
+      REGISTRY_AUTH_PASSWORD: ${REGISTRY_PASSWORD:-admin}
+    networks:
+      - openbalena_net
+    ports:
+      - "8080:80"
+    depends_on:
+      - s3
+
+  # MinIO S3-compatible storage
+  s3:
+    image: minio/minio:latest
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-openbalena}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-openbalena}
+    command: server /data --console-address ":9001"
+    volumes:
+      - s3_data:/data
+    networks:
+      - openbalena_net
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # haproxy for TLS termination
+  # Enable this in production with valid certificates
+  # haproxy:
+  #   image: haproxy:2.8
+  #   volumes:
+  #     - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+  #     - ./certs:/certs:ro
+  #   networks:
+  #     - openbalena_net
+  #   ports:
+  #     - "443:443"
+  #     - "80:80"
+  #   depends_on:
+  #     - api
+  #     - vpn
+  #     - registry
+
+networks:
+  openbalena_net:
+    driver: bridge
+
+volumes:
+  db_data:
+  s3_data:
