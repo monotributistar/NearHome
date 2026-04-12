@@ -53,6 +53,11 @@ const ADMIN_ROUTES = {
   commercial: {
     plans: "/commercial/plans",
     subscriptions: "/commercial/subscriptions"
+  },
+  infrastructure: {
+    fleets: "/infrastructure/fleets",
+    edgeGateways: "/infrastructure/edge-gateways",
+    edgeGatewayDetail: (id: string) => `/infrastructure/edge-gateways/${id}`
   }
 } as const;
 
@@ -875,6 +880,13 @@ function Layout({ apiUrl }: { apiUrl: string }) {
             { to: ADMIN_ROUTES.commercial.plans, label: "Planes", icon: <Planimetry width={16} height={16} /> },
             { to: ADMIN_ROUTES.commercial.subscriptions, label: "Suscripciones", icon: <Planimetry width={16} height={16} /> }
           ]
+        },
+        {
+          title: "Infraestructura",
+          items: [
+            { to: ADMIN_ROUTES.infrastructure.fleets, label: "Flotas Edge", icon: <Internet width={16} height={16} /> },
+            { to: ADMIN_ROUTES.infrastructure.edgeGateways, label: "Edge Gateways", icon: <Settings width={16} height={16} /> }
+          ]
         }
       ];
 
@@ -951,6 +963,10 @@ function Layout({ apiUrl }: { apiUrl: string }) {
 
         <Route path={ADMIN_ROUTES.commercial.plans} element={<PlansPage />} />
         <Route path={ADMIN_ROUTES.commercial.subscriptions} element={<SubscriptionPage apiUrl={apiUrl} onChanged={refresh} />} />
+
+        <Route path={ADMIN_ROUTES.infrastructure.fleets} element={<FleetListPage apiUrl={apiUrl} />} />
+        <Route path={ADMIN_ROUTES.infrastructure.edgeGateways} element={<EdgeGatewayListPage apiUrl={apiUrl} />} />
+        <Route path="/infrastructure/edge-gateways/:id" element={<EdgeGatewayDetailPage apiUrl={apiUrl} />} />
 
         <Route path="/control" element={<Navigate to={ADMIN_ROUTES.operations.control} replace />} />
         <Route path="/monitor" element={<Navigate to={ADMIN_ROUTES.operations.monitor} replace />} />
@@ -6396,6 +6412,432 @@ function RealtimePage({ apiUrl }: { apiUrl: string }) {
         ))}
         {!events.length && <div className="text-sm text-slate-500">No realtime events received yet.</div>}
       </div>
+    </PageCard>
+  );
+}
+
+// ─── Infrastructure: Fleet List ───────────────────────────────────────────────
+
+function FleetListPage({ apiUrl }: { apiUrl: string }) {
+  const [fleets, setFleets] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [newFleetName, setNewFleetName] = useState("");
+  const [newFleetDesc, setNewFleetDesc] = useState("");
+
+  const token = getToken();
+  const tenantId = getTenantId();
+
+  async function load() {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`${apiUrl}/api/v1/fleets`, {
+        headers: { Authorization: `Bearer ${token}`, "X-Tenant-Id": tenantId ?? "" }
+      });
+      const json = await res.json();
+      setFleets(json.data ?? []);
+    } catch {
+      setError("Error cargando flotas");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function createFleet(e: FormEvent) {
+    e.preventDefault();
+    try {
+      await fetch(`${apiUrl}/api/v1/fleets`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "X-Tenant-Id": tenantId ?? "",
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ name: newFleetName, description: newFleetDesc, deviceType: "raspberrypi4-64" })
+      });
+      setCreating(false);
+      setNewFleetName("");
+      setNewFleetDesc("");
+      load();
+    } catch {
+      setError("Error creando flota");
+    }
+  }
+
+  useEffect(() => { load(); }, [tenantId]);
+
+  return (
+    <PageCard title="Flotas Edge" subtitle="Grupos de edge gateways por cliente">
+      <div className="mb-4 flex justify-end">
+        <PrimaryButton data-testid="btn-create-fleet" onClick={() => setCreating(true)}>Nueva Flota</PrimaryButton>
+      </div>
+      {creating && (
+        <Surface className="p-4 mb-4">
+          <form onSubmit={createFleet} className="flex flex-col gap-3">
+            <TextInput
+              data-testid="input-fleet-name"
+              placeholder="Nombre de la flota"
+              value={newFleetName}
+              onChange={(e) => setNewFleetName(e.target.value)}
+              required
+            />
+            <TextInput
+              data-testid="input-fleet-desc"
+              placeholder="Descripción (opcional)"
+              value={newFleetDesc}
+              onChange={(e) => setNewFleetDesc(e.target.value)}
+            />
+            <div className="flex gap-2">
+              <PrimaryButton type="submit" data-testid="btn-submit-fleet">Crear</PrimaryButton>
+              <DangerButton type="button" onClick={() => setCreating(false)}>Cancelar</DangerButton>
+            </div>
+          </form>
+        </Surface>
+      )}
+      {loading ? (
+        <div className="p-4">Cargando...</div>
+      ) : error ? (
+        <div className="text-red-500 p-4">{error}</div>
+      ) : (
+        <DataTable
+          data-testid="fleet-table"
+          columns={[
+            { header: "Nombre", accessor: "name" },
+            { header: "Tipo", accessor: "deviceType" },
+            { header: "Estado", accessor: "status" },
+            { header: "Gateways", accessor: (row: any) => row._count?.gateways ?? 0 },
+            {
+              header: "Acciones",
+              accessor: (row: any) => (
+                <Link
+                  data-testid={`fleet-link-${row.id}`}
+                  to={ADMIN_ROUTES.infrastructure.edgeGateways + `?fleetId=${row.id}`}
+                  className="text-blue-600 underline text-sm"
+                >
+                  Ver gateways
+                </Link>
+              )
+            }
+          ]}
+          rows={fleets}
+          emptyMessage="No hay flotas configuradas"
+        />
+      )}
+    </PageCard>
+  );
+}
+
+// ─── Infrastructure: Edge Gateway List ────────────────────────────────────────
+
+function EdgeGatewayListPage({ apiUrl }: { apiUrl: string }) {
+  const [gateways, setGateways] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const token = getToken();
+  const tenantId = getTenantId();
+  const navigate = useNavigate();
+
+  async function load() {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`${apiUrl}/api/v1/edge-gateways`, {
+        headers: { Authorization: `Bearer ${token}`, "X-Tenant-Id": tenantId ?? "" }
+      });
+      const json = await res.json();
+      setGateways(json.data ?? []);
+    } catch {
+      setError("Error cargando gateways");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { load(); }, [tenantId]);
+
+  function statusColor(status: string) {
+    if (status === "active") return "text-green-600";
+    if (status === "pending") return "text-yellow-600";
+    return "text-gray-500";
+  }
+
+  return (
+    <PageCard title="Edge Gateways" subtitle="Dispositivos balenaOS registrados por tenant">
+      {loading ? (
+        <div className="p-4">Cargando...</div>
+      ) : error ? (
+        <div className="text-red-500 p-4">{error}</div>
+      ) : (
+        <DataTable
+          data-testid="gateway-table"
+          columns={[
+            { header: "Nombre", accessor: "deviceName" },
+            { header: "UUID", accessor: "balenaDeviceUUID" },
+            { header: "OS", accessor: "osVersion" },
+            {
+              header: "Estado",
+              accessor: (row: any) => (
+                <span className={statusColor(row.status)} data-testid={`gateway-status-${row.id}`}>
+                  {row.status}
+                </span>
+              )
+            },
+            {
+              header: "Último heartbeat",
+              accessor: (row: any) =>
+                row.lastHeartbeatAt ? new Date(row.lastHeartbeatAt).toLocaleString("es-AR") : "—"
+            },
+            {
+              header: "Acciones",
+              accessor: (row: any) => (
+                <button
+                  data-testid={`gateway-detail-${row.id}`}
+                  className="text-blue-600 underline text-sm"
+                  onClick={() => navigate(ADMIN_ROUTES.infrastructure.edgeGatewayDetail(row.id))}
+                >
+                  Ver detalle
+                </button>
+              )
+            }
+          ]}
+          rows={gateways}
+          emptyMessage="No hay gateways registrados"
+        />
+      )}
+    </PageCard>
+  );
+}
+
+// ─── Infrastructure: Edge Gateway Detail ──────────────────────────────────────
+
+function EdgeGatewayDetailPage({ apiUrl }: { apiUrl: string }) {
+  const { id } = useParams<{ id: string }>();
+  const [gateway, setGateway] = useState<any>(null);
+  const [cameras, setCameras] = useState<any[]>([]);
+  const [devices, setDevices] = useState<any[]>([]);
+  const [tunnels, setTunnels] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"cameras" | "devices" | "tunnels" | "logs">("cameras");
+  const [heartbeatLog, setHeartbeatLog] = useState<any[]>([]);
+
+  const token = getToken();
+  const tenantId = getTenantId();
+
+  async function load() {
+    if (!id) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const headers = { Authorization: `Bearer ${token}`, "X-Tenant-Id": tenantId ?? "" };
+
+      const [gwRes, camRes, devRes, tunRes] = await Promise.all([
+        fetch(`${apiUrl}/api/v1/edge-gateways/${id}`, { headers }),
+        fetch(`${apiUrl}/api/v1/edge-gateways/${id}/cameras`, { headers }),
+        fetch(`${apiUrl}/api/v1/edge-gateways/${id}/devices`, { headers }),
+        fetch(`${apiUrl}/api/v1/edge-gateways/${id}/tunnels/status`, { headers })
+      ]);
+
+      const [gwData, camData, devData, tunData] = await Promise.all([
+        gwRes.json(),
+        camRes.json(),
+        devRes.json(),
+        tunRes.json()
+      ]);
+
+      setGateway(gwData);
+      setCameras(camData.data ?? []);
+      setDevices(devData.data ?? []);
+      setTunnels(tunData.tunnels ?? []);
+
+      // Build heartbeat log from gateway metrics
+      if (gwData.customMetrics) {
+        setHeartbeatLog([
+          { at: gwData.lastHeartbeatAt, metrics: gwData.customMetrics }
+        ]);
+      }
+    } catch {
+      setError("Error cargando detalle del gateway");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function sendDeviceCommand(deviceId: string, command: Record<string, unknown>) {
+    await fetch(`${apiUrl}/api/v1/edge-gateways/${id}/devices/${deviceId}/command`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "X-Tenant-Id": tenantId ?? "",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ command })
+    });
+    load();
+  }
+
+  useEffect(() => { load(); }, [id, tenantId]);
+
+  if (loading) return <div className="p-6">Cargando...</div>;
+  if (error) return <div className="p-6 text-red-500">{error}</div>;
+  if (!gateway) return <div className="p-6">Gateway no encontrado</div>;
+
+  const metrics = gateway.customMetrics ?? {};
+
+  const tabs: Array<{ key: typeof activeTab; label: string }> = [
+    { key: "cameras", label: `Cámaras (${cameras.length})` },
+    { key: "devices", label: `Dispositivos IoT (${devices.length})` },
+    { key: "tunnels", label: `Túneles RTSP (${tunnels.length})` },
+    { key: "logs", label: "Logs / Heartbeat" }
+  ];
+
+  return (
+    <PageCard
+      title={gateway.deviceName ?? id}
+      subtitle={`UUID: ${gateway.balenaDeviceUUID} · OS: ${gateway.osVersion ?? "—"}`}
+    >
+      {/* Status cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+        <Surface className="p-3 text-center">
+          <div className="text-xs text-gray-500 uppercase">Estado</div>
+          <div data-testid="gw-status" className={`font-bold ${gateway.status === "active" ? "text-green-600" : "text-yellow-600"}`}>
+            {gateway.status}
+          </div>
+        </Surface>
+        <Surface className="p-3 text-center">
+          <div className="text-xs text-gray-500 uppercase">CPU</div>
+          <div data-testid="gw-cpu" className="font-bold">
+            {metrics.cpuUsagePercent != null ? `${metrics.cpuUsagePercent.toFixed(1)}%` : "—"}
+          </div>
+        </Surface>
+        <Surface className="p-3 text-center">
+          <div className="text-xs text-gray-500 uppercase">Memoria</div>
+          <div data-testid="gw-mem" className="font-bold">
+            {metrics.memoryUsedBytes != null && metrics.memoryTotalBytes != null
+              ? `${((metrics.memoryUsedBytes / metrics.memoryTotalBytes) * 100).toFixed(0)}%`
+              : "—"}
+          </div>
+        </Surface>
+        <Surface className="p-3 text-center">
+          <div className="text-xs text-gray-500 uppercase">Temp.</div>
+          <div data-testid="gw-temp" className="font-bold">
+            {metrics.cpuTemperatureCelsius != null ? `${metrics.cpuTemperatureCelsius}°C` : "—"}
+          </div>
+        </Surface>
+      </div>
+
+      {/* Tab nav */}
+      <div className="flex gap-2 mb-4 border-b">
+        {tabs.map((t) => (
+          <button
+            key={t.key}
+            data-testid={`tab-${t.key}`}
+            onClick={() => setActiveTab(t.key)}
+            className={`px-4 py-2 text-sm font-medium ${activeTab === t.key ? "border-b-2 border-blue-600 text-blue-600" : "text-gray-500 hover:text-gray-700"}`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Cameras tab */}
+      {activeTab === "cameras" && (
+        <DataTable
+          data-testid="cameras-table"
+          columns={[
+            { header: "IP", accessor: "ipAddress" },
+            { header: "MAC", accessor: "macAddress" },
+            { header: "Fabricante", accessor: "manufacturer" },
+            { header: "Modelo", accessor: "model" },
+            { header: "Estado", accessor: "status" },
+            {
+              header: "RTSP",
+              accessor: (row: any) =>
+                row.rtspUrl ? (
+                  <span className="text-xs font-mono text-green-700">{row.rtspUrl}</span>
+                ) : (
+                  "—"
+                )
+            }
+          ]}
+          rows={cameras}
+          emptyMessage="No se han descubierto cámaras"
+        />
+      )}
+
+      {/* IoT Devices tab */}
+      {activeTab === "devices" && (
+        <DataTable
+          data-testid="devices-table"
+          columns={[
+            { header: "Tipo", accessor: "deviceType" },
+            { header: "Fabricante", accessor: "manufacturer" },
+            { header: "Modelo", accessor: "model" },
+            { header: "IP", accessor: "ipAddress" },
+            { header: "Estado", accessor: "status" },
+            {
+              header: "Encendido",
+              accessor: (row: any) => {
+                const state = row.currentState ? JSON.parse(row.currentState) : null;
+                if (!state) return "—";
+                return (
+                  <div className="flex items-center gap-2">
+                    <span>{state.on ? "ON" : "OFF"}</span>
+                    <PrimaryButton
+                      data-testid={`toggle-device-${row.id}`}
+                      onClick={() => sendDeviceCommand(row.id, { type: "set_state", on: !state.on })}
+                    >
+                      {state.on ? "Apagar" : "Encender"}
+                    </PrimaryButton>
+                  </div>
+                );
+              }
+            }
+          ]}
+          rows={devices}
+          emptyMessage="No se han descubierto dispositivos IoT"
+        />
+      )}
+
+      {/* Tunnels tab */}
+      {activeTab === "tunnels" && (
+        <DataTable
+          data-testid="tunnels-table"
+          columns={[
+            { header: "Cámara", accessor: "cameraId" },
+            { header: "Puerto", accessor: "rtspPort" },
+            {
+              header: "Estado",
+              accessor: (row: any) => (
+                <Badge data-testid={`tunnel-status-${row.cameraId}`}>
+                  {row.status}
+                </Badge>
+              )
+            }
+          ]}
+          rows={tunnels}
+          emptyMessage="No hay túneles activos"
+        />
+      )}
+
+      {/* Logs tab */}
+      {activeTab === "logs" && (
+        <div data-testid="heartbeat-logs">
+          {heartbeatLog.length === 0 ? (
+            <div className="text-gray-500 p-4">Sin datos de heartbeat</div>
+          ) : (
+            heartbeatLog.map((entry, i) => (
+              <Surface key={i} className="p-3 mb-2 font-mono text-xs">
+                <div className="text-gray-500 mb-1">{entry.at ? new Date(entry.at).toLocaleString("es-AR") : "—"}</div>
+                <pre className="whitespace-pre-wrap">{JSON.stringify(entry.metrics, null, 2)}</pre>
+              </Surface>
+            ))
+          )}
+        </div>
+      )}
     </PageCard>
   );
 }

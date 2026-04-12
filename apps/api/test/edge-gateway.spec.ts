@@ -10,6 +10,10 @@ const prisma = new PrismaClient();
 const TEST_DEVICE_UUID = "12345678-1234-1234-1234-123456789abc";
 const TEST_TENANT_ID = "test-tenant-edge-gateway";
 
+// State
+let gatewayId: string;
+let gatewayApiToken: string;
+
 describe("Edge Gateway API", () => {
   beforeAll(async () => {
     app = await buildApp();
@@ -56,6 +60,9 @@ describe("Edge Gateway API", () => {
       expect(body.apiToken).toBeDefined();
       expect(body.tenantId).toBe(TEST_TENANT_ID);
       expect(body.status).toBe("pending");
+
+      gatewayId = body.id;
+      gatewayApiToken = body.apiToken;
     });
 
     it("should reject duplicate device UUID", async () => {
@@ -88,19 +95,11 @@ describe("Edge Gateway API", () => {
   });
 
   describe("POST /api/v1/edge-gateways/:id/heartbeat", () => {
-    let gatewayId: string;
-
-    beforeAll(async () => {
-      const gateway = await prisma.edgeGateway.findFirst({
-        where: { balenaDeviceUUID: TEST_DEVICE_UUID }
-      });
-      gatewayId = gateway!.id;
-    });
-
     it("should accept heartbeat and activate gateway", async () => {
       const response = await app.inject({
         method: "POST",
         url: `/api/v1/edge-gateways/${gatewayId}/heartbeat`,
+        headers: { authorization: `Bearer ${gatewayApiToken}` },
         payload: {
           timestamp: new Date().toISOString(),
           supervisorStatus: {
@@ -126,10 +125,23 @@ describe("Edge Gateway API", () => {
       expect(body.status).toBe("active");
     });
 
+    it("should return 401 without authorization header", async () => {
+      const response = await app.inject({
+        method: "POST",
+        url: `/api/v1/edge-gateways/${gatewayId}/heartbeat`,
+        payload: {
+          timestamp: new Date().toISOString()
+        }
+      });
+
+      expect(response.statusCode).toBe(401);
+    });
+
     it("should return 404 for non-existent gateway", async () => {
       const response = await app.inject({
         method: "POST",
         url: "/api/v1/edge-gateways/non-existent-id/heartbeat",
+        headers: { authorization: "Bearer some-token" },
         payload: {
           timestamp: new Date().toISOString()
         }
@@ -140,19 +152,11 @@ describe("Edge Gateway API", () => {
   });
 
   describe("POST /api/v1/edge-gateways/:id/cameras/discover", () => {
-    let gatewayId: string;
-
-    beforeAll(async () => {
-      const gateway = await prisma.edgeGateway.findFirst({
-        where: { balenaDeviceUUID: TEST_DEVICE_UUID }
-      });
-      gatewayId = gateway!.id;
-    });
-
     it("should report discovered cameras", async () => {
       const response = await app.inject({
         method: "POST",
         url: `/api/v1/edge-gateways/${gatewayId}/cameras/discover`,
+        headers: { authorization: `Bearer ${gatewayApiToken}` },
         payload: {
           cameras: [
             {
@@ -186,6 +190,7 @@ describe("Edge Gateway API", () => {
       const response = await app.inject({
         method: "POST",
         url: `/api/v1/edge-gateways/${gatewayId}/cameras/discover`,
+        headers: { authorization: `Bearer ${gatewayApiToken}` },
         payload: {
           cameras: [
             {
@@ -206,15 +211,6 @@ describe("Edge Gateway API", () => {
   });
 
   describe("GET /api/v1/edge-gateways/:id/cameras", () => {
-    let gatewayId: string;
-
-    beforeAll(async () => {
-      const gateway = await prisma.edgeGateway.findFirst({
-        where: { balenaDeviceUUID: TEST_DEVICE_UUID }
-      });
-      gatewayId = gateway!.id;
-    });
-
     it("should list discovered cameras", async () => {
       const response = await app.inject({
         method: "GET",

@@ -44,3 +44,13 @@ logging:
 camera_defaults:
   rtsp_transport: tcp # tcp, udp, udp_multicast
   stream_path: /stream
+
+# Smart device discovery
+smart_devices:
+  enabled: true
+  mdns_browse_types:
+    - "_nearhome-light._tcp.local."
+    - "_hue._tcp.local."
+    - "_http._tcp.local."
+  mdns_browse_timeout: 5 # seconds to browse for mDNS services
+  http_probe_timeout: 3 # seconds for HTTP info probe

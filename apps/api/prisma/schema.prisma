@@ -44,14 +44,33 @@ model Tenant {
   networkSpaces           TenantNetworkSpace[]
   vpnRoutePolicies        TenantVpnRoutePolicy[]
   vpnPeers                TenantVpnPeer[]
+  fleets                  Fleet[]
   edgeGateways            EdgeGateway[]
   discoveredCameras       DiscoveredCamera[]
+  discoveredDevices       DiscoveredDevice[]
+}
+
+model Fleet {
+  id          String        @id @default(cuid())
+  tenantId    String
+  name        String
+  description String?
+  deviceType  String        @default("raspberrypi4-64")
+  status      String        @default("active")
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  tenant      Tenant        @relation(fields: [tenantId], references: [id])
+  gateways    EdgeGateway[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, status])
 }
 
 model EdgeGateway {
   id                  String            @id @default(cuid())
   tenantId            String
-  balenaDeviceUUID   String            @unique
+  fleetId             String?
+  balenaDeviceUUID    String            @unique
   balenaAppId         String?
   balenaFleetId       String?
   deviceName          String
@@ -59,16 +78,39 @@ model EdgeGateway {
   supervisorVersion   String?
   status              String            @default("pending")
   apiToken            String?
+  apiTokenHash        String?
   networkConfig       String?
   lastHeartbeatAt     DateTime?
   latestMetrics       String?
   registeredAt        DateTime          @default(now())
   activatedAt         DateTime?
+  pairedAt            DateTime?
   tenant              Tenant            @relation(fields: [tenantId], references: [id])
+  fleet               Fleet?            @relation(fields: [fleetId], references: [id])
   discoveredCameras   DiscoveredCamera[]
+  discoveredDevices   DiscoveredDevice[]
+  pairingTokens       EdgeGatewayPairingToken[]
 
   @@index([tenantId, status])
   @@index([balenaDeviceUUID])
+  @@index([fleetId])
+  @@index([apiTokenHash])
+}
+
+model EdgeGatewayPairingToken {
+  id            String      @id @default(cuid())
+  edgeGatewayId String
+  token         String      @unique
+  qrPayload     String
+  status        String      @default("pending")
+  expiresAt     DateTime
+  claimedByUserId String?
+  claimedAt     DateTime?
+  createdAt     DateTime    @default(now())
+  edgeGateway   EdgeGateway @relation(fields: [edgeGatewayId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([edgeGatewayId, status])
 }
 
 model DiscoveredCamera {
@@ -98,6 +140,33 @@ model DiscoveredCamera {
   @@index([tenantId, status])
 }
 
+model DiscoveredDevice {
+  id              String      @id @default(cuid())
+  edgeGatewayId   String
+  tenantId        String
+  deviceType      String
+  macAddress      String      @unique
+  ipAddress       String
+  hostname        String?
+  manufacturer    String?
+  model           String?
+  firmwareVersion String?
+  protocol        String?
+  httpPort        Int?
+  mqttTopic       String?
+  capabilities    String?
+  currentState    String?
+  status          String      @default("discovered")
+  lastSeenAt      DateTime    @default(now())
+  createdAt       DateTime    @default(now())
+  edgeGateway     EdgeGateway @relation(fields: [edgeGatewayId], references: [id], onDelete: Cascade)
+  tenant          Tenant      @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, edgeGatewayId])
+  @@index([tenantId, deviceType])
+  @@index([tenantId, status])
+}
+
 model TenantVpn {
   id                    String                @id @default(cuid())
   tenantId              String
@@ -122,15 +191,16 @@ model TenantVpn {
 }
 
 model TenantNetworkSpace {
-  id         String    @id @default(cuid())
-  tenantId   String
-  vpnId      String
-  spaceType  String
-  cidr       String
-  gatewayIp  String?
-  dnsServers String?
-  isPrimary  Boolean   @default(false)
-  status     String    @default("planned")
+  id          String    @id @default(cuid())
+  tenantId    String
+  vpnId       String
+  spaceType   String
+  cidr        String
+  description String?
+  gatewayIp   String?
+  dnsServers  String?
+  isPrimary   Boolean   @default(false)
+  status      String    @default("planned")
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
   tenant     Tenant    @relation(fields: [tenantId], references: [id])
@@ -163,7 +233,7 @@ model TenantVpnPeer {
   vpnId           String
   peerId          String
   peerRole        String
-  publicKeyRef    String
+  publicKeyRef    String?
   allowedCidrs    String
   endpoint        String
   status          String    @default("pending")
