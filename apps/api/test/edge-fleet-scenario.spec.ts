@@ -69,6 +69,17 @@ async function ensureMembership(userId: string, tenantId: string, role: string) 
 beforeAll(async () => {
   app = await buildApp();
 
+  // Pre-clean any leftover state from failed prior runs
+  const knownUUIDs = [UUID_ALPHA_GW, UUID_BETA_GW];
+  const existingGws = await prisma.edgeGateway.findMany({ where: { balenaDeviceUUID: { in: knownUUIDs } }, select: { id: true } });
+  if (existingGws.length > 0) {
+    const gwIds = existingGws.map((g) => g.id);
+    await prisma.edgeGatewayPairingToken.deleteMany({ where: { edgeGatewayId: { in: gwIds } } });
+    await prisma.discoveredDevice.deleteMany({ where: { edgeGatewayId: { in: gwIds } } });
+    await prisma.discoveredCamera.deleteMany({ where: { edgeGatewayId: { in: gwIds } } });
+    await prisma.edgeGateway.deleteMany({ where: { id: { in: gwIds } } });
+  }
+
   // Create tenants
   for (const id of [T_ALPHA, T_BETA]) {
     await prisma.tenant.upsert({
@@ -93,17 +104,30 @@ beforeAll(async () => {
 
 afterAll(async () => {
   const tenantIds = [T_ALPHA, T_BETA];
-  await prisma.edgeGatewayPairingToken.deleteMany({ where: { edgeGateway: { tenantId: { in: tenantIds } } } });
+  const knownUUIDs = [UUID_ALPHA_GW, UUID_BETA_GW];
+  const knownGws = await prisma.edgeGateway.findMany({ where: { balenaDeviceUUID: { in: knownUUIDs } }, select: { id: true } });
+  await prisma.edgeGatewayPairingToken.deleteMany({ where: { edgeGatewayId: { in: knownGws.map((g) => g.id) } } });
   await prisma.discoveredDevice.deleteMany({ where: { tenantId: { in: tenantIds } } });
   await prisma.discoveredCamera.deleteMany({ where: { tenantId: { in: tenantIds } } });
-  await prisma.edgeGateway.deleteMany({ where: { tenantId: { in: tenantIds } } });
+  await prisma.edgeGateway.deleteMany({ where: { balenaDeviceUUID: { in: knownUUIDs } } });
   await prisma.fleet.deleteMany({ where: { tenantId: { in: tenantIds } } });
   await prisma.tenantVpnPeer.deleteMany({ where: { tenantId: { in: tenantIds } } });
   await prisma.tenantVpnRoutePolicy.deleteMany({ where: { tenantId: { in: tenantIds } } });
   await prisma.tenantNetworkSpace.deleteMany({ where: { tenantId: { in: tenantIds } } });
   await prisma.tenantVpn.deleteMany({ where: { tenantId: { in: tenantIds } } });
-  await prisma.membership.deleteMany({ where: { tenantId: { in: tenantIds } } });
-  await prisma.tenant.deleteMany({ where: { id: { in: tenantIds } } });
+  try {
+    await prisma.streamSessionTransition.deleteMany({ where: { tenantId: { in: tenantIds } } });
+    await prisma.streamSession.deleteMany({ where: { tenantId: { in: tenantIds } } });
+    await prisma.cameraAssignment.deleteMany({ where: { tenantId: { in: tenantIds } } });
+    await prisma.cameraHealthSnapshot.deleteMany({ where: { camera: { tenantId: { in: tenantIds } } } });
+    await prisma.cameraLifecycleLog.deleteMany({ where: { tenantId: { in: tenantIds } } });
+    await prisma.cameraProfile.deleteMany({ where: { tenantId: { in: tenantIds } } });
+    await prisma.camera.deleteMany({ where: { tenantId: { in: tenantIds } } });
+    await prisma.membership.deleteMany({ where: { tenantId: { in: tenantIds } } });
+    await prisma.tenant.deleteMany({ where: { id: { in: tenantIds } } });
+  } catch {
+    // Best-effort cleanup; next run's beforeAll pre-cleans by UUID
+  }
   await prisma.$disconnect();
 });
 

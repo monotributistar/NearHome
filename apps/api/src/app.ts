@@ -4064,6 +4064,9 @@ export async function buildApp() {
     if (error instanceof ApiDomainError) {
       statusCode = error.statusCode;
     }
+    if (error instanceof NotFoundError) {
+      statusCode = 404;
+    }
 
     const code =
       error instanceof z.ZodError
@@ -9164,7 +9167,7 @@ export async function buildApp() {
         deviceName: body.deviceName,
         osVersion: body.osVersion,
         supervisorVersion: body.supervisorVersion,
-        tenantId: body.tenantId ?? "pending", // Default to pending if not provided
+        tenantId: body.tenantId ?? null, // null = unassigned (pending)
         fleetId: body.fleetId,
         status: "pending",
         apiToken,
@@ -9175,7 +9178,7 @@ export async function buildApp() {
     return reply.status(201).send({
       id: edgeGateway.id,
       apiToken: edgeGateway.apiToken,
-      tenantId: edgeGateway.tenantId,
+      tenantId: edgeGateway.tenantId ?? "pending",
       status: edgeGateway.status
     });
   });
@@ -9248,8 +9251,8 @@ export async function buildApp() {
                 lastFailure: z.string().optional()
               })
               .optional(),
-            discoveredCamerasCount: z.number(),
-            registeredCamerasCount: z.number()
+            discoveredCamerasCount: z.number().optional(),
+            registeredCamerasCount: z.number().optional()
           })
           .optional(),
         version: z.string().optional()
@@ -9313,21 +9316,35 @@ export async function buildApp() {
         where: { macAddress: camera.macAddress }
       });
 
-      if (existing && existing.status !== "discovered") {
-        alreadyRegistered.push({
-          ipAddress: camera.ipAddress,
-          macAddress: camera.macAddress,
-          cameraId: existing.id
-        });
+      if (existing) {
+        if (existing.status !== "discovered") {
+          // Already registered/confirmed — record as already-known
+          alreadyRegistered.push({
+            ipAddress: camera.ipAddress,
+            macAddress: camera.macAddress,
+            cameraId: existing.id
+          });
+        } else {
+          // Known but still in discovered state — update silently (not a new discovery)
+          await prisma.discoveredCamera.update({
+            where: { macAddress: camera.macAddress },
+            data: {
+              ipAddress: camera.ipAddress,
+              manufacturer: camera.onvifInfo?.manufacturer,
+              model: camera.onvifInfo?.model,
+              firmwareVersion: camera.onvifInfo?.firmware,
+              lastSeenAt: new Date(body.discoveryTimestamp)
+            }
+          });
+        }
         continue;
       }
 
-      // Create or update discovered camera
-      const discoveredCamera = await prisma.discoveredCamera.upsert({
-        where: { macAddress: camera.macAddress },
-        create: {
+      // New camera — create and report
+      await prisma.discoveredCamera.create({
+        data: {
           edgeGatewayId: id,
-          tenantId: edgeGateway.tenantId,
+          tenantId: edgeGateway.tenantId!,
           macAddress: camera.macAddress,
           ipAddress: camera.ipAddress,
           hostname: camera.rtspUrl ? new URL(camera.rtspUrl).hostname : undefined,
@@ -9338,14 +9355,6 @@ export async function buildApp() {
           onvifPort: camera.ports?.find((p) => p === 80 || p === 8000),
           status: "discovered",
           lastSeenAt: new Date(body.discoveryTimestamp)
-        },
-        update: {
-          ipAddress: camera.ipAddress,
-          manufacturer: camera.onvifInfo?.manufacturer,
-          model: camera.onvifInfo?.model,
-          firmwareVersion: camera.onvifInfo?.firmware,
-          lastSeenAt: new Date(body.discoveryTimestamp),
-          status: "discovered"
         }
       });
 
@@ -9764,8 +9773,8 @@ export async function buildApp() {
       const gateway = await prisma.edgeGateway.findUnique({ where: { id } });
       if (!gateway) throw new NotFoundError("Edge gateway not found");
 
-      // Only allow assignment if gateway is currently "pending" tenant
-      if (gateway.tenantId !== "pending" && gateway.tenantId !== body.tenantId) {
+      // Only allow assignment if gateway is currently unassigned (null) or already belongs to this tenant
+      if (gateway.tenantId !== null && gateway.tenantId !== body.tenantId) {
         return reply.status(403).send({
           error: "ALREADY_ASSIGNED",
           message: "Gateway is already assigned to another tenant"
@@ -10070,38 +10079,7 @@ export async function buildApp() {
         configured.push({ cameraId: cam.cameraId, localPort: cam.localPort, status: "active" });
       }
 
-      return { configured };
-    }
-  );
-
-  // GET /api/v1/edge-gateways/:id/tunnels/status - Get tunnel status
-  app.get(
-    "/api/v1/edge-gateways/:id/tunnels/status",
-    { preHandler: tenantScopedPreHandler },
-    async (request: FastifyRequest) => {
-      const ctx = getTenantContext(request);
-      const { id } = z.object({ id: z.string() }).parse(request.params);
-
-      const edgeGateway = await prisma.edgeGateway.findFirst({
-        where: { id, tenantId: ctx.tenantId }
-      });
-
-      if (!edgeGateway) {
-        throw new NotFoundError("Edge gateway not found");
-      }
-
-      const cameras = await prisma.discoveredCamera.findMany({
-        where: { edgeGatewayId: id, tenantId: ctx.tenantId, status: "registered" }
-      });
-
-      return {
-        tunnels: cameras.map((c) => ({
-          cameraId: c.id,
-          localPort: c.tunnelPort,
-          status: c.lastSeenAt && Date.now() - new Date(c.lastSeenAt).getTime() < 300000 ? "active" : "disconnected",
-          lastHealthCheck: c.lastSeenAt?.toISOString()
-        }))
-      };
+      return { tunnels: configured, configured };
     }
   );
 

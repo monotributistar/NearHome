@@ -68,7 +68,7 @@ model Fleet {
 
 model EdgeGateway {
   id                  String            @id @default(cuid())
-  tenantId            String
+  tenantId            String?
   fleetId             String?
   balenaDeviceUUID    String            @unique
   balenaAppId         String?
@@ -85,8 +85,8 @@ model EdgeGateway {
   registeredAt        DateTime          @default(now())
   activatedAt         DateTime?
   pairedAt            DateTime?
-  tenant              Tenant            @relation(fields: [tenantId], references: [id])
-  fleet               Fleet?            @relation(fields: [fleetId], references: [id])
+  tenant              Tenant?           @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  fleet               Fleet?            @relation(fields: [fleetId], references: [id], onDelete: SetNull)
   discoveredCameras   DiscoveredCamera[]
   discoveredDevices   DiscoveredDevice[]
   pairingTokens       EdgeGatewayPairingToken[]

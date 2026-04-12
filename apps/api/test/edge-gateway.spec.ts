@@ -13,10 +13,21 @@ const TEST_TENANT_ID = "test-tenant-edge-gateway";
 // State
 let gatewayId: string;
 let gatewayApiToken: string;
+let adminToken: string;
+
+async function login(email: string, password = "demo1234"): Promise<string> {
+  const res = await app.inject({
+    method: "POST",
+    url: "/auth/login",
+    payload: { email, password }
+  });
+  return res.json().accessToken;
+}
 
 describe("Edge Gateway API", () => {
   beforeAll(async () => {
     app = await buildApp();
+    await app.ready();
 
     // Create test tenant
     await prisma.tenant.upsert({
@@ -24,6 +35,9 @@ describe("Edge Gateway API", () => {
       update: {},
       create: { id: TEST_TENANT_ID, name: "Test Tenant for Edge Gateway" }
     });
+
+    // Login as superuser admin
+    adminToken = await login("admin@nearhome.dev");
   });
 
   afterAll(async () => {
@@ -35,6 +49,7 @@ describe("Edge Gateway API", () => {
       where: { tenantId: TEST_TENANT_ID }
     });
     await prisma.tenant.delete({ where: { id: TEST_TENANT_ID } });
+    await app.close();
     await prisma.$disconnect();
   });
 
@@ -205,7 +220,7 @@ describe("Edge Gateway API", () => {
 
       expect(response.statusCode).toBe(200);
       const body = response.json();
-      // Should not create duplicate
+      // Should not count re-discovered camera as new
       expect(body.discovered).toHaveLength(0);
     });
   });
@@ -214,7 +229,11 @@ describe("Edge Gateway API", () => {
     it("should list discovered cameras", async () => {
       const response = await app.inject({
         method: "GET",
-        url: `/api/v1/edge-gateways/${gatewayId}/cameras`
+        url: `/api/v1/edge-gateways/${gatewayId}/cameras`,
+        headers: {
+          authorization: `Bearer ${adminToken}`,
+          "x-tenant-id": TEST_TENANT_ID
+        }
       });
 
       expect(response.statusCode).toBe(200);
@@ -225,7 +244,11 @@ describe("Edge Gateway API", () => {
     it("should filter cameras by status", async () => {
       const response = await app.inject({
         method: "GET",
-        url: `/api/v1/edge-gateways/${gatewayId}/cameras?status=discovered`
+        url: `/api/v1/edge-gateways/${gatewayId}/cameras?status=discovered`,
+        headers: {
+          authorization: `Bearer ${adminToken}`,
+          "x-tenant-id": TEST_TENANT_ID
+        }
       });
 
       expect(response.statusCode).toBe(200);
