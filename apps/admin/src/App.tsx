@@ -6666,7 +6666,7 @@ function EdgeGatewayDetailPage({ apiUrl }: { apiUrl: string }) {
     }
   }
 
-  async function sendDeviceCommand(deviceId: string, command: Record<string, unknown>) {
+  async function sendDeviceCommand(deviceId: string, command: string, payload?: Record<string, unknown>) {
     await fetch(`${apiUrl}/api/v1/edge-gateways/${id}/devices/${deviceId}/command`, {
       method: "POST",
       headers: {
@@ -6674,7 +6674,7 @@ function EdgeGatewayDetailPage({ apiUrl }: { apiUrl: string }) {
         "X-Tenant-Id": tenantId ?? "",
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ command })
+      body: JSON.stringify({ command, payload })
     });
     load();
   }
@@ -6788,7 +6788,7 @@ function EdgeGatewayDetailPage({ apiUrl }: { apiUrl: string }) {
                     <span>{state.on ? "ON" : "OFF"}</span>
                     <PrimaryButton
                       data-testid={`toggle-device-${row.id}`}
-                      onClick={() => sendDeviceCommand(row.id, { type: "set_state", on: !state.on })}
+                      onClick={() => sendDeviceCommand(row.id, "set_state", { on: !state.on })}
                     >
                       {state.on ? "Apagar" : "Encender"}
                     </PrimaryButton>

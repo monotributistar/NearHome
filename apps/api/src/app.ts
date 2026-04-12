@@ -9286,6 +9286,13 @@ export async function buildApp() {
       return reply.status(404).send({ error: "NOT_FOUND", message: "Edge gateway not found" });
     }
 
+    if (!edgeGateway.tenantId) {
+      return reply.status(409).send({
+        error: "GATEWAY_UNASSIGNED",
+        message: "Gateway must be assigned to a tenant before reporting camera discoveries"
+      });
+    }
+
     const body = z
       .object({
         cameras: z.array(
@@ -9344,7 +9351,7 @@ export async function buildApp() {
       await prisma.discoveredCamera.create({
         data: {
           edgeGatewayId: id,
-          tenantId: edgeGateway.tenantId!,
+          tenantId: edgeGateway.tenantId,
           macAddress: camera.macAddress,
           ipAddress: camera.ipAddress,
           hostname: camera.rtspUrl ? new URL(camera.rtspUrl).hostname : undefined,
@@ -9772,6 +9779,14 @@ export async function buildApp() {
 
       const gateway = await prisma.edgeGateway.findUnique({ where: { id } });
       if (!gateway) throw new NotFoundError("Edge gateway not found");
+
+      // tenant_admin can only assign to their own tenant
+      if (ctx.role === "tenant_admin" && body.tenantId !== ctx.tenantId) {
+        return reply.status(403).send({
+          error: "FORBIDDEN",
+          message: "tenant_admin can only assign gateways to their own tenant"
+        });
+      }
 
       // Only allow assignment if gateway is currently unassigned (null) or already belongs to this tenant
       if (gateway.tenantId !== null && gateway.tenantId !== body.tenantId) {
