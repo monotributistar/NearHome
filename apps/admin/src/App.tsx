@@ -954,7 +954,7 @@ function Layout({ apiUrl }: { apiUrl: string }) {
         <Route path={ADMIN_ROUTES.resources.cameras} element={<CamerasPage />} />
         <Route path="/resources/cameras/:id" element={<CameraShow />} />
         <Route path="/resources/faces/:id" element={<FaceIdentityShow />} />
-        <Route path={ADMIN_ROUTES.resources.notifications} element={<NotificationsPage apiUrl={apiUrl} />} />
+        <Route path={ADMIN_ROUTES.resources.notifications} element={<NotificationsPage />} />
 
         <Route path={ADMIN_ROUTES.identity.tenants} element={<TenantsPage />} />
         <Route path={ADMIN_ROUTES.identity.users} element={<UsersPage />} />
@@ -5428,7 +5428,7 @@ function CameraShow() {
   );
 }
 
-function NotificationsPage({ apiUrl }: { apiUrl: string }) {
+function NotificationsPage() {
   const canCreate = useCan({ resource: "notifications", action: "create" }).data?.can;
   const canEdit = useCan({ resource: "notifications", action: "edit" }).data?.can;
   const canDelete = useCan({ resource: "notifications", action: "delete" }).data?.can;
