@@ -1,0 +1,40 @@
+# Test-environment Dockerfile for Discovery Agent
+# Builds on any platform (amd64/arm64) without balenalib base image
+
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install system dependencies for network scanning
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    arp-scan \
+    iproute2 \
+    iputils-ping \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies (test-env subset -- skip dbus-python which needs system libs)
+COPY requirements.txt /tmp/requirements.txt
+RUN grep -v 'dbus-python' /tmp/requirements.txt > /tmp/requirements-test.txt && \
+    echo "zeroconf>=0.131.0" >> /tmp/requirements-test.txt && \
+    echo "paho-mqtt>=2.0.0" >> /tmp/requirements-test.txt && \
+    pip install --no-cache-dir -r /tmp/requirements-test.txt && \
+    rm /tmp/requirements.txt /tmp/requirements-test.txt
+
+# Copy application code
+COPY src/ ./src/
+COPY config.yaml .
+
+# Run as root for arp-scan (needs raw sockets)
+# In test env this is fine; production uses balena's privileged mode
+
+ENV DISCOVERY_MODE=docker-bridge
+ENV SCAN_SUBNET=172.30.0.0/24
+ENV NETWORK_INTERFACE=eth0
+ENV DISCOVERY_INTERVAL=10
+ENV HEARTBEAT_INTERVAL=30
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=10s \
+    CMD python3 -c "print('ok')" || exit 1
+
+CMD ["python", "-u", "src/discovery_agent.py"]

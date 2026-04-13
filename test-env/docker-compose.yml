@@ -1,0 +1,123 @@
+name: nearhome-test-env
+
+services:
+  # ─── MQTT Broker (shared infrastructure for smart bulbs) ───
+  mosquitto:
+    image: eclipse-mosquitto:2
+    command: mosquitto -c /dev/null -p 1883 -v
+    networks:
+      iot_lan:
+        ipv4_address: 172.30.0.2
+
+  # ─── Mock IP Cameras ───
+  mock-camera-1:
+    build: ./mock-camera
+    environment:
+      CAMERA_ID: "01"
+      CAMERA_MANUFACTURER: Hikvision
+      CAMERA_MODEL: DS-2CD2043G2-I
+      CAMERA_SERIAL: MOCK-HIK-001
+      CAMERA_FIRMWARE: "5.7.20"
+      STREAM_RESOLUTION: 640x480
+      STREAM_FPS: "1"
+    mac_address: "02:42:ac:1e:00:0a"
+    networks:
+      iot_lan:
+        ipv4_address: 172.30.0.10
+
+  mock-camera-2:
+    build: ./mock-camera
+    environment:
+      CAMERA_ID: "02"
+      CAMERA_MANUFACTURER: Dahua
+      CAMERA_MODEL: IPC-HDW5442T-ZE
+      CAMERA_SERIAL: MOCK-DH-002
+      CAMERA_FIRMWARE: "2.830.0"
+      STREAM_RESOLUTION: 640x480
+      STREAM_FPS: "1"
+    mac_address: "02:42:ac:1e:00:0b"
+    networks:
+      iot_lan:
+        ipv4_address: 172.30.0.11
+
+  mock-camera-3:
+    build: ./mock-camera
+    environment:
+      CAMERA_ID: "03"
+      CAMERA_MANUFACTURER: Reolink
+      CAMERA_MODEL: RLC-810A
+      CAMERA_SERIAL: MOCK-RL-003
+      CAMERA_FIRMWARE: "3.1.0"
+      STREAM_RESOLUTION: 640x480
+      STREAM_FPS: "1"
+    mac_address: "02:42:ac:1e:00:0c"
+    networks:
+      iot_lan:
+        ipv4_address: 172.30.0.12
+
+  # ─── Mock Smart Lightbulbs ───
+  mock-bulb-1:
+    build: ./mock-bulb
+    environment:
+      BULB_ID: "01"
+      BULB_NAME: Living Room Light
+      BULB_MANUFACTURER: NearHome
+      BULB_MODEL: NHB-100
+      MQTT_BROKER: mosquitto
+    mac_address: "02:42:ac:1e:01:01"
+    depends_on:
+      - mosquitto
+    networks:
+      iot_lan:
+        ipv4_address: 172.30.0.20
+
+  mock-bulb-2:
+    build: ./mock-bulb
+    environment:
+      BULB_ID: "02"
+      BULB_NAME: Bedroom Light
+      BULB_MANUFACTURER: NearHome
+      BULB_MODEL: NHB-200-RGB
+      MQTT_BROKER: mosquitto
+    mac_address: "02:42:ac:1e:01:02"
+    depends_on:
+      - mosquitto
+    networks:
+      iot_lan:
+        ipv4_address: 172.30.0.21
+
+  # ─── Discovery Agent (test mode) ───
+  discovery-agent:
+    build:
+      context: ../edge-gateway/discovery-agent
+      dockerfile: Dockerfile.test
+    environment:
+      BALENA_DEVICE_UUID: test-gateway-00000001
+      EDGE_GATEWAY_API_TOKEN: ${TEST_EDGE_TOKEN:-}
+      API_BASE_URL: ${API_BASE_URL:-http://api:3001}
+      DISCOVERY_MODE: docker-bridge
+      SCAN_SUBNET: 172.30.0.0/24
+      NETWORK_INTERFACE: eth0
+      DISCOVERY_INTERVAL: "10"
+      HEARTBEAT_INTERVAL: "30"
+      MQTT_BROKER: mosquitto
+    cap_add:
+      - NET_RAW
+    depends_on:
+      - mock-camera-1
+      - mock-camera-2
+      - mock-camera-3
+      - mock-bulb-1
+      - mock-bulb-2
+      - mosquitto
+    networks:
+      iot_lan:
+        ipv4_address: 172.30.0.254
+
+networks:
+  iot_lan:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+          gateway: 172.30.0.1

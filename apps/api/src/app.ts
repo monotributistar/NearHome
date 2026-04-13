@@ -207,7 +207,6 @@ const TenantVpnStatusSchema = z.enum([
   "revoked",
   "failed"
 ]);
-const TenantNetworkSpaceStatusSchema = z.enum(["planned", "allocated", "announced", "active", "retired"]);
 const TenantNetworkSpaceTypeSchema = z.enum(["camera_lan", "edge_nodes", "operations", "reserved"]);
 
 const RESERVED_IPV4_CIDRS = ["127.0.0.0/8", "169.254.0.0/16", "224.0.0.0/4"]
@@ -455,15 +454,6 @@ type BridgeNodeSnapshot = {
   contractVersion: string;
 };
 
-const CameraLifecycleStatusSchema = z.enum([
-  "draft",
-  "provisioning",
-  "ready",
-  "degraded",
-  "offline",
-  "error",
-  "retired"
-]);
 const CameraConnectivitySchema = z.enum(["online", "degraded", "offline"]);
 const StreamSessionStatusSchema = z.enum(["requested", "issued", "active", "ended", "expired"]);
 const DetectionJobStatusSchema = z.enum(["queued", "running", "succeeded", "failed", "canceled"]);
@@ -821,7 +811,9 @@ function extractPortFromEndpoint(endpoint: string, fallbackPort: number) {
   try {
     const url = new URL(endpoint);
     if (url.port) return Number(url.port);
-  } catch {}
+  } catch {
+    // ignore parse errors, use fallback
+  }
   return fallbackPort;
 }
 
@@ -4064,6 +4056,9 @@ export async function buildApp() {
     if (error instanceof ApiDomainError) {
       statusCode = error.statusCode;
     }
+    if (error instanceof NotFoundError) {
+      statusCode = 404;
+    }
 
     const code =
       error instanceof z.ZodError
@@ -4172,6 +4167,41 @@ export async function buildApp() {
     if (!tenantHeader) {
       throw new Error("MISSING_TENANT");
     }
+  };
+
+  // Device API token validation middleware
+  // Validates that the Bearer token matches the edge gateway's apiToken
+  const deviceAuthPreHandler = async (request: FastifyRequest, reply: FastifyReply) => {
+    const authHeader = request.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return reply.status(401).send({ error: "UNAUTHORIZED", message: "Missing or invalid Authorization header" });
+    }
+
+    const token = authHeader.slice(7);
+    const { id } = z.object({ id: z.string() }).parse(request.params);
+
+    const gateway = await prisma.edgeGateway.findUnique({ where: { id } });
+    if (!gateway) {
+      return reply.status(404).send({ error: "NOT_FOUND", message: "Edge gateway not found" });
+    }
+
+    if (!gateway.apiToken || gateway.apiToken !== token) {
+      return reply.status(403).send({ error: "FORBIDDEN", message: "Invalid device API token" });
+    }
+
+    // Attach gateway context to request for downstream use
+    (request as any).edgeGateway = gateway;
+  };
+
+  // Role-checking middleware for tenant-scoped admin endpoints
+  const requireRole = (...roles: string[]) => {
+    return async (request: FastifyRequest, reply: FastifyReply) => {
+      await tenantScopedPreHandler(request);
+      const ctx = getTenantContext(request);
+      if (ctx.role && !roles.includes(ctx.role)) {
+        return reply.status(403).send({ error: "FORBIDDEN", message: `Requires one of: ${roles.join(", ")}` });
+      }
+    };
   };
 
   const checkLoginRateLimit = (request: FastifyRequest) => {
@@ -8138,7 +8168,7 @@ export async function buildApp() {
     return `${lines.join("\n")}\n`;
   });
 
-  app.get("/ops/deployment/status", { preHandler: authPreHandler }, async (_request: FastifyRequest) => {
+  app.get("/ops/deployment/status", { preHandler: authPreHandler }, async () => {
     const checks: Array<Promise<DeploymentProbeResult>> = [];
     if (streamGatewayUrl) checks.push(probeService("stream-gateway", `${streamGatewayUrl}/health`));
     if (eventGatewayUrl) checks.push(probeService("event-gateway", `${eventGatewayUrl}/health`));
@@ -8981,6 +9011,105 @@ export async function buildApp() {
   });
 
   // ============================================
+  // Fleet Management API Routes
+  // ============================================
+
+  // POST /api/v1/fleets - Create a fleet
+  app.post(
+    "/api/v1/fleets",
+    { preHandler: requireRole("tenant_admin", "super_admin") },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const ctx = getTenantContext(request);
+      const body = z
+        .object({
+          name: z.string().min(1).max(100),
+          description: z.string().optional(),
+          deviceType: z.string().default("raspberrypi4-64")
+        })
+        .parse(request.body);
+
+      // Check for duplicate name within tenant
+      const existing = await prisma.fleet.findFirst({
+        where: { tenantId: ctx.tenantId, name: body.name }
+      });
+      if (existing) {
+        return reply.status(409).send({ error: "DUPLICATE_FLEET", message: "Fleet with this name already exists for this tenant" });
+      }
+
+      const fleet = await prisma.fleet.create({
+        data: {
+          tenantId: ctx.tenantId,
+          name: body.name,
+          description: body.description,
+          deviceType: body.deviceType,
+          status: "active"
+        }
+      });
+
+      return reply.status(201).send(fleet);
+    }
+  );
+
+  // GET /api/v1/fleets - List fleets
+  app.get(
+    "/api/v1/fleets",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest) => {
+      const ctx = getTenantContext(request);
+      const fleets = await prisma.fleet.findMany({
+        where: { tenantId: ctx.tenantId },
+        include: { _count: { select: { gateways: true } } },
+        orderBy: { createdAt: "desc" }
+      });
+      return { data: fleets };
+    }
+  );
+
+  // GET /api/v1/fleets/:id - Get fleet details
+  app.get(
+    "/api/v1/fleets/:id",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest) => {
+      const ctx = getTenantContext(request);
+      const { id } = z.object({ id: z.string() }).parse(request.params);
+      const fleet = await prisma.fleet.findFirst({
+        where: { id, tenantId: ctx.tenantId },
+        include: { gateways: true }
+      });
+      if (!fleet) throw new NotFoundError("Fleet not found");
+      return fleet;
+    }
+  );
+
+  // POST /api/v1/fleets/:id/gateways - Add gateway to fleet
+  app.post(
+    "/api/v1/fleets/:id/gateways",
+    { preHandler: requireRole("tenant_admin", "super_admin") },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const ctx = getTenantContext(request);
+      const { id } = z.object({ id: z.string() }).parse(request.params);
+      const body = z.object({ edgeGatewayId: z.string() }).parse(request.body);
+
+      const fleet = await prisma.fleet.findFirst({ where: { id, tenantId: ctx.tenantId } });
+      if (!fleet) throw new NotFoundError("Fleet not found");
+
+      const gateway = await prisma.edgeGateway.findFirst({
+        where: { id: body.edgeGatewayId, tenantId: ctx.tenantId }
+      });
+      if (!gateway) {
+        return reply.status(400).send({ error: "INVALID_GATEWAY", message: "Gateway not found or belongs to different tenant" });
+      }
+
+      const updated = await prisma.edgeGateway.update({
+        where: { id: body.edgeGatewayId },
+        data: { fleetId: id }
+      });
+
+      return { edgeGatewayId: updated.id, fleetId: id };
+    }
+  );
+
+  // ============================================
   // Edge Gateway API Routes
   // ============================================
 
@@ -8995,6 +9124,7 @@ export async function buildApp() {
         osVersion: z.string().optional(),
         supervisorVersion: z.string().optional(),
         tenantId: z.string().optional(), // Optional - can be assigned later
+        fleetId: z.string().optional(),
         networkConfig: z
           .object({
             type: z.enum(["ethernet", "wifi"]),
@@ -9029,7 +9159,8 @@ export async function buildApp() {
         deviceName: body.deviceName,
         osVersion: body.osVersion,
         supervisorVersion: body.supervisorVersion,
-        tenantId: body.tenantId ?? "pending", // Default to pending if not provided
+        tenantId: body.tenantId ?? null, // null = unassigned (pending)
+        fleetId: body.fleetId,
         status: "pending",
         apiToken,
         networkConfig: body.networkConfig ? JSON.stringify(body.networkConfig) : null
@@ -9039,7 +9170,7 @@ export async function buildApp() {
     return reply.status(201).send({
       id: edgeGateway.id,
       apiToken: edgeGateway.apiToken,
-      tenantId: edgeGateway.tenantId,
+      tenantId: edgeGateway.tenantId ?? "pending",
       status: edgeGateway.status
     });
   });
@@ -9078,7 +9209,7 @@ export async function buildApp() {
   });
 
   // POST /api/v1/edge-gateways/:id/heartbeat - Device heartbeat
-  app.post("/api/v1/edge-gateways/:id/heartbeat", async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post("/api/v1/edge-gateways/:id/heartbeat", { preHandler: deviceAuthPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
     const { id } = z.object({ id: z.string() }).parse(request.params);
 
     const edgeGateway = await prisma.edgeGateway.findUnique({ where: { id } });
@@ -9112,8 +9243,8 @@ export async function buildApp() {
                 lastFailure: z.string().optional()
               })
               .optional(),
-            discoveredCamerasCount: z.number(),
-            registeredCamerasCount: z.number()
+            discoveredCamerasCount: z.number().optional(),
+            registeredCamerasCount: z.number().optional()
           })
           .optional(),
         version: z.string().optional()
@@ -9139,12 +9270,19 @@ export async function buildApp() {
   });
 
   // POST /api/v1/edge-gateways/:id/cameras/discover - Report discovered cameras
-  app.post("/api/v1/edge-gateways/:id/cameras/discover", async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post("/api/v1/edge-gateways/:id/cameras/discover", { preHandler: deviceAuthPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
     const { id } = z.object({ id: z.string() }).parse(request.params);
 
     const edgeGateway = await prisma.edgeGateway.findUnique({ where: { id } });
     if (!edgeGateway) {
       return reply.status(404).send({ error: "NOT_FOUND", message: "Edge gateway not found" });
+    }
+
+    if (!edgeGateway.tenantId) {
+      return reply.status(409).send({
+        error: "GATEWAY_UNASSIGNED",
+        message: "Gateway must be assigned to a tenant before reporting camera discoveries"
+      });
     }
 
     const body = z
@@ -9177,19 +9315,33 @@ export async function buildApp() {
         where: { macAddress: camera.macAddress }
       });
 
-      if (existing && existing.status !== "discovered") {
-        alreadyRegistered.push({
-          ipAddress: camera.ipAddress,
-          macAddress: camera.macAddress,
-          cameraId: existing.id
-        });
+      if (existing) {
+        if (existing.status !== "discovered") {
+          // Already registered/confirmed — record as already-known
+          alreadyRegistered.push({
+            ipAddress: camera.ipAddress,
+            macAddress: camera.macAddress,
+            cameraId: existing.id
+          });
+        } else {
+          // Known but still in discovered state — update silently (not a new discovery)
+          await prisma.discoveredCamera.update({
+            where: { macAddress: camera.macAddress },
+            data: {
+              ipAddress: camera.ipAddress,
+              manufacturer: camera.onvifInfo?.manufacturer,
+              model: camera.onvifInfo?.model,
+              firmwareVersion: camera.onvifInfo?.firmware,
+              lastSeenAt: new Date(body.discoveryTimestamp)
+            }
+          });
+        }
         continue;
       }
 
-      // Create or update discovered camera
-      const discoveredCamera = await prisma.discoveredCamera.upsert({
-        where: { macAddress: camera.macAddress },
-        create: {
+      // New camera — create and report
+      await prisma.discoveredCamera.create({
+        data: {
           edgeGatewayId: id,
           tenantId: edgeGateway.tenantId,
           macAddress: camera.macAddress,
@@ -9202,14 +9354,6 @@ export async function buildApp() {
           onvifPort: camera.ports?.find((p) => p === 80 || p === 8000),
           status: "discovered",
           lastSeenAt: new Date(body.discoveryTimestamp)
-        },
-        update: {
-          ipAddress: camera.ipAddress,
-          manufacturer: camera.onvifInfo?.manufacturer,
-          model: camera.onvifInfo?.model,
-          firmwareVersion: camera.onvifInfo?.firmware,
-          lastSeenAt: new Date(body.discoveryTimestamp),
-          status: "discovered"
         }
       });
 
@@ -9331,6 +9475,572 @@ export async function buildApp() {
     }
   );
 
+  // POST /api/v1/edge-gateways/:id/devices/discover - Report discovered smart devices
+  app.post("/api/v1/edge-gateways/:id/devices/discover", { preHandler: deviceAuthPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const { id } = z.object({ id: z.string() }).parse(request.params);
+
+    const edgeGateway = await prisma.edgeGateway.findUnique({ where: { id } });
+    if (!edgeGateway) {
+      return reply.status(404).send({ error: "NOT_FOUND", message: "Edge gateway not found" });
+    }
+
+    if (!edgeGateway.tenantId) {
+      return reply.status(409).send({
+        error: "GATEWAY_UNASSIGNED",
+        message: "Gateway must be assigned to a tenant before reporting device discoveries"
+      });
+    }
+
+    const tenantId = edgeGateway.tenantId;
+
+    const body = z
+      .object({
+        devices: z.array(
+          z.object({
+            ipAddress: z.string().ip(),
+            macAddress: z.string(),
+            deviceType: z.string(),
+            manufacturer: z.string().optional(),
+            model: z.string().optional(),
+            firmwareVersion: z.string().optional(),
+            protocol: z.string().optional(),
+            httpPort: z.number().optional(),
+            mqttTopic: z.string().optional(),
+            capabilities: z.array(z.string()).optional()
+          })
+        ),
+        discoveryTimestamp: z.string().datetime()
+      })
+      .parse(request.body);
+
+    const discovered: Array<{ ipAddress: string; macAddress: string; deviceType: string }> = [];
+    const alreadyRegistered: Array<{ ipAddress: string; macAddress: string; deviceId: string }> = [];
+
+    for (const device of body.devices) {
+      const existing = await prisma.discoveredDevice.findUnique({
+        where: { macAddress: device.macAddress }
+      });
+
+      if (existing && existing.status !== "discovered") {
+        alreadyRegistered.push({
+          ipAddress: device.ipAddress,
+          macAddress: device.macAddress,
+          deviceId: existing.id
+        });
+        continue;
+      }
+
+      await prisma.discoveredDevice.upsert({
+        where: { macAddress: device.macAddress },
+        create: {
+          edgeGatewayId: id,
+          tenantId,
+          deviceType: device.deviceType,
+          macAddress: device.macAddress,
+          ipAddress: device.ipAddress,
+          manufacturer: device.manufacturer,
+          model: device.model,
+          firmwareVersion: device.firmwareVersion,
+          protocol: device.protocol,
+          httpPort: device.httpPort,
+          mqttTopic: device.mqttTopic,
+          capabilities: device.capabilities ? JSON.stringify(device.capabilities) : null,
+          status: "discovered",
+          lastSeenAt: new Date(body.discoveryTimestamp)
+        },
+        update: {
+          ipAddress: device.ipAddress,
+          manufacturer: device.manufacturer,
+          model: device.model,
+          firmwareVersion: device.firmwareVersion,
+          protocol: device.protocol,
+          httpPort: device.httpPort,
+          capabilities: device.capabilities ? JSON.stringify(device.capabilities) : null,
+          lastSeenAt: new Date(body.discoveryTimestamp),
+          status: "discovered"
+        }
+      });
+
+      discovered.push({
+        ipAddress: device.ipAddress,
+        macAddress: device.macAddress,
+        deviceType: device.deviceType
+      });
+    }
+
+    return reply.send({ discovered, alreadyRegistered });
+  });
+
+  // GET /api/v1/edge-gateways/:id/devices - List discovered smart devices
+  app.get(
+    "/api/v1/edge-gateways/:id/devices",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest) => {
+      const ctx = getTenantContext(request);
+      const { id } = z.object({ id: z.string() }).parse(request.params);
+      const query = z
+        .object({
+          status: z.enum(["discovered", "pending", "registered", "offline"]).optional(),
+          deviceType: z.string().optional()
+        })
+        .parse(request.query);
+
+      const edgeGateway = await prisma.edgeGateway.findFirst({
+        where: { id, tenantId: ctx.tenantId }
+      });
+
+      if (!edgeGateway) {
+        throw new NotFoundError("Edge gateway not found");
+      }
+
+      const devices = await prisma.discoveredDevice.findMany({
+        where: {
+          edgeGatewayId: id,
+          tenantId: ctx.tenantId,
+          ...(query.status ? { status: query.status } : {}),
+          ...(query.deviceType ? { deviceType: query.deviceType } : {})
+        },
+        orderBy: { lastSeenAt: "desc" }
+      });
+
+      return { data: devices };
+    }
+  );
+
+  // POST /api/v1/edge-gateways/:id/devices/:deviceId/command - Send command to device
+  app.post(
+    "/api/v1/edge-gateways/:id/devices/:deviceId/command",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const ctx = getTenantContext(request);
+      const { id, deviceId } = z.object({ id: z.string(), deviceId: z.string() }).parse(request.params);
+
+      const device = await prisma.discoveredDevice.findFirst({
+        where: { id: deviceId, edgeGatewayId: id, tenantId: ctx.tenantId }
+      });
+
+      if (!device) {
+        throw new NotFoundError("Device not found");
+      }
+
+      const body = z
+        .object({
+          command: z.string(),
+          payload: z.record(z.unknown()).optional()
+        })
+        .parse(request.body);
+
+      // Store the command as pending state update
+      if (body.command === "set_state" && body.payload) {
+        const currentState = device.currentState ? JSON.parse(device.currentState) : {};
+        const newState = { ...currentState, ...body.payload };
+        await prisma.discoveredDevice.update({
+          where: { id: deviceId },
+          data: { currentState: JSON.stringify(newState) }
+        });
+      }
+
+      return reply.status(202).send({
+        deviceId,
+        command: body.command,
+        status: "accepted"
+      });
+    }
+  );
+
+  // GET /api/v1/edge-gateways/:id/devices/:deviceId/state - Get device state
+  app.get(
+    "/api/v1/edge-gateways/:id/devices/:deviceId/state",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest) => {
+      const ctx = getTenantContext(request);
+      const { id, deviceId } = z.object({ id: z.string(), deviceId: z.string() }).parse(request.params);
+
+      const device = await prisma.discoveredDevice.findFirst({
+        where: { id: deviceId, edgeGatewayId: id, tenantId: ctx.tenantId }
+      });
+
+      if (!device) {
+        throw new NotFoundError("Device not found");
+      }
+
+      return {
+        deviceId: device.id,
+        deviceType: device.deviceType,
+        status: device.status,
+        currentState: device.currentState ? JSON.parse(device.currentState) : null,
+        lastSeenAt: device.lastSeenAt
+      };
+    }
+  );
+
+  // ============================================
+  // QR Pairing & Tenant Assignment
+  // ============================================
+
+  // POST /api/v1/edge-gateways/:id/pairing-token - Generate QR pairing token
+  app.post(
+    "/api/v1/edge-gateways/:id/pairing-token",
+    { preHandler: requireRole("tenant_admin", "super_admin") },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const ctx = getTenantContext(request);
+      const { id } = z.object({ id: z.string() }).parse(request.params);
+      const body = z.object({ expiresInMinutes: z.number().min(0).max(1440).default(30) }).parse(request.body);
+
+      const gateway = await prisma.edgeGateway.findFirst({
+        where: { id, tenantId: ctx.tenantId }
+      });
+      if (!gateway) throw new NotFoundError("Edge gateway not found");
+
+      const token = randomBytes(24).toString("base64url");
+      const expiresAt = new Date(Date.now() + body.expiresInMinutes * 60 * 1000);
+      const qrPayload = JSON.stringify({
+        type: "nearhome:edge-pair",
+        token,
+        gatewayId: id,
+        tenantId: ctx.tenantId
+      });
+
+      const pairingToken = await prisma.edgeGatewayPairingToken.create({
+        data: {
+          edgeGatewayId: id,
+          token,
+          qrPayload,
+          status: "pending",
+          expiresAt
+        }
+      });
+
+      return reply.status(201).send({
+        token: pairingToken.token,
+        qrPayload: pairingToken.qrPayload,
+        expiresAt: pairingToken.expiresAt.toISOString(),
+        status: pairingToken.status
+      });
+    }
+  );
+
+  // POST /api/v1/edge-gateways/pair - Client scans QR to pair with device
+  app.post(
+    "/api/v1/edge-gateways/pair",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const ctx = getTenantContext(request);
+      const body = z.object({ pairingToken: z.string() }).parse(request.body);
+
+      const pairingRecord = await prisma.edgeGatewayPairingToken.findUnique({
+        where: { token: body.pairingToken },
+        include: { edgeGateway: true }
+      });
+
+      if (!pairingRecord) {
+        return reply.status(404).send({ error: "TOKEN_NOT_FOUND", message: "Pairing token not found" });
+      }
+
+      if (pairingRecord.status !== "pending") {
+        return reply.status(410).send({ error: "TOKEN_USED", message: "Pairing token already used or revoked" });
+      }
+
+      if (pairingRecord.expiresAt < new Date()) {
+        return reply.status(410).send({ error: "TOKEN_EXPIRED", message: "Pairing token has expired" });
+      }
+
+      // Claim the token
+      await prisma.edgeGatewayPairingToken.update({
+        where: { id: pairingRecord.id },
+        data: {
+          status: "claimed",
+          claimedByUserId: ctx.userId,
+          claimedAt: new Date()
+        }
+      });
+
+      // Update gateway status to paired
+      await prisma.edgeGateway.update({
+        where: { id: pairingRecord.edgeGatewayId },
+        data: { pairedAt: new Date() }
+      });
+
+      return reply.send({
+        edgeGatewayId: pairingRecord.edgeGatewayId,
+        tenantId: pairingRecord.edgeGateway.tenantId,
+        status: "paired"
+      });
+    }
+  );
+
+  // POST /api/v1/edge-gateways/:id/assign-tenant - Assign a pending gateway to a tenant
+  app.post(
+    "/api/v1/edge-gateways/:id/assign-tenant",
+    { preHandler: requireRole("tenant_admin", "super_admin") },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const ctx = getTenantContext(request);
+      const { id } = z.object({ id: z.string() }).parse(request.params);
+      const body = z.object({ tenantId: z.string() }).parse(request.body);
+
+      const gateway = await prisma.edgeGateway.findUnique({ where: { id } });
+      if (!gateway) throw new NotFoundError("Edge gateway not found");
+
+      // tenant_admin can only assign to their own tenant
+      if (ctx.role === "tenant_admin" && body.tenantId !== ctx.tenantId) {
+        return reply.status(403).send({
+          error: "FORBIDDEN",
+          message: "tenant_admin can only assign gateways to their own tenant"
+        });
+      }
+
+      // Only allow assignment if gateway is currently unassigned (null) or already belongs to this tenant
+      if (gateway.tenantId !== null && gateway.tenantId !== body.tenantId) {
+        return reply.status(403).send({
+          error: "ALREADY_ASSIGNED",
+          message: "Gateway is already assigned to another tenant"
+        });
+      }
+
+      const updated = await prisma.edgeGateway.update({
+        where: { id },
+        data: { tenantId: body.tenantId }
+      });
+
+      return reply.send({
+        id: updated.id,
+        tenantId: updated.tenantId,
+        status: updated.status
+      });
+    }
+  );
+
+  // ============================================
+  // VPN Lifecycle API Routes
+  // ============================================
+
+  // POST /api/v1/vpns - Create VPN
+  app.post(
+    "/api/v1/vpns",
+    { preHandler: requireRole("tenant_admin", "super_admin") },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const ctx = getTenantContext(request);
+      const body = z
+        .object({
+          name: z.string().min(1).max(100),
+          provider: z.enum(["wireguard", "ipsec", "tailscale", "custom"]),
+          topology: z.enum(["site_to_site", "hub_spoke", "mesh"])
+        })
+        .parse(request.body);
+
+      const existing = await prisma.tenantVpn.findFirst({
+        where: { tenantId: ctx.tenantId, name: body.name }
+      });
+      if (existing) {
+        return reply.status(409).send({ error: "DUPLICATE_VPN", message: "VPN with this name already exists" });
+      }
+
+      const vpn = await prisma.tenantVpn.create({
+        data: {
+          tenantId: ctx.tenantId,
+          name: body.name,
+          provider: body.provider,
+          topology: body.topology,
+          status: "draft"
+        }
+      });
+
+      return reply.status(201).send(vpn);
+    }
+  );
+
+  // GET /api/v1/vpns - List VPNs
+  app.get(
+    "/api/v1/vpns",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest) => {
+      const ctx = getTenantContext(request);
+      const vpns = await prisma.tenantVpn.findMany({
+        where: { tenantId: ctx.tenantId },
+        include: {
+          networkSpaces: true,
+          peers: true,
+          _count: { select: { peers: true, networkSpaces: true } }
+        },
+        orderBy: { createdAt: "desc" }
+      });
+      return { data: vpns };
+    }
+  );
+
+  // POST /api/v1/vpns/:id/network-spaces - Allocate network space
+  app.post(
+    "/api/v1/vpns/:id/network-spaces",
+    { preHandler: requireRole("tenant_admin", "super_admin") },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const ctx = getTenantContext(request);
+      const { id } = z.object({ id: z.string() }).parse(request.params);
+      const body = z
+        .object({
+          spaceType: z.enum(["camera_lan", "edge_nodes", "operations", "reserved"]),
+          cidr: z.string(),
+          description: z.string().optional()
+        })
+        .parse(request.body);
+
+      const vpn = await prisma.tenantVpn.findFirst({ where: { id, tenantId: ctx.tenantId } });
+      if (!vpn) throw new NotFoundError("VPN not found");
+
+      // Check for CIDR overlap within same VPN
+      const existingSpaces = await prisma.tenantNetworkSpace.findMany({ where: { vpnId: id } });
+      for (const space of existingSpaces) {
+        if (space.cidr === body.cidr) {
+          return reply.status(409).send({ error: "CIDR_OVERLAP", message: "CIDR already allocated in this VPN" });
+        }
+      }
+
+      const ns = await prisma.tenantNetworkSpace.create({
+        data: {
+          tenantId: ctx.tenantId,
+          vpnId: id,
+          spaceType: body.spaceType,
+          cidr: body.cidr,
+          description: body.description,
+          status: "allocated"
+        }
+      });
+
+      return reply.status(201).send(ns);
+    }
+  );
+
+  // POST /api/v1/vpns/:id/peers - Add VPN peer
+  app.post(
+    "/api/v1/vpns/:id/peers",
+    { preHandler: requireRole("tenant_admin", "super_admin") },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const ctx = getTenantContext(request);
+      const { id } = z.object({ id: z.string() }).parse(request.params);
+      const body = z
+        .object({
+          peerId: z.string(),
+          peerRole: z.enum(["edge_gateway", "camera_router", "node_host"]),
+          endpoint: z.string(),
+          allowedCidrs: z.array(z.string())
+        })
+        .parse(request.body);
+
+      const vpn = await prisma.tenantVpn.findFirst({ where: { id, tenantId: ctx.tenantId } });
+      if (!vpn) throw new NotFoundError("VPN not found");
+
+      // Validate peer belongs to same tenant (if it's an edge gateway)
+      if (body.peerRole === "edge_gateway") {
+        const gateway = await prisma.edgeGateway.findFirst({
+          where: { id: body.peerId, tenantId: ctx.tenantId }
+        });
+        if (!gateway) {
+          return reply.status(400).send({
+            error: "INVALID_PEER",
+            message: "Edge gateway not found or belongs to different tenant"
+          });
+        }
+      }
+
+      const peer = await prisma.tenantVpnPeer.create({
+        data: {
+          tenantId: ctx.tenantId,
+          vpnId: id,
+          peerId: body.peerId,
+          peerRole: body.peerRole,
+          endpoint: body.endpoint,
+          allowedCidrs: JSON.stringify(body.allowedCidrs),
+          status: "pending"
+        }
+      });
+
+      return reply.status(201).send(peer);
+    }
+  );
+
+  // POST /api/v1/vpns/:id/validate - Validate VPN configuration
+  app.post(
+    "/api/v1/vpns/:id/validate",
+    { preHandler: requireRole("tenant_admin", "super_admin") },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const ctx = getTenantContext(request);
+      const { id } = z.object({ id: z.string() }).parse(request.params);
+
+      const vpn = await prisma.tenantVpn.findFirst({
+        where: { id, tenantId: ctx.tenantId },
+        include: { networkSpaces: true, peers: true }
+      });
+      if (!vpn) throw new NotFoundError("VPN not found");
+
+      // Basic validation: need at least one network space and one peer
+      const issues: string[] = [];
+      if (vpn.networkSpaces.length === 0) issues.push("No network spaces allocated");
+      if (vpn.peers.length === 0) issues.push("No peers configured");
+
+      const valid = issues.length === 0;
+
+      await prisma.tenantVpn.update({
+        where: { id },
+        data: { status: "validating" }
+      });
+
+      return reply.send({ valid, status: "validating", issues });
+    }
+  );
+
+  // POST /api/v1/vpns/:id/provision - Provision VPN
+  app.post(
+    "/api/v1/vpns/:id/provision",
+    { preHandler: requireRole("tenant_admin", "super_admin") },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const ctx = getTenantContext(request);
+      const { id } = z.object({ id: z.string() }).parse(request.params);
+
+      const vpn = await prisma.tenantVpn.findFirst({ where: { id, tenantId: ctx.tenantId } });
+      if (!vpn) throw new NotFoundError("VPN not found");
+
+      const updated = await prisma.tenantVpn.update({
+        where: { id },
+        data: { status: "provisioning" }
+      });
+
+      return reply.status(202).send({ id: updated.id, status: updated.status });
+    }
+  );
+
+  // ============================================
+  // RTSP Tunnel Status
+  // ============================================
+
+  // GET /api/v1/edge-gateways/:id/tunnels/status - Get tunnel status
+  app.get(
+    "/api/v1/edge-gateways/:id/tunnels/status",
+    { preHandler: tenantScopedPreHandler },
+    async (request: FastifyRequest) => {
+      const ctx = getTenantContext(request);
+      const { id } = z.object({ id: z.string() }).parse(request.params);
+
+      const gateway = await prisma.edgeGateway.findFirst({
+        where: { id, tenantId: ctx.tenantId }
+      });
+      if (!gateway) throw new NotFoundError("Edge gateway not found");
+
+      // Get registered cameras with tunnel ports
+      const cameras = await prisma.discoveredCamera.findMany({
+        where: { edgeGatewayId: id, status: "registered", tunnelPort: { not: null } }
+      });
+
+      const tunnels = cameras.map((c) => ({
+        cameraId: c.id,
+        macAddress: c.macAddress,
+        localRtspUrl: c.rtspUrl,
+        tunnelPort: c.tunnelPort,
+        status: gateway.status === "active" ? "connected" : "disconnected"
+      }));
+
+      return { tunnels };
+    }
+  );
+
   // POST /api/v1/edge-gateways/:id/tunnels - Configure tunnels for cameras
   app.post(
     "/api/v1/edge-gateways/:id/tunnels",
@@ -9385,38 +10095,7 @@ export async function buildApp() {
         configured.push({ cameraId: cam.cameraId, localPort: cam.localPort, status: "active" });
       }
 
-      return { configured };
-    }
-  );
-
-  // GET /api/v1/edge-gateways/:id/tunnels/status - Get tunnel status
-  app.get(
-    "/api/v1/edge-gateways/:id/tunnels/status",
-    { preHandler: tenantScopedPreHandler },
-    async (request: FastifyRequest) => {
-      const ctx = getTenantContext(request);
-      const { id } = z.object({ id: z.string() }).parse(request.params);
-
-      const edgeGateway = await prisma.edgeGateway.findFirst({
-        where: { id, tenantId: ctx.tenantId }
-      });
-
-      if (!edgeGateway) {
-        throw new NotFoundError("Edge gateway not found");
-      }
-
-      const cameras = await prisma.discoveredCamera.findMany({
-        where: { edgeGatewayId: id, tenantId: ctx.tenantId, status: "registered" }
-      });
-
-      return {
-        tunnels: cameras.map((c) => ({
-          cameraId: c.id,
-          localPort: c.tunnelPort,
-          status: c.lastSeenAt && Date.now() - new Date(c.lastSeenAt).getTime() < 300000 ? "active" : "disconnected",
-          lastHealthCheck: c.lastSeenAt?.toISOString()
-        }))
-      };
+      return { tunnels: configured, configured };
     }
   );
 

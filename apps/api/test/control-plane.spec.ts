@@ -686,7 +686,7 @@ describe("NH-035 superadmin context switch + impersonation audit", () => {
       }
     });
     expect(logsResponse.statusCode).toBe(200);
-    const logs = logsResponse.json<{ data: Array<{ actorUserId: string; resource: string; action: string; resourceId: string; payload: any }> }>().data;
+    const logs = logsResponse.json<{ data: Array<{ actorUserId: string; resource: string; action: string; resourceId: string; payload: unknown }> }>().data;
     const cameraCreateLog = logs.find((entry) => entry.resource === "camera" && entry.action === "create" && entry.resourceId === cameraId);
     expect(cameraCreateLog).toBeTruthy();
     expect(cameraCreateLog?.actorUserId).toBe(actorUserId);
@@ -2783,6 +2783,7 @@ describe("NH-DP-13 detection pipeline execution", () => {
     const previousBridge = process.env.DETECTION_BRIDGE_URL;
     process.env.DETECTION_BRIDGE_URL = "http://mock-inference-bridge";
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const fetchMock = vi.fn(async (input: any) => {
       const url = String(input);
       if (url.includes("http://mock-inference-bridge/v1/infer")) {
@@ -2934,6 +2935,7 @@ describe("NH-DP-AUDIO-01 audio routing to detection plane runner", () => {
     process.env.AUDIO_DETECTION_RUNNER_URL = "http://mock-audio-runner";
     process.env.DETECTION_EXECUTION_MODE = "inline";
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const fetchMock = vi.fn(async (input: any) => {
       const url = String(input);
       if (url.includes("http://mock-audio-runner/v1/infer/audio")) {
@@ -3069,6 +3071,7 @@ describe("NH-DP-14 temporal workflow dispatch", () => {
     process.env.DETECTION_EXECUTION_MODE = "temporal";
     process.env.DETECTION_TEMPORAL_DISPATCH_URL = "http://mock-temporal-dispatch";
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const fetchMock = vi.fn(async (input: any) => {
       const url = String(input);
       if (url.includes("http://mock-temporal-dispatch/v1/workflows/detection-jobs")) {
@@ -3281,6 +3284,7 @@ describe("NH-DP-15 temporal callback ingestion", () => {
     process.env.EVENT_GATEWAY_URL = "http://mock-event-gateway";
     process.env.EVENT_PUBLISH_SECRET = "test-event-secret";
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const fetchMock = vi.fn(async (input: any) => {
       const url = String(input);
       if (url.includes("http://mock-event-gateway/internal/events/publish")) {
@@ -3438,6 +3442,7 @@ describe("NH-DP-15 temporal callback ingestion", () => {
     process.env.EVENT_GATEWAY_URL = "http://mock-event-gateway";
     process.env.EVENT_PUBLISH_SECRET = "test-event-secret";
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const fetchMock = vi.fn(async (input: any) => {
       const url = String(input);
       if (url.includes("http://mock-event-gateway/internal/events/publish")) {
@@ -3552,6 +3557,7 @@ describe("NH-042 notification rules and multi-channel deliveries", () => {
     process.env.EVENT_GATEWAY_URL = "http://mock-event-gateway";
     process.env.EVENT_PUBLISH_SECRET = "test-event-secret";
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const fetchMock = vi.fn(async (input: any) => {
       const url = String(input);
       if (url.includes("http://mock-event-gateway/internal/events/publish")) {
@@ -4466,7 +4472,7 @@ describe("NH-DP-21 detection profile validation", () => {
 
   it("builds an operational topology with a preferred node assignment and allows applying node config", async () => {
     const adminToken = await login("admin@nearhome.dev");
-    const { tenantId, cameraId, modelRef, pipelineId, preferredNodeId, fallbackNodeId } = await getSeedDetectionTopologyFixture(prisma);
+    const { tenantId, cameraId, pipelineId, preferredNodeId, fallbackNodeId } = await getSeedDetectionTopologyFixture(prisma);
 
     const topologyResponse = await app.inject({
       method: "GET",
@@ -4763,7 +4769,9 @@ describe("NH-DP-22 detection callback idempotency", () => {
 
     const countsAfterFirst = await Promise.all([
       prisma.detectionObservation.count({ where: { jobId } }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (prisma as any).faceDetection.count({ where: { tenantId, cameraId } }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (prisma as any).faceEmbedding.count({ where: { tenantId } })
     ]);
 
@@ -4780,7 +4788,9 @@ describe("NH-DP-22 detection callback idempotency", () => {
 
     const countsAfterSecond = await Promise.all([
       prisma.detectionObservation.count({ where: { jobId } }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (prisma as any).faceDetection.count({ where: { tenantId, cameraId } }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (prisma as any).faceEmbedding.count({ where: { tenantId } })
     ]);
 
@@ -5755,7 +5765,7 @@ describe("NH-DP-26 node deploy definition", () => {
       });
       expect(startResponse.statusCode).toBe(200);
 
-      let statusPayload: { data: any } | null = null;
+      let statusPayload: { data: unknown } | null = null;
       for (let i = 0; i < 20; i += 1) {
         const poll = await retryApp.inject({
           method: "GET",

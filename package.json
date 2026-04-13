@@ -54,7 +54,11 @@
     "test:stream:load": "pnpm --filter @app/stream-gateway test:load",
     "test:stream:soak": "pnpm --filter @app/stream-gateway test:soak",
     "test:stream:soak:record": "pnpm --filter @app/stream-gateway test:soak:record",
-    "pilot:smoke:prod-local": "bash scripts/pilot/smoke-production-local.sh"
+    "pilot:smoke:prod-local": "bash scripts/pilot/smoke-production-local.sh",
+    "test:edge:up": "bash test-env/scripts/start.sh",
+    "test:edge:down": "bash test-env/scripts/stop.sh",
+    "test:edge:up:full": "bash test-env/scripts/start.sh --with-stack --cameras 3 --bulbs 2",
+    "test:edge:generate": "python3 test-env/scripts/generate-compose.py"
   },
   "devDependencies": {
     "@eslint/js": "^9.22.0",

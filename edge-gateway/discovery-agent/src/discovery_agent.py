@@ -32,16 +32,37 @@ class DiscoveryAgent:
     def __init__(self, config_path: str = "config.yaml"):
         self.config = self._load_config(config_path)
         self.running = True
-        self.discovery_interval = self.config.get("discovery_interval", 60)
-        self.heartbeat_interval = self.config.get("heartbeat_interval", 30)
+        self.discovery_interval = int(os.environ.get(
+            "DISCOVERY_INTERVAL",
+            self.config.get("discovery_interval", 60)
+        ))
+        self.heartbeat_interval = int(os.environ.get(
+            "HEARTBEAT_INTERVAL",
+            self.config.get("heartbeat_interval", 30)
+        ))
         self.api_base_url = os.environ.get("API_BASE_URL", "http://api:3001")
         self.gateway_id = os.environ.get("BALENA_DEVICE_UUID", "unknown")
         self.api_token = os.environ.get("EDGE_GATEWAY_API_TOKEN", "")
-        
-        # Discovered cameras cache
+
+        # Network scanning overrides (for Docker bridge / test environments)
+        self.scan_subnet = os.environ.get("SCAN_SUBNET", "").strip()
+        self.network_interface = os.environ.get(
+            "NETWORK_INTERFACE",
+            self.config.get("network_interface", "eth0")
+        )
+        self.discovery_mode = os.environ.get("DISCOVERY_MODE", "host")
+
+        # MQTT broker for smart device discovery
+        self.mqtt_broker = os.environ.get("MQTT_BROKER", "").strip()
+
+        # Discovered devices cache
         self.discovered_cameras = []
-        
+        self.discovered_devices = []
+
         logger.info(f"Discovery Agent initialized for gateway: {self.gateway_id}")
+        logger.info(f"  Mode: {self.discovery_mode}, Interface: {self.network_interface}")
+        if self.scan_subnet:
+            logger.info(f"  Scan subnet override: {self.scan_subnet}")
 
     def _load_config(self, config_path: str) -> dict:
         """Load configuration from YAML file"""
@@ -63,7 +84,7 @@ class DiscoveryAgent:
         """Get local IP address"""
         try:
             result = subprocess.run(
-                ["ip", "addr", "show", self.config.get("network_interface", "eth0")],
+                ["ip", "addr", "show", self.network_interface],
                 capture_output=True,
                 text=True,
                 timeout=5
@@ -78,19 +99,27 @@ class DiscoveryAgent:
     def _arp_scan(self) -> list[dict[str, Any]]:
         """Perform ARP scan to discover devices on local network"""
         devices = []
-        local_ip = self._get_local_ip()
-        
-        if not local_ip:
-            logger.error("Cannot determine local IP, skipping ARP scan")
-            return devices
-        
-        # Determine subnet from local IP (assuming /24)
-        subnet = ".".join(local_ip.split(".")[:3]) + ".0/24"
-        
+
+        # Use explicit subnet if provided (Docker bridge / test mode)
+        if self.scan_subnet:
+            subnet = self.scan_subnet
+        else:
+            local_ip = self._get_local_ip()
+            if not local_ip:
+                logger.error("Cannot determine local IP, skipping ARP scan")
+                return devices
+            # Determine subnet from local IP (assuming /24)
+            subnet = ".".join(local_ip.split(".")[:3]) + ".0/24"
+
         try:
-            logger.info(f"Starting ARP scan on {subnet}")
+            logger.info(f"Starting ARP scan on {subnet} (iface={self.network_interface})")
+            arp_cmd = [
+                "arp-scan",
+                f"--interface={self.network_interface}",
+                subnet,
+            ]
             result = subprocess.run(
-                ["arp-scan", "--localnet", "-l", "--json"],
+                arp_cmd,
                 capture_output=True,
                 text=True,
                 timeout=30
@@ -255,6 +284,127 @@ class DiscoveryAgent:
         logger.info(f"Discovery found {len(cameras)} potential cameras")
         return cameras
 
+    def _discover_smart_devices(self) -> list[dict[str, Any]]:
+        """Discover smart IoT devices via mDNS and HTTP probing"""
+        devices = []
+
+        # Phase 1: mDNS service browsing
+        try:
+            from zeroconf import Zeroconf, ServiceBrowser
+
+            found_services = []
+
+            class Listener:
+                def add_service(self, zc, type_, name):
+                    info = zc.get_service_info(type_, name)
+                    if info:
+                        found_services.append(info)
+
+                def remove_service(self, zc, type_, name):
+                    pass
+
+                def update_service(self, zc, type_, name):
+                    pass
+
+            zc = Zeroconf()
+            browse_types = [
+                "_nearhome-light._tcp.local.",
+                "_hue._tcp.local.",
+                "_http._tcp.local.",
+            ]
+            browsers = []
+            for stype in browse_types:
+                browsers.append(ServiceBrowser(zc, stype, Listener()))
+
+            # Browse for 5 seconds
+            time.sleep(5)
+
+            for info in found_services:
+                ip = None
+                if info.addresses:
+                    import socket
+                    ip = socket.inet_ntoa(info.addresses[0])
+
+                props = {}
+                if info.properties:
+                    props = {
+                        k.decode() if isinstance(k, bytes) else k:
+                        v.decode() if isinstance(v, bytes) else v
+                        for k, v in info.properties.items()
+                    }
+
+                device_type = props.get("deviceType", "unknown")
+                if device_type not in ("light", "switch", "sensor"):
+                    continue
+
+                device = {
+                    "ipAddress": ip,
+                    "macAddress": props.get("mac", ""),
+                    "deviceType": device_type,
+                    "manufacturer": props.get("manufacturer", ""),
+                    "model": props.get("model", ""),
+                    "protocol": "http+mqtt" if self.mqtt_broker else "http",
+                    "httpPort": info.port or 80,
+                    "capabilities": [],
+                }
+
+                # Phase 2: HTTP probe for full device info
+                if ip:
+                    try:
+                        import requests as req
+                        resp = req.get(f"http://{ip}:{device['httpPort']}/info", timeout=3)
+                        if resp.status_code == 200:
+                            info_data = resp.json()
+                            device["manufacturer"] = info_data.get("manufacturer", device["manufacturer"])
+                            device["model"] = info_data.get("model", device["model"])
+                            device["macAddress"] = info_data.get("mac", device["macAddress"])
+                            device["capabilities"] = info_data.get("capabilities", [])
+                            device["firmwareVersion"] = info_data.get("firmware", "")
+                    except Exception as e:
+                        logger.debug(f"HTTP probe failed for {ip}: {e}")
+
+                devices.append(device)
+
+            zc.close()
+            logger.info(f"mDNS discovery found {len(devices)} smart devices")
+
+        except ImportError:
+            logger.warning("zeroconf not installed, skipping mDNS discovery")
+        except Exception as e:
+            logger.error(f"Smart device discovery failed: {e}")
+
+        return devices
+
+    def _report_smart_devices(self):
+        """Report discovered smart devices to Control Plane API"""
+        if not self.api_token or not self.discovered_devices:
+            return
+
+        try:
+            import requests
+
+            url = f"{self.api_base_url}/api/v1/edge-gateways/{self.gateway_id}/devices/discover"
+            payload = {
+                "devices": self.discovered_devices,
+                "discoveryTimestamp": datetime.utcnow().isoformat() + "Z"
+            }
+
+            response = requests.post(url, json=payload, headers={
+                "Authorization": f"Bearer {self.api_token}"
+            }, timeout=30)
+
+            logger.info(f"Smart device report sent: {response.status_code}")
+
+            if response.status_code == 200:
+                result = response.json()
+                logger.info(
+                    f"Devices discovered: {len(result.get('discovered', []))}, "
+                    f"already registered: {len(result.get('alreadyRegistered', []))}"
+                )
+
+        except Exception as e:
+            logger.error(f"Failed to report smart devices: {e}")
+
     def _send_heartbeat(self):
         """Send heartbeat to Control Plane API"""
         try:
@@ -367,15 +517,17 @@ class DiscoveryAgent:
     async def discovery_loop(self):
         """Main discovery loop"""
         logger.info("Starting discovery loop")
-        
+
         while self.running:
             try:
                 # Discover cameras
                 self.discovered_cameras = self._discover_cameras()
-                
-                # Report to API
                 self._report_cameras()
-                
+
+                # Discover smart devices (lights, switches, sensors)
+                self.discovered_devices = self._discover_smart_devices()
+                self._report_smart_devices()
+
             except Exception as e:
                 logger.error(f"Discovery loop error: {e}")
             
