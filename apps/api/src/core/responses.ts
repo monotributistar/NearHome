@@ -10,6 +10,7 @@ import type {
   DetectionProvider,
   DetectionJobStatus,
   FaceDetectionResponse,
+  BridgeNodeCapability,
 } from "./types.js";
 import { extractDetectionJobEffectiveConfig } from "./utils.js";
 
@@ -186,5 +187,57 @@ export function subscriptionRequestResponse(row: {
     reviewedAt: row.reviewedAt ? toISO(row.reviewedAt) : null,
     createdAt: toISO(row.createdAt), updatedAt: toISO(row.updatedAt),
     plan: row.plan ?? undefined
+  };
+}
+
+// ─── Ops / Inference nodes ────────────────────────────────────────────────────
+
+export function snapshotResponse(row: {
+  nodeId: string; tenantId: string | null; runtime: string; transport: string; endpoint: string;
+  status: string; resources: string; capabilities: string; models: string; maxConcurrent: number;
+  queueDepth: number; isDrained: boolean; lastHeartbeatAt: Date; contractVersion: string;
+  createdAt: Date; updatedAt: Date; assignments?: Array<{ tenantId: string }>;
+}) {
+  return {
+    nodeId: row.nodeId, tenantId: row.tenantId, runtime: row.runtime, transport: row.transport,
+    endpoint: row.endpoint, status: row.status,
+    resources: parseJson<Record<string, number>>(row.resources),
+    capabilities: parseJson<BridgeNodeCapability[]>(row.capabilities),
+    models: parseJson<string[]>(row.models),
+    maxConcurrent: row.maxConcurrent, queueDepth: row.queueDepth, isDrained: row.isDrained,
+    assignedTenantIds: Array.from(new Set((row.assignments ?? []).map((a) => a.tenantId))),
+    lastHeartbeatAt: row.lastHeartbeatAt.toISOString(), contractVersion: row.contractVersion,
+    createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString()
+  };
+}
+
+export function modelCatalogEntryResponse(row: {
+  id: string; provider: string; taskType: string; quality: string; modelRef: string;
+  displayName: string; resources: string; defaults: string | null; outputs: string | null;
+  status: string; createdAt: Date; updatedAt: Date;
+}) {
+  return {
+    id: row.id, provider: row.provider, taskType: row.taskType, quality: row.quality,
+    modelRef: row.modelRef, displayName: row.displayName,
+    resources: parseJson<Record<string, number>>(row.resources),
+    defaults: row.defaults ? parseJson<Record<string, unknown>>(row.defaults) : undefined,
+    outputs: row.outputs ? parseJson<Record<string, unknown>>(row.outputs) : undefined,
+    status: row.status, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString()
+  };
+}
+
+export function nodeObservedConfigResponse(row: {
+  runtime: string; transport: string; endpoint: string; resources: string; capabilities: string;
+  models: string; maxConcurrent: number; assignments?: Array<{ tenantId: string }>;
+  status: string; queueDepth: number; isDrained: boolean; lastHeartbeatAt: Date; updatedAt: Date;
+}) {
+  return {
+    runtime: row.runtime, transport: row.transport, endpoint: row.endpoint,
+    resources: parseJson<Record<string, number>>(row.resources),
+    capabilities: parseJson<BridgeNodeCapability[]>(row.capabilities),
+    models: parseJson<string[]>(row.models),
+    assignedTenantIds: Array.from(new Set((row.assignments ?? []).map((a) => a.tenantId))),
+    maxConcurrent: row.maxConcurrent, status: row.status, queueDepth: row.queueDepth,
+    isDrained: row.isDrained, lastHeartbeatAt: row.lastHeartbeatAt.toISOString(), updatedAt: row.updatedAt.toISOString()
   };
 }

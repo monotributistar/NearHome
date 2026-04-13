@@ -561,7 +561,7 @@ export async function transitionCameraLifecycle(args: {
 }
 
 export async function appendStreamSessionTransition(args: {
-  streamSessionId: string; tenantId: string; fromStatus: StreamSessionStatus;
+  streamSessionId: string; tenantId: string; fromStatus: StreamSessionStatus | null;
   toStatus: StreamSessionStatus; event: string; actorUserId?: string;
 }) {
   await prisma.streamSessionTransition.create({
@@ -886,11 +886,7 @@ export function buildNodeDeployDefinition(args: {
   const port = extractPortFromEndpoint(base.endpoint, base.runtime === "mediapipe" ? 8092 : 8091);
   const { nodeId } = args;
   const runtime = base.runtime;
-  const capabilityList = Array.isArray(base.capabilities)
-    ? (base.capabilities as any[])
-    : Array.isArray(base.desiredCapabilities)
-      ? parseJson<any[]>(base.desiredCapabilities as string)
-      : [];
+  const capabilityList = Array.isArray(base.capabilities) ? (base.capabilities as any[]) : [];
   const taskTypes = Array.from(
     new Set(capabilityList.flatMap((c: any) => c.taskTypes ?? []).filter((v: unknown) => typeof v === "string"))
   ) as string[];
@@ -1000,4 +996,92 @@ export async function syncInferenceNodeSnapshots(nodesRaw: Array<Record<string, 
       });
     }
   }
+}
+
+// ─── Entitlements + enforcement ──────────────────────────────────────────────
+
+const EntitlementsSchema = z.object({
+  planCode: z.string(),
+  limits: z.object({
+    maxCameras: z.number(),
+    maxConcurrentStreams: z.number(),
+    retentionDays: z.number()
+  }).passthrough(),
+  features: z.record(z.unknown())
+});
+
+export async function computeEntitlements(tenantId: string) {
+  const subscription = await prisma.subscription.findFirst({
+    where: { tenantId, status: "active" },
+    include: { plan: true }
+  });
+  if (!subscription) return null;
+  return EntitlementsSchema.parse({
+    planCode: subscription.plan.code,
+    limits: parseJson(subscription.plan.limits),
+    features: parseJson(subscription.plan.features)
+  });
+}
+
+export async function getEntitlementsForTenant(tenantId: string) {
+  return computeEntitlements(tenantId);
+}
+
+export async function enforceCameraLimit(tenantId: string) {
+  const entitlements = await getEntitlementsForTenant(tenantId);
+  if (!entitlements) return;
+  const current = await prisma.camera.count({ where: { tenantId, deletedAt: null } });
+  const maxAllowed = entitlements.limits.maxCameras;
+  if (current >= maxAllowed) {
+    const { ApiDomainError } = await import("./types.js");
+    throw new ApiDomainError({ statusCode: 409, apiCode: "ENTITLEMENT_LIMIT_EXCEEDED", message: "Camera limit reached for active plan", details: { limit: "maxCameras", current, maxAllowed, tenantId, planCode: entitlements.planCode } });
+  }
+}
+
+export async function enforceStreamConcurrencyLimit(tenantId: string) {
+  const entitlements = await getEntitlementsForTenant(tenantId);
+  if (!entitlements) return;
+  const now = new Date();
+  const inUse = await prisma.streamSession.count({ where: { tenantId, status: { in: ["requested", "issued", "active"] }, expiresAt: { gte: now } } });
+  const maxAllowed = entitlements.limits.maxConcurrentStreams;
+  if (inUse >= maxAllowed) {
+    const { ApiDomainError } = await import("./types.js");
+    throw new ApiDomainError({ statusCode: 409, apiCode: "ENTITLEMENT_LIMIT_EXCEEDED", message: "Concurrent stream limit reached for active plan", details: { limit: "maxConcurrentStreams", current: inUse, maxAllowed, tenantId, planCode: entitlements.planCode } });
+  }
+}
+
+export async function resolveEventsFromDate(tenantId: string, requestedFrom?: Date) {
+  const entitlements = await getEntitlementsForTenant(tenantId);
+  if (!entitlements) return requestedFrom;
+  const minAllowedFrom = new Date(Date.now() - entitlements.limits.retentionDays * 24 * 60 * 60 * 1000);
+  if (requestedFrom && requestedFrom < minAllowedFrom) {
+    const { ApiDomainError } = await import("./types.js");
+    throw new ApiDomainError({ statusCode: 422, apiCode: "ENTITLEMENT_RETENTION_EXCEEDED", message: "Requested date range exceeds plan retention window", details: { limit: "retentionDays", maxAllowedDays: entitlements.limits.retentionDays, minAllowedFrom: minAllowedFrom.toISOString(), requestedFrom: requestedFrom.toISOString(), tenantId, planCode: entitlements.planCode } });
+  }
+  return requestedFrom ?? minAllowedFrom;
+}
+
+// ─── Embedding math ───────────────────────────────────────────────────────────
+
+export function parseEmbeddingCandidate(value: unknown): number[] | null {
+  if (Array.isArray(value) && value.length > 0 && typeof value[0] === "number") return value as number[];
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === "number") return parsed as number[];
+    } catch { /* ignore */ }
+  }
+  return null;
+}
+
+export function cosineSimilarity(left: number[], right: number[]): number {
+  const len = Math.min(left.length, right.length);
+  let dot = 0, normL = 0, normR = 0;
+  for (let i = 0; i < len; i++) {
+    dot += left[i] * right[i];
+    normL += left[i] * left[i];
+    normR += right[i] * right[i];
+  }
+  const denom = Math.sqrt(normL) * Math.sqrt(normR);
+  return denom === 0 ? 0 : dot / denom;
 }
