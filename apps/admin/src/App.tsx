@@ -6469,10 +6469,10 @@ function FleetListPage({ apiUrl }: { apiUrl: string }) {
   useEffect(() => { load(); }, [tenantId]);
 
   return (
-    <PageCard title="Flotas Edge" subtitle="Grupos de edge gateways por cliente">
-      <div className="mb-4 flex justify-end">
-        <PrimaryButton data-testid="btn-create-fleet" onClick={() => setCreating(true)}>Nueva Flota</PrimaryButton>
-      </div>
+    <PageCard title="Flotas Edge" actions={
+      <PrimaryButton data-testid="btn-create-fleet" onClick={() => setCreating(true)}>Nueva Flota</PrimaryButton>
+    }>
+      <p className="text-sm text-gray-500 -mt-2 mb-3">Grupos de edge gateways por cliente</p>
       {creating && (
         <Surface className="p-4 mb-4">
           <form onSubmit={createFleet} className="flex flex-col gap-3">
@@ -6501,29 +6501,38 @@ function FleetListPage({ apiUrl }: { apiUrl: string }) {
       ) : error ? (
         <div className="text-red-500 p-4">{error}</div>
       ) : (
-        <DataTable
-          data-testid="fleet-table"
-          columns={[
-            { header: "Nombre", accessor: "name" },
-            { header: "Tipo", accessor: "deviceType" },
-            { header: "Estado", accessor: "status" },
-            { header: "Gateways", accessor: (row: any) => row._count?.gateways ?? 0 },
-            {
-              header: "Acciones",
-              accessor: (row: any) => (
-                <Link
-                  data-testid={`fleet-link-${row.id}`}
-                  to={ADMIN_ROUTES.infrastructure.edgeGateways + `?fleetId=${row.id}`}
-                  className="text-blue-600 underline text-sm"
-                >
-                  Ver gateways
-                </Link>
-              )
-            }
-          ]}
-          rows={fleets}
-          emptyMessage="No hay flotas configuradas"
-        />
+        <DataTable data-testid="fleet-table">
+          <thead>
+            <tr>
+              <th className="px-3 py-2">Nombre</th>
+              <th className="px-3 py-2">Tipo</th>
+              <th className="px-3 py-2">Estado</th>
+              <th className="px-3 py-2">Gateways</th>
+              <th className="px-3 py-2">Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {fleets.length === 0 ? (
+              <tr><td colSpan={5} className="px-3 py-4 text-center text-gray-500">No hay flotas configuradas</td></tr>
+            ) : fleets.map((row) => (
+              <tr key={row.id}>
+                <td className="px-3 py-2">{row.name}</td>
+                <td className="px-3 py-2">{row.deviceType}</td>
+                <td className="px-3 py-2">{row.status}</td>
+                <td className="px-3 py-2">{row._count?.gateways ?? 0}</td>
+                <td className="px-3 py-2">
+                  <Link
+                    data-testid={`fleet-link-${row.id}`}
+                    to={ADMIN_ROUTES.infrastructure.edgeGateways + `?fleetId=${row.id}`}
+                    className="text-blue-600 underline text-sm"
+                  >
+                    Ver gateways
+                  </Link>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </DataTable>
       )}
     </PageCard>
   );
@@ -6565,47 +6574,53 @@ function EdgeGatewayListPage({ apiUrl }: { apiUrl: string }) {
   }
 
   return (
-    <PageCard title="Edge Gateways" subtitle="Dispositivos balenaOS registrados por tenant">
+    <PageCard title="Edge Gateways">
+      <p className="text-sm text-gray-500 -mt-2 mb-3">Dispositivos balenaOS registrados por tenant</p>
       {loading ? (
         <div className="p-4">Cargando...</div>
       ) : error ? (
         <div className="text-red-500 p-4">{error}</div>
       ) : (
-        <DataTable
-          data-testid="gateway-table"
-          columns={[
-            { header: "Nombre", accessor: "deviceName" },
-            { header: "UUID", accessor: "balenaDeviceUUID" },
-            { header: "OS", accessor: "osVersion" },
-            {
-              header: "Estado",
-              accessor: (row: any) => (
-                <span className={statusColor(row.status)} data-testid={`gateway-status-${row.id}`}>
-                  {row.status}
-                </span>
-              )
-            },
-            {
-              header: "Último heartbeat",
-              accessor: (row: any) =>
-                row.lastHeartbeatAt ? new Date(row.lastHeartbeatAt).toLocaleString("es-AR") : "—"
-            },
-            {
-              header: "Acciones",
-              accessor: (row: any) => (
-                <button
-                  data-testid={`gateway-detail-${row.id}`}
-                  className="text-blue-600 underline text-sm"
-                  onClick={() => navigate(ADMIN_ROUTES.infrastructure.edgeGatewayDetail(row.id))}
-                >
-                  Ver detalle
-                </button>
-              )
-            }
-          ]}
-          rows={gateways}
-          emptyMessage="No hay gateways registrados"
-        />
+        <DataTable data-testid="gateway-table">
+          <thead>
+            <tr>
+              <th className="px-3 py-2">Nombre</th>
+              <th className="px-3 py-2">UUID</th>
+              <th className="px-3 py-2">OS</th>
+              <th className="px-3 py-2">Estado</th>
+              <th className="px-3 py-2">Último heartbeat</th>
+              <th className="px-3 py-2">Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {gateways.length === 0 ? (
+              <tr><td colSpan={6} className="px-3 py-4 text-center text-gray-500">No hay gateways registrados</td></tr>
+            ) : gateways.map((row) => (
+              <tr key={row.id}>
+                <td className="px-3 py-2">{row.deviceName}</td>
+                <td className="px-3 py-2 font-mono text-xs">{row.balenaDeviceUUID}</td>
+                <td className="px-3 py-2">{row.osVersion}</td>
+                <td className="px-3 py-2">
+                  <span className={statusColor(row.status)} data-testid={`gateway-status-${row.id}`}>
+                    {row.status}
+                  </span>
+                </td>
+                <td className="px-3 py-2">
+                  {row.lastHeartbeatAt ? new Date(row.lastHeartbeatAt).toLocaleString("es-AR") : "—"}
+                </td>
+                <td className="px-3 py-2">
+                  <button
+                    data-testid={`gateway-detail-${row.id}`}
+                    className="text-blue-600 underline text-sm"
+                    onClick={() => navigate(ADMIN_ROUTES.infrastructure.edgeGatewayDetail(row.id))}
+                  >
+                    Ver detalle
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </DataTable>
       )}
     </PageCard>
   );
@@ -6653,11 +6668,8 @@ function EdgeGatewayDetailPage({ apiUrl }: { apiUrl: string }) {
       setDevices(devData.data ?? []);
       setTunnels(tunData.tunnels ?? []);
 
-      // Build heartbeat log from gateway metrics
       if (gwData.customMetrics) {
-        setHeartbeatLog([
-          { at: gwData.lastHeartbeatAt, metrics: gwData.customMetrics }
-        ]);
+        setHeartbeatLog([{ at: gwData.lastHeartbeatAt, metrics: gwData.customMetrics }]);
       }
     } catch {
       setError("Error cargando detalle del gateway");
@@ -6695,10 +6707,11 @@ function EdgeGatewayDetailPage({ apiUrl }: { apiUrl: string }) {
   ];
 
   return (
-    <PageCard
-      title={gateway.deviceName ?? id}
-      subtitle={`UUID: ${gateway.balenaDeviceUUID} · OS: ${gateway.osVersion ?? "—"}`}
-    >
+    <PageCard title={gateway.deviceName ?? id}>
+      <p className="text-sm text-gray-500 -mt-2 mb-3 font-mono">
+        UUID: {gateway.balenaDeviceUUID} · OS: {gateway.osVersion ?? "—"}
+      </p>
+
       {/* Status cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
         <Surface className="p-3 text-center">
@@ -6745,82 +6758,105 @@ function EdgeGatewayDetailPage({ apiUrl }: { apiUrl: string }) {
 
       {/* Cameras tab */}
       {activeTab === "cameras" && (
-        <DataTable
-          data-testid="cameras-table"
-          columns={[
-            { header: "IP", accessor: "ipAddress" },
-            { header: "MAC", accessor: "macAddress" },
-            { header: "Fabricante", accessor: "manufacturer" },
-            { header: "Modelo", accessor: "model" },
-            { header: "Estado", accessor: "status" },
-            {
-              header: "RTSP",
-              accessor: (row: any) =>
-                row.rtspUrl ? (
-                  <span className="text-xs font-mono text-green-700">{row.rtspUrl}</span>
-                ) : (
-                  "—"
-                )
-            }
-          ]}
-          rows={cameras}
-          emptyMessage="No se han descubierto cámaras"
-        />
+        <DataTable data-testid="cameras-table">
+          <thead>
+            <tr>
+              <th className="px-3 py-2">IP</th>
+              <th className="px-3 py-2">MAC</th>
+              <th className="px-3 py-2">Fabricante</th>
+              <th className="px-3 py-2">Modelo</th>
+              <th className="px-3 py-2">Estado</th>
+              <th className="px-3 py-2">RTSP</th>
+            </tr>
+          </thead>
+          <tbody>
+            {cameras.length === 0 ? (
+              <tr><td colSpan={6} className="px-3 py-4 text-center text-gray-500">No se han descubierto cámaras</td></tr>
+            ) : cameras.map((row) => (
+              <tr key={row.id ?? row.macAddress}>
+                <td className="px-3 py-2">{row.ipAddress}</td>
+                <td className="px-3 py-2 font-mono text-xs">{row.macAddress}</td>
+                <td className="px-3 py-2">{row.manufacturer ?? "—"}</td>
+                <td className="px-3 py-2">{row.model ?? "—"}</td>
+                <td className="px-3 py-2">{row.status}</td>
+                <td className="px-3 py-2">
+                  {row.rtspUrl ? <span className="text-xs font-mono text-green-700">{row.rtspUrl}</span> : "—"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </DataTable>
       )}
 
       {/* IoT Devices tab */}
       {activeTab === "devices" && (
-        <DataTable
-          data-testid="devices-table"
-          columns={[
-            { header: "Tipo", accessor: "deviceType" },
-            { header: "Fabricante", accessor: "manufacturer" },
-            { header: "Modelo", accessor: "model" },
-            { header: "IP", accessor: "ipAddress" },
-            { header: "Estado", accessor: "status" },
-            {
-              header: "Encendido",
-              accessor: (row: any) => {
-                const state = row.currentState ? JSON.parse(row.currentState) : null;
-                if (!state) return "—";
-                return (
-                  <div className="flex items-center gap-2">
-                    <span>{state.on ? "ON" : "OFF"}</span>
-                    <PrimaryButton
-                      data-testid={`toggle-device-${row.id}`}
-                      onClick={() => sendDeviceCommand(row.id, "set_state", { on: !state.on })}
-                    >
-                      {state.on ? "Apagar" : "Encender"}
-                    </PrimaryButton>
-                  </div>
-                );
-              }
-            }
-          ]}
-          rows={devices}
-          emptyMessage="No se han descubierto dispositivos IoT"
-        />
+        <DataTable data-testid="devices-table">
+          <thead>
+            <tr>
+              <th className="px-3 py-2">Tipo</th>
+              <th className="px-3 py-2">Fabricante</th>
+              <th className="px-3 py-2">Modelo</th>
+              <th className="px-3 py-2">IP</th>
+              <th className="px-3 py-2">Estado</th>
+              <th className="px-3 py-2">Encendido</th>
+            </tr>
+          </thead>
+          <tbody>
+            {devices.length === 0 ? (
+              <tr><td colSpan={6} className="px-3 py-4 text-center text-gray-500">No se han descubierto dispositivos IoT</td></tr>
+            ) : devices.map((row) => {
+              const state = row.currentState ? JSON.parse(row.currentState) : null;
+              return (
+                <tr key={row.id}>
+                  <td className="px-3 py-2">{row.deviceType}</td>
+                  <td className="px-3 py-2">{row.manufacturer ?? "—"}</td>
+                  <td className="px-3 py-2">{row.model ?? "—"}</td>
+                  <td className="px-3 py-2">{row.ipAddress}</td>
+                  <td className="px-3 py-2">{row.status}</td>
+                  <td className="px-3 py-2">
+                    {state ? (
+                      <div className="flex items-center gap-2">
+                        <span>{state.on ? "ON" : "OFF"}</span>
+                        <PrimaryButton
+                          data-testid={`toggle-device-${row.id}`}
+                          onClick={() => sendDeviceCommand(row.id, "set_state", { on: !state.on })}
+                        >
+                          {state.on ? "Apagar" : "Encender"}
+                        </PrimaryButton>
+                      </div>
+                    ) : "—"}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </DataTable>
       )}
 
       {/* Tunnels tab */}
       {activeTab === "tunnels" && (
-        <DataTable
-          data-testid="tunnels-table"
-          columns={[
-            { header: "Cámara", accessor: "cameraId" },
-            { header: "Puerto", accessor: "rtspPort" },
-            {
-              header: "Estado",
-              accessor: (row: any) => (
-                <Badge data-testid={`tunnel-status-${row.cameraId}`}>
-                  {row.status}
-                </Badge>
-              )
-            }
-          ]}
-          rows={tunnels}
-          emptyMessage="No hay túneles activos"
-        />
+        <DataTable data-testid="tunnels-table">
+          <thead>
+            <tr>
+              <th className="px-3 py-2">Cámara</th>
+              <th className="px-3 py-2">Puerto</th>
+              <th className="px-3 py-2">Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {tunnels.length === 0 ? (
+              <tr><td colSpan={3} className="px-3 py-4 text-center text-gray-500">No hay túneles activos</td></tr>
+            ) : tunnels.map((row) => (
+              <tr key={row.cameraId}>
+                <td className="px-3 py-2 font-mono text-xs">{row.cameraId}</td>
+                <td className="px-3 py-2">{row.rtspPort}</td>
+                <td className="px-3 py-2">
+                  <Badge data-testid={`tunnel-status-${row.cameraId}`}>{row.status}</Badge>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </DataTable>
       )}
 
       {/* Logs tab */}
