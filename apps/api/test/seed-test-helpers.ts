@@ -67,6 +67,7 @@ export async function clearDetectionStateForCamera(prisma: PrismaClient, tenantI
     })
   ).map((row) => row.id);
 
+  /* eslint-disable @typescript-eslint/no-explicit-any */
   await prisma.$transaction(async (tx) => {
     await (tx as any).faceIdentityMergeLog.deleteMany({ where: { tenantId } });
     await (tx as any).faceIdentityMember.deleteMany({ where: { tenantId } });
@@ -75,6 +76,7 @@ export async function clearDetectionStateForCamera(prisma: PrismaClient, tenantI
     await (tx as any).faceDetection.deleteMany({ where: { tenantId, cameraId } });
     await (tx as any).faceCluster.deleteMany({ where: { tenantId } });
     await (tx as any).faceIdentity.deleteMany({ where: { tenantId } });
+    /* eslint-enable @typescript-eslint/no-explicit-any */
 
     if (observationIds.length > 0) {
       await tx.detectionObservation.deleteMany({ where: { id: { in: observationIds } } });

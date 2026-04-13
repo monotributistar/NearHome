@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { seedFixtures } from "./seed-fixtures.js";
 
 const prisma = new PrismaClient();
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const prismaUnsafe = prisma as any;
 
 async function main() {

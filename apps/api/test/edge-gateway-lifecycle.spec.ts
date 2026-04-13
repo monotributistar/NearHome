@@ -38,7 +38,6 @@ let gatewayApiToken1: string;
 let gatewayId2: string;
 let gatewayApiToken2: string;
 let gatewayId3: string;
-let gatewayApiToken3: string;
 let pairingToken: string;
 let vpnId: string;
 
@@ -275,7 +274,7 @@ describe("Phase 1: Fleet Management", () => {
       expect(res.statusCode).toBe(200);
       const body = res.json();
       expect(body.data.length).toBeGreaterThanOrEqual(1);
-      expect(body.data.some((f: any) => f.name === FLEET_NAME)).toBe(true);
+      expect(body.data.some((f: { name: string }) => f.name === FLEET_NAME)).toBe(true);
     });
 
     it("tenant B should not see tenant A fleets", async () => {
@@ -288,7 +287,7 @@ describe("Phase 1: Fleet Management", () => {
       expect(res.statusCode).toBe(200);
       const body = res.json();
       // Tenant B has its own fleet, but not tenant A's
-      const names = body.data.map((f: any) => f.id);
+      const names = body.data.map((f: { id: string }) => f.id);
       expect(names).not.toContain(fleetId);
     });
   });
@@ -355,7 +354,6 @@ describe("Phase 2: Edge Gateway Registration & Security", () => {
       expect(res.statusCode).toBe(201);
       expect(res.json().tenantId).toBe("pending");
       gatewayId3 = res.json().id;
-      gatewayApiToken3 = res.json().apiToken;
     });
   });
 
@@ -458,7 +456,7 @@ describe("Phase 2: Edge Gateway Registration & Security", () => {
       });
 
       expect(res.statusCode).toBe(200);
-      const ids = res.json().data.map((g: any) => g.id);
+      const ids = res.json().data.map((g: { id: string }) => g.id);
       expect(ids).toContain(gatewayId1);
       expect(ids).not.toContain(gatewayId2);
     });
@@ -471,7 +469,7 @@ describe("Phase 2: Edge Gateway Registration & Security", () => {
       });
 
       expect(res.statusCode).toBe(200);
-      const ids = res.json().data.map((g: any) => g.id);
+      const ids = res.json().data.map((g: { id: string }) => g.id);
       expect(ids).toContain(gatewayId2);
       expect(ids).not.toContain(gatewayId1);
     });
@@ -721,7 +719,7 @@ describe("Phase 4: Discovery - Cameras & Smart Devices", () => {
       });
 
       expect(res.statusCode).toBe(200);
-      res.json().data.forEach((c: any) => {
+      res.json().data.forEach((c: { status: string }) => {
         expect(c.status).toBe("discovered");
       });
     });
@@ -834,7 +832,7 @@ describe("Phase 4: Discovery - Cameras & Smart Devices", () => {
       });
 
       expect(res.statusCode).toBe(200);
-      res.json().data.forEach((d: any) => {
+      res.json().data.forEach((d: { deviceType: string }) => {
         expect(d.deviceType).toBe("light");
       });
     });
@@ -1105,7 +1103,7 @@ describe("Phase 5: VPN Provisioning", () => {
       });
 
       expect(res.statusCode).toBe(200);
-      const ids = res.json().data.map((v: any) => v.id);
+      const ids = res.json().data.map((v: { id: string }) => v.id);
       expect(ids).not.toContain(vpnId);
     });
   });

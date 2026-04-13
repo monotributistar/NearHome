@@ -207,7 +207,6 @@ const TenantVpnStatusSchema = z.enum([
   "revoked",
   "failed"
 ]);
-const TenantNetworkSpaceStatusSchema = z.enum(["planned", "allocated", "announced", "active", "retired"]);
 const TenantNetworkSpaceTypeSchema = z.enum(["camera_lan", "edge_nodes", "operations", "reserved"]);
 
 const RESERVED_IPV4_CIDRS = ["127.0.0.0/8", "169.254.0.0/16", "224.0.0.0/4"]
@@ -455,15 +454,6 @@ type BridgeNodeSnapshot = {
   contractVersion: string;
 };
 
-const CameraLifecycleStatusSchema = z.enum([
-  "draft",
-  "provisioning",
-  "ready",
-  "degraded",
-  "offline",
-  "error",
-  "retired"
-]);
 const CameraConnectivitySchema = z.enum(["online", "degraded", "offline"]);
 const StreamSessionStatusSchema = z.enum(["requested", "issued", "active", "ended", "expired"]);
 const DetectionJobStatusSchema = z.enum(["queued", "running", "succeeded", "failed", "canceled"]);
@@ -821,7 +811,9 @@ function extractPortFromEndpoint(endpoint: string, fallbackPort: number) {
   try {
     const url = new URL(endpoint);
     if (url.port) return Number(url.port);
-  } catch {}
+  } catch {
+    // ignore parse errors, use fallback
+  }
   return fallbackPort;
 }
 
@@ -8176,7 +8168,7 @@ export async function buildApp() {
     return `${lines.join("\n")}\n`;
   });
 
-  app.get("/ops/deployment/status", { preHandler: authPreHandler }, async (_request: FastifyRequest) => {
+  app.get("/ops/deployment/status", { preHandler: authPreHandler }, async () => {
     const checks: Array<Promise<DeploymentProbeResult>> = [];
     if (streamGatewayUrl) checks.push(probeService("stream-gateway", `${streamGatewayUrl}/health`));
     if (eventGatewayUrl) checks.push(probeService("event-gateway", `${eventGatewayUrl}/health`));

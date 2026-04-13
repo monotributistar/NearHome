@@ -253,7 +253,7 @@ describe("Edge Gateway API", () => {
 
       expect(response.statusCode).toBe(200);
       const body = response.json();
-      expect(body.data.every((c: any) => c.status === "discovered")).toBe(true);
+      expect(body.data.every((c: { status: string }) => c.status === "discovered")).toBe(true);
     });
   });
 });

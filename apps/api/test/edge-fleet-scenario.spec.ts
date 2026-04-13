@@ -163,8 +163,8 @@ describe("1 · Fleet Setup", () => {
     const ra = await app.inject({ method: "GET", url: "/api/v1/fleets", headers: ah(alpha.adminToken, T_ALPHA) });
     const rb = await app.inject({ method: "GET", url: "/api/v1/fleets", headers: ah(beta.adminToken, T_BETA) });
 
-    const alphaIds = ra.json().data.map((f: any) => f.id);
-    const betaIds = rb.json().data.map((f: any) => f.id);
+    const alphaIds = ra.json().data.map((f: { id: string }) => f.id);
+    const betaIds = rb.json().data.map((f: { id: string }) => f.id);
 
     expect(alphaIds).toContain(alpha.fleetId);
     expect(alphaIds).not.toContain(beta.fleetId);
@@ -323,14 +323,14 @@ describe("3 · Camera Discovery", () => {
     const r = await app.inject({ method: "GET", url: `/api/v1/edge-gateways/${alpha.gwId}/cameras`, headers: ah(alpha.adminToken, T_ALPHA) });
     expect(r.statusCode).toBe(200);
     expect(r.json().data).toHaveLength(3);
-    r.json().data.forEach((c: any) => expect(c.tenantId).toBe(T_ALPHA));
+    r.json().data.forEach((c: { tenantId: string }) => expect(c.tenantId).toBe(T_ALPHA));
   });
 
   it("Beta sees exactly 2 cameras", async () => {
     const r = await app.inject({ method: "GET", url: `/api/v1/edge-gateways/${beta.gwId}/cameras`, headers: ah(beta.adminToken, T_BETA) });
     expect(r.statusCode).toBe(200);
     expect(r.json().data).toHaveLength(2);
-    r.json().data.forEach((c: any) => expect(c.tenantId).toBe(T_BETA));
+    r.json().data.forEach((c: { tenantId: string }) => expect(c.tenantId).toBe(T_BETA));
   });
 
   it("Beta cannot see Alpha cameras via Alpha gateway", async () => {
@@ -438,7 +438,7 @@ describe("4 · Smart Device Discovery (Lightbulbs)", () => {
     expect(r.statusCode).toBe(200);
     const data = r.json().data;
     expect(data).toHaveLength(2);
-    data.forEach((d: any) => {
+    data.forEach((d: { deviceType: string; tenantId: string }) => {
       expect(d.deviceType).toBe("light");
       expect(d.tenantId).toBe(T_ALPHA);
     });
@@ -562,13 +562,13 @@ describe("5 · VPN Isolation", () => {
 
   it("Beta cannot see Alpha VPN", async () => {
     const r = await app.inject({ method: "GET", url: "/api/v1/vpns", headers: ah(beta.adminToken, T_BETA) });
-    const ids = r.json().data.map((v: any) => v.id);
+    const ids = r.json().data.map((v: { id: string }) => v.id);
     expect(ids).not.toContain(alpha.vpnId);
   });
 
   it("Alpha cannot see Beta VPN", async () => {
     const r = await app.inject({ method: "GET", url: "/api/v1/vpns", headers: ah(alpha.adminToken, T_ALPHA) });
-    const ids = r.json().data.map((v: any) => v.id);
+    const ids = r.json().data.map((v: { id: string }) => v.id);
     expect(ids).not.toContain(beta.vpnId);
   });
 
@@ -609,7 +609,7 @@ describe("6 · RTSP Tunnel", () => {
     expect(Array.isArray(tunnels)).toBe(true);
     // One camera was confirmed, should appear
     expect(tunnels.length).toBeGreaterThanOrEqual(1);
-    tunnels.forEach((t: any) => {
+    tunnels.forEach((t: { tunnelPort: unknown; status: string }) => {
       expect(t.tunnelPort).toBeDefined();
       expect(t.status).toBe("connected");
     });
@@ -683,7 +683,7 @@ describe("8 · Fleet Summary (Admin Dashboard Data)", () => {
     // Gateways
     const gws = await app.inject({ method: "GET", url: "/api/v1/edge-gateways", headers: ah(alpha.adminToken, T_ALPHA) });
     expect(gws.json().data.length).toBeGreaterThanOrEqual(1);
-    const gw = gws.json().data.find((g: any) => g.id === alpha.gwId);
+    const gw = gws.json().data.find((g: { id: string; status: string }) => g.id === alpha.gwId);
     expect(gw.status).toBe("active");
 
     // Cameras
@@ -702,12 +702,12 @@ describe("8 · Fleet Summary (Admin Dashboard Data)", () => {
   it("all Alpha data is invisible to Beta", async () => {
     // Alpha gateways invisible to Beta
     const gws = await app.inject({ method: "GET", url: "/api/v1/edge-gateways", headers: ah(beta.adminToken, T_BETA) });
-    const gwIds = gws.json().data.map((g: any) => g.id);
+    const gwIds = gws.json().data.map((g: { id: string }) => g.id);
     expect(gwIds).not.toContain(alpha.gwId);
 
     // Alpha VPN invisible to Beta
     const vpns = await app.inject({ method: "GET", url: "/api/v1/vpns", headers: ah(beta.adminToken, T_BETA) });
-    const vpnIds = vpns.json().data.map((v: any) => v.id);
+    const vpnIds = vpns.json().data.map((v: { id: string }) => v.id);
     expect(vpnIds).not.toContain(alpha.vpnId);
   });
 });
