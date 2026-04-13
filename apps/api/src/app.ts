@@ -9484,6 +9484,15 @@ export async function buildApp() {
       return reply.status(404).send({ error: "NOT_FOUND", message: "Edge gateway not found" });
     }
 
+    if (!edgeGateway.tenantId) {
+      return reply.status(409).send({
+        error: "GATEWAY_UNASSIGNED",
+        message: "Gateway must be assigned to a tenant before reporting device discoveries"
+      });
+    }
+
+    const tenantId = edgeGateway.tenantId;
+
     const body = z
       .object({
         devices: z.array(
@@ -9525,7 +9534,7 @@ export async function buildApp() {
         where: { macAddress: device.macAddress },
         create: {
           edgeGatewayId: id,
-          tenantId: edgeGateway.tenantId,
+          tenantId,
           deviceType: device.deviceType,
           macAddress: device.macAddress,
           ipAddress: device.ipAddress,
