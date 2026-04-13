@@ -22,6 +22,7 @@ services:
       SUPERUSER_EMAILS: ${SUPERUSER_EMAILS:-admin@nearhome.dev}
       CORS_ORIGIN_ADMIN: http://localhost:5173
       CORS_ORIGIN_PORTAL: http://localhost:5174
+      PORTAL_BASE_URL: http://localhost:5174
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_TASK_QUEUE: nearhome-detection
     ports:

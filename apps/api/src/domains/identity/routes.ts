@@ -24,10 +24,14 @@ export const identityPlugin: FastifyPluginAsync<IdentityPluginOptions> = async (
 
   app.post("/users", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
     const ctx = getTenantContext(request);
-    assertRole(request, ["tenant_admin"]);
-    const body = z.object({ email: z.string().email(), name: z.string(), password: z.string().min(4), role: RoleInputSchema }).parse(request.body);
+    assertRole(request, ["tenant_admin", "monitor"]);
+    const body = z.object({ email: z.string().email(), name: z.string(), password: z.string().min(8), role: RoleInputSchema }).parse(request.body);
+    // Users (monitor) can only create viewers (client_user)
     const normalizedRole = normalizeRoleInput(body.role);
-    const hash = await bcrypt.hash(body.password, 10);
+    if (ctx.role === "monitor" && normalizedRole !== "client_user") {
+      throw app.httpErrors.forbidden("Users can only create Viewers");
+    }
+    const hash = await bcrypt.hash(body.password, 12);
     const existing = await prisma.user.findUnique({ where: { email: body.email } });
     const user = existing
       ? existing
@@ -37,21 +41,29 @@ export const identityPlugin: FastifyPluginAsync<IdentityPluginOptions> = async (
       update: { role: normalizedRole },
       create: { tenantId: ctx.tenantId, userId: user.id, role: normalizedRole }
     });
-    return { data: { id: user.id, email: user.email, name: user.name, createdAt: toISO(user.createdAt), isActive: user.isActive } };
+    await appendAuditLog({ tenantId: ctx.tenantId, actorUserId: ctx.userId, resource: "user", action: "create", resourceId: user.id, payload: { email: user.email, role: normalizedRole, existingUser: Boolean(existing) }, context: request.ctx });
+    return { data: { id: user.id, email: user.email, name: user.name, createdAt: toISO(user.createdAt), isActive: user.isActive, role: normalizedRole } };
   });
 
   app.put("/users/:id", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
     const ctx = getTenantContext(request);
-    assertRole(request, ["tenant_admin"]);
+    assertRole(request, ["tenant_admin", "monitor"]);
     const id = (request.params as { id: string }).id;
     const body = z.object({ name: z.string().min(1).optional(), isActive: z.boolean().optional(), role: RoleInputSchema.optional() }).refine((v) => v.name !== undefined || v.isActive !== undefined || v.role !== undefined, { message: "At least one field must be provided" }).parse(request.body);
     const membership = await prisma.membership.findFirst({ where: { tenantId: ctx.tenantId, userId: id }, include: { user: true } });
     if (!membership) throw app.httpErrors.notFound("User not found in tenant");
+    // Users (monitor) can only manage viewers (client_user)
+    if (ctx.role === "monitor" && membership.role !== "client_user") {
+      throw app.httpErrors.forbidden("Users can only manage Viewers");
+    }
     const user = await prisma.user.update({ where: { id }, data: { ...(body.name !== undefined ? { name: body.name } : {}), ...(body.isActive !== undefined ? { isActive: body.isActive } : {}) } });
     if (body.role) {
-      await prisma.membership.update({ where: { tenantId_userId: { tenantId: ctx.tenantId, userId: id } }, data: { role: normalizeRoleInput(body.role) } });
+      const newRole = normalizeRoleInput(body.role);
+      if (ctx.role === "monitor" && newRole !== "client_user") throw app.httpErrors.forbidden("Users can only assign Viewer role");
+      await prisma.membership.update({ where: { tenantId_userId: { tenantId: ctx.tenantId, userId: id } }, data: { role: newRole } });
     }
     const updatedMembership = await prisma.membership.findUniqueOrThrow({ where: { tenantId_userId: { tenantId: ctx.tenantId, userId: id } } });
+    await appendAuditLog({ tenantId: ctx.tenantId, actorUserId: ctx.userId, resource: "user", action: body.isActive === false ? "deactivate" : "update", resourceId: id, payload: { changes: body }, context: request.ctx });
     return { data: { id: user.id, email: user.email, name: user.name, createdAt: toISO(user.createdAt), isActive: user.isActive, role: updatedMembership.role } };
   });
 
@@ -84,6 +96,7 @@ export const identityPlugin: FastifyPluginAsync<IdentityPluginOptions> = async (
     const tenant = await prisma.tenant.findFirst({ where: { id: tenantId, deletedAt: null }, select: { id: true } });
     if (!tenant) throw app.httpErrors.notFound("Tenant not found");
     const membership = await prisma.membership.upsert({ where: { tenantId_userId: { tenantId, userId: body.userId } }, update: { role: normalizedRole }, create: { tenantId, userId: body.userId, role: normalizedRole } });
+    await appendAuditLog({ tenantId, actorUserId: request.ctx?.userId, resource: "membership", action: "upsert", resourceId: membership.id, payload: { userId: body.userId, role: normalizedRole }, context: request.ctx });
     return { data: { id: membership.id, tenantId: membership.tenantId, userId: membership.userId, role: membership.role, createdAt: toISO(membership.createdAt) } };
   });
 

@@ -666,10 +666,42 @@ export const EventEnvelopeSchema = z.object({
   payload: z.record(z.any())
 });
 
+export const StrongPasswordSchema = z
+  .string()
+  .min(8, "Password must be at least 8 characters")
+  .regex(/[A-Z]/, "Password must contain at least one uppercase letter")
+  .regex(/[a-z]/, "Password must contain at least one lowercase letter")
+  .regex(/[0-9]/, "Password must contain at least one number");
+
 export const LoginInputSchema = z.object({
   email: z.string().email(),
   password: z.string().min(4),
   audience: z.enum(["backoffice", "portal"]).optional()
+});
+
+export const RegisterInputSchema = z.object({
+  name: z.string().min(2, "Name must be at least 2 characters"),
+  email: z.string().email("Invalid email address"),
+  password: StrongPasswordSchema,
+  placeName: z.string().min(2, "Place name must be at least 2 characters"),
+  placeAddress: z.string().optional()
+});
+
+export const AddPlaceInputSchema = z.object({
+  placeName: z.string().min(2, "Place name must be at least 2 characters"),
+  placeAddress: z.string().optional()
+});
+
+export const InviteCreateInputSchema = z.object({
+  role: z.enum(["monitor", "client_user"]),
+  label: z.string().optional()
+});
+
+export const InviteAcceptInputSchema = z.object({
+  token: z.string().min(1),
+  name: z.string().min(2, "Name must be at least 2 characters"),
+  email: z.string().email("Invalid email address"),
+  password: StrongPasswordSchema
 });
 
 export const MeResponseSchema = z.object({
@@ -726,3 +758,7 @@ export type DetectionTopology = z.infer<typeof DetectionTopologySchema>;
 export type DetectionTopologyPipeline = z.infer<typeof DetectionTopologyPipelineSchema>;
 export type DetectionTopologyCandidate = z.infer<typeof DetectionTopologyCandidateSchema>;
 export type EventEnvelope = z.infer<typeof EventEnvelopeSchema>;
+export type RegisterInput = z.infer<typeof RegisterInputSchema>;
+export type AddPlaceInput = z.infer<typeof AddPlaceInputSchema>;
+export type InviteCreateInput = z.infer<typeof InviteCreateInputSchema>;
+export type InviteAcceptInput = z.infer<typeof InviteAcceptInputSchema>;

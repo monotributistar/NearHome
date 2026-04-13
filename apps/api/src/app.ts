@@ -191,7 +191,12 @@ export async function buildApp() {
   });
 
   // ── Domain plugins ────────────────────────────────────────────────────────
-  await app.register(authPlugin, { middleware, superuserEmails });
+  await app.register(authPlugin, {
+    middleware,
+    superuserEmails,
+    inviteSecret: process.env.JWT_SECRET ?? "dev-super-secret",
+    portalBaseUrl: process.env.PORTAL_BASE_URL?.replace(/\/$/, "") ?? "http://localhost:5174"
+  });
   await app.register(tenantsPlugin, { middleware });
   await app.register(identityPlugin, { middleware });
   await app.register(camerasPlugin, {
