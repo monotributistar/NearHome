@@ -27,6 +27,10 @@ export const ADMIN_ROUTES = {
   commercial: {
     plans: "/commercial/plans",
     subscriptions: "/commercial/subscriptions"
+  },
+  deployments: {
+    manifests: "/deployments/manifests",
+    fleetGroups: "/deployments/fleet-groups"
   }
 } as const;
 
