@@ -1,0 +1,21 @@
+# MediaMTX configuration for mock IP camera
+# Minimal config: RTSP only, no HLS/WebRTC
+
+logLevel: warn
+
+api: no
+
+rtsp: yes
+rtspAddress: :554
+rtspEncryption: "no"
+rtspTransport: tcp
+
+rtmp: no
+hls: no
+webrtc: no
+srt: no
+
+paths:
+  stream:
+    source: publisher
+    sourceOnDemand: no
