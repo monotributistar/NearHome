@@ -48,6 +48,7 @@ model Tenant {
   edgeGateways            EdgeGateway[]
   discoveredCameras       DiscoveredCamera[]
   discoveredDevices       DiscoveredDevice[]
+  deploymentManifests     DeploymentManifest[]
 }
 
 model Fleet {
@@ -90,11 +91,15 @@ model EdgeGateway {
   discoveredCameras   DiscoveredCamera[]
   discoveredDevices   DiscoveredDevice[]
   pairingTokens       EdgeGatewayPairingToken[]
+  fleetGroupId        String?
+  fleetGroup          FleetGroup?       @relation(fields: [fleetGroupId], references: [id])
+  rollouts            DeploymentRollout[]
 
   @@index([tenantId, status])
   @@index([balenaDeviceUUID])
   @@index([fleetId])
   @@index([apiTokenHash])
+  @@index([fleetGroupId])
 }
 
 model EdgeGatewayPairingToken {
@@ -924,4 +929,60 @@ model InferenceNodeDesiredConfig {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
   node             InferenceNodeSnapshot @relation(fields: [nodeId], references: [nodeId], onDelete: Cascade)
+}
+
+model FleetGroup {
+  id          String        @id @default(cuid())
+  name        String
+  description String?
+  tags        String        @default("[]") // JSON string[]
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  gateways    EdgeGateway[]
+
+  @@index([name])
+}
+
+model DeploymentManifest {
+  id            String   @id @default(cuid())
+  tenantId      String?  // null = platform-wide manifest
+  name          String
+  version       String   // semver e.g. "1.4.2"
+  services      String   // JSON: { [serviceName]: { image, tag, env, ports } }
+  targetType    String   // "fleet" | "gateway" | "platform"
+  targetId      String?  // fleetGroupId or edgeGatewayId
+  status        String   @default("draft") // draft|staged|rolling_out|deployed|rolled_back|failed
+  stagedAt      DateTime?
+  deployedAt    DateTime?
+  rolledBackAt  DateTime?
+  rolledBackTo  String?
+  createdBy     String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  tenant        Tenant?  @relation(fields: [tenantId], references: [id])
+  rollouts      DeploymentRollout[]
+
+  @@index([tenantId, status])
+  @@index([tenantId, createdAt])
+}
+
+model DeploymentRollout {
+  id           String   @id @default(cuid())
+  manifestId   String
+  gatewayId    String
+  status       String   @default("pending") // pending|in_progress|success|failed|skipped
+  startedAt    DateTime?
+  completedAt  DateTime?
+  errorMessage String?
+  attempt      Int      @default(1)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  manifest     DeploymentManifest @relation(fields: [manifestId], references: [id])
+  gateway      EdgeGateway        @relation(fields: [gatewayId], references: [id])
+
+  @@index([manifestId, status])
+  @@index([gatewayId, status])
 }

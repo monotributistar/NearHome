@@ -22,6 +22,7 @@ import { opsPlugin } from "./domains/ops/routes.js";
 import { eventsPlugin } from "./domains/events/routes.js";
 import { householdsPlugin } from "./domains/households/routes.js";
 import { notificationsPlugin } from "./domains/notifications/routes.js";
+import { deploymentsPlugin } from "./domains/deployments/routes.js";
 
 type StreamHealthSyncStats = {
   enabled: boolean;
@@ -234,6 +235,7 @@ export async function buildApp() {
   await app.register(eventsPlugin, { middleware });
   await app.register(householdsPlugin, { middleware });
   await app.register(notificationsPlugin, { middleware });
+  await app.register(deploymentsPlugin, { middleware });
 
   // ── Stream health sync timer ───────────────────────────────────────────────
   let streamSyncTimer: NodeJS.Timeout | null = null;

@@ -762,3 +762,47 @@ export type RegisterInput = z.infer<typeof RegisterInputSchema>;
 export type AddPlaceInput = z.infer<typeof AddPlaceInputSchema>;
 export type InviteCreateInput = z.infer<typeof InviteCreateInputSchema>;
 export type InviteAcceptInput = z.infer<typeof InviteAcceptInputSchema>;
+
+export const DeploymentManifestSchema = z.object({
+  id: z.string(),
+  tenantId: z.string().nullable(),
+  name: z.string().min(1).max(100),
+  version: z.string().regex(/^\d+\.\d+\.\d+/, "must be semver"),
+  services: z.string(), // JSON blob
+  targetType: z.enum(["fleet", "gateway", "platform"]),
+  targetId: z.string().nullable(),
+  status: z.enum(["draft", "staged", "rolling_out", "deployed", "rolled_back", "failed"]),
+  stagedAt: z.string().nullable(),
+  deployedAt: z.string().nullable(),
+  rolledBackAt: z.string().nullable(),
+  rolledBackTo: z.string().nullable(),
+  createdBy: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export const DeploymentRolloutSchema = z.object({
+  id: z.string(),
+  manifestId: z.string(),
+  gatewayId: z.string(),
+  status: z.enum(["pending", "in_progress", "success", "failed", "skipped"]),
+  startedAt: z.string().nullable(),
+  completedAt: z.string().nullable(),
+  errorMessage: z.string().nullable(),
+  attempt: z.number().int(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export const FleetGroupSchema = z.object({
+  id: z.string(),
+  name: z.string().min(1).max(100),
+  description: z.string().nullable(),
+  tags: z.string(), // JSON string[]
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export type DeploymentManifest = z.infer<typeof DeploymentManifestSchema>;
+export type DeploymentRollout = z.infer<typeof DeploymentRolloutSchema>;
+export type FleetGroup = z.infer<typeof FleetGroupSchema>;
