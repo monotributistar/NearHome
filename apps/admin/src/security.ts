@@ -76,13 +76,14 @@ const ACL: Record<Role, Record<string, string[]>> = {
     subscriptions: ["list", "create", "edit", "show"]
   },
   monitor: {
+    // monitor = User/customer role — can manage their viewers (client_user) and subscription
     tenants: ["list", "show"],
-    users: ["list", "show"],
-    memberships: ["list", "show"],
+    users: ["list", "create", "edit", "show"],
+    memberships: ["list", "create", "show"],
     cameras: ["list", "show"],
     notifications: ["list", "show"],
-    plans: ["list"],
-    subscriptions: ["list", "show"]
+    plans: ["list", "show"],
+    subscriptions: ["list", "create", "edit", "show"]
   },
   client_user: {
     tenants: ["list", "show"],

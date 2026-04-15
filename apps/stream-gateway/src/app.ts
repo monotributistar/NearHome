@@ -6,6 +6,8 @@ import { z } from "zod";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createMediaEngineFromEnv, type MediaEngine } from "./media-engine.js";
+import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 const IngestTransportSchema = z.enum(["auto", "tcp", "udp"]);
 const IngestEncryptionSchema = z.enum(["optional", "required", "disabled"]);
@@ -496,6 +498,24 @@ export async function buildApp(options: BuildAppOptions = {}) {
     Math.max(1, Number(process.env.STREAM_RETENTION_TARGET_DISK_USAGE_PCT ?? 75))
   );
   const retentionExtensions = parseRetentionExtensions(process.env.STREAM_RETENTION_FILE_EXTENSIONS);
+
+  // S3 archive config (for event clip archival after creation)
+  const s3ArchiveEnabled = process.env.STREAM_S3_ARCHIVE_ENABLED === "1";
+  const s3Endpoint = process.env.STREAM_S3_ENDPOINT ?? null;
+  const s3Bucket = process.env.STREAM_S3_BUCKET ?? "nearhome-clips";
+  const s3Region = process.env.STREAM_S3_REGION ?? "us-east-1";
+  const s3AccessKey = process.env.STREAM_S3_ACCESS_KEY ?? null;
+  const s3SecretKey = process.env.STREAM_S3_SECRET_KEY ?? null;
+  const s3 =
+    s3ArchiveEnabled && s3Endpoint && s3AccessKey && s3SecretKey
+      ? new S3Client({
+          endpoint: s3Endpoint,
+          region: s3Region,
+          credentials: { accessKeyId: s3AccessKey, secretAccessKey: s3SecretKey },
+          forcePathStyle: true
+        })
+      : null;
+
   const corsOrigins = (process.env.STREAM_CORS_ORIGINS ?? process.env.CORS_ORIGIN_ADMIN ?? "*")
     .split(",")
     .map((value) => value.trim())
@@ -2134,12 +2154,54 @@ export async function buildApp(options: BuildAppOptions = {}) {
     eventClips.set(eventClipKey(body.tenantId, body.cameraId, eventId), entry);
     eventClipsCreatedTotal += 1;
     eventClipsBytesTotal += entry.clipBytes;
+
+    // Fire-and-forget S3 archive upload
+    if (s3) {
+      const s3Key = `clips/${body.tenantId}/${body.cameraId}/${eventId}/clip.ts`;
+      (async () => {
+        try {
+          const clipData = await fs.readFile(entry.clipPath);
+          await s3.send(new PutObjectCommand({
+            Bucket: s3Bucket,
+            Key: s3Key,
+            Body: clipData,
+            ContentType: "video/mp2t",
+            Metadata: {
+              eventId,
+              tenantId: body.tenantId,
+              cameraId: body.cameraId,
+              createdAt: entry.createdAt
+            }
+          }));
+          app.log.info({ eventId, s3Key, bytes: entry.clipBytes }, "event_clip.s3_archived");
+        } catch (err) {
+          app.log.warn({ err, eventId, s3Key }, "event_clip.s3_archive_failed");
+        }
+      })();
+    }
+
     return {
       data: {
         ...entry,
         playbackPath: `/playback/events/${body.tenantId}/${body.cameraId}/${eventId}/index.m3u8`
       }
     };
+  });
+
+  app.get("/events/clips/:tenantId/:cameraId/:eventId/download-url", async (request, reply) => {
+    if (!s3) {
+      reply.status(501);
+      return { code: "S3_NOT_CONFIGURED", message: "S3 archive is not configured" };
+    }
+    const { tenantId, cameraId, eventId } = request.params as { tenantId: string; cameraId: string; eventId: string };
+    const s3Key = `clips/${tenantId}/${cameraId}/${eventId}/clip.ts`;
+    try {
+      const url = await getSignedUrl(s3, new GetObjectCommand({ Bucket: s3Bucket, Key: s3Key }), { expiresIn: 3600 });
+      return { data: { url, expiresIn: 3600, key: s3Key } };
+    } catch {
+      reply.status(404);
+      return { code: "CLIP_NOT_IN_ARCHIVE", message: "Clip not found in S3 archive" };
+    }
   });
 
   app.get("/events/clips", async (request) => {

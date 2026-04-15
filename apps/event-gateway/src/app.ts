@@ -3,6 +3,7 @@ import cors from "@fastify/cors";
 import websocket from "@fastify/websocket";
 import jwt from "@fastify/jwt";
 import type { FastifyRequest } from "fastify";
+import Redis from "ioredis";
 
 // Edge Gateway heartbeat processing endpoint
 // Extends the event gateway to handle edge gateway health events
@@ -71,7 +72,16 @@ const tenantSequence = new Map<string, number>();
 const tenantBacklog = new Map<string, OutboundEvent[]>();
 const wsSubscribers = new Map<string, Set<WsSubscriber>>();
 const sseSubscribers = new Map<string, Set<SseSubscriber>>();
-const MAX_BACKLOG_PER_TENANT = 200;
+const MAX_BACKLOG_PER_TENANT = 500;
+
+// Redis Streams — durable backlog (optional; falls back to in-memory)
+const redisUrl = process.env.REDIS_URL;
+let redis: Redis | null = null;
+if (redisUrl) {
+  redis = new Redis(redisUrl, { lazyConnect: true, enableOfflineQueue: false, maxRetriesPerRequest: 1 });
+  redis.on("error", (err: unknown) => console.error("[event-gateway] redis error", err));
+}
+const redisStreamKey = (tenantId: string) => `nearhome:events:${tenantId}`;
 
 function eventMatchesTopics(eventType: string, topics: string[]) {
   if (topics.length === 0) return true;
@@ -106,17 +116,32 @@ function createEvent(args: {
   };
 }
 
-function addBacklogEvent(event: OutboundEvent) {
+async function addBacklogEvent(event: OutboundEvent) {
+  // In-memory (always kept for zero-latency subscriber delivery)
   const events = tenantBacklog.get(event.tenantId) ?? [];
   events.push(event);
   if (events.length > MAX_BACKLOG_PER_TENANT) {
     events.splice(0, events.length - MAX_BACKLOG_PER_TENANT);
   }
   tenantBacklog.set(event.tenantId, events);
+
+  // Durable: Redis Streams with capped length
+  if (redis) {
+    try {
+      await redis.xadd(
+        redisStreamKey(event.tenantId),
+        "MAXLEN", "~", String(MAX_BACKLOG_PER_TENANT),
+        "*",
+        "data", JSON.stringify(event)
+      );
+    } catch {
+      // Non-fatal: in-memory backlog is still intact
+    }
+  }
 }
 
-function publishEvent(event: OutboundEvent) {
-  addBacklogEvent(event);
+async function publishEvent(event: OutboundEvent) {
+  await addBacklogEvent(event);
 
   const wsSet = wsSubscribers.get(event.tenantId);
   if (wsSet) {
@@ -182,7 +207,7 @@ export async function buildApp() {
       payload: typeof body.payload === "object" && body.payload ? (body.payload as Record<string, unknown>) : {}
     };
 
-    publishEvent(event);
+    await publishEvent(event);
     reply.code(202);
     return { data: event };
   });
@@ -218,9 +243,28 @@ export async function buildApp() {
     sseSubscribers.set(tenantId, subscribers);
 
     if (replayRequested > 0) {
-      const backlog = tenantBacklog.get(tenantId) ?? [];
-      const replay = backlog.slice(Math.max(0, backlog.length - replayRequested));
-      for (const event of replay) {
+      let replayEvents: OutboundEvent[] = [];
+      if (redis) {
+        try {
+          const entries = await redis.xrevrange(redisStreamKey(tenantId), "+", "-", "COUNT", replayRequested);
+          replayEvents = entries
+            .reverse()
+            .map(([, fields]) => {
+              const idx = fields.indexOf("data");
+              if (idx === -1) return null;
+              try { return JSON.parse(fields[idx + 1]) as OutboundEvent; } catch { return null; }
+            })
+            .filter((e): e is OutboundEvent => e !== null);
+        } catch {
+          // Fall back to in-memory
+          const backlog = tenantBacklog.get(tenantId) ?? [];
+          replayEvents = backlog.slice(Math.max(0, backlog.length - replayRequested));
+        }
+      } else {
+        const backlog = tenantBacklog.get(tenantId) ?? [];
+        replayEvents = backlog.slice(Math.max(0, backlog.length - replayRequested));
+      }
+      for (const event of replayEvents) {
         if (!eventMatchesTopics(event.eventType, topics)) continue;
         reply.raw.write(`id: ${event.eventId}\n`);
         reply.raw.write(`event: ${event.eventType}\n`);
@@ -367,7 +411,7 @@ export async function buildApp() {
       }
     }
 
-    // Create health event for real-time distribution
+    // Create and publish health event (persists to backlog + distributes to subscribers)
     const healthEvent = createEvent({
       tenantId: body.tenantId,
       eventType: "edge_gateway.health",
@@ -382,27 +426,8 @@ export async function buildApp() {
       }
     });
 
-    // Distribute to subscribers
-    const tenantSubscribers = wsSubscribers.get(body.tenantId);
-    if (tenantSubscribers) {
-      for (const subscriber of tenantSubscribers) {
-        if (eventMatchesTopics("edge_gateway.*", subscriber.topics)) {
-          subscriber.socket.send(JSON.stringify(healthEvent));
-        }
-      }
-    }
+    await publishEvent(healthEvent);
 
-    const sseTenantSubscribers = sseSubscribers.get(body.tenantId);
-    if (sseTenantSubscribers) {
-      const eventData = `id: ${healthEvent.eventId}\nevent: ${healthEvent.eventType}\ndata: ${JSON.stringify(healthEvent)}\n\n`;
-      for (const subscriber of sseTenantSubscribers) {
-        if (eventMatchesTopics("edge_gateway.*", subscriber.topics)) {
-          subscriber.write(eventData);
-        }
-      }
-    }
-
-    // Log health status changes
     if (healthStatus === "unhealthy") {
       app.log.warn(
         { gatewayId: body.gatewayId, tenantId: body.tenantId, metrics: body.metrics },
