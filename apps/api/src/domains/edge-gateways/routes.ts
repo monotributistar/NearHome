@@ -5,8 +5,9 @@ import type { AppMiddleware } from "../../core/middleware.js";
 import { prisma } from "../../core/prisma.js";
 import { getTenantContext } from "../../core/utils.js";
 import { NotFoundError } from "../../core/types.js";
+import { BalenaFleetService } from "./balena.service.js";
 
-export type EdgeGatewaysPluginOptions = { middleware: AppMiddleware };
+export type EdgeGatewaysPluginOptions = { middleware: AppMiddleware; balenaApiUrl: string | null; balenaApiKey: string | null };
 
 export const edgeGatewaysPlugin: FastifyPluginAsync<EdgeGatewaysPluginOptions> = async (app, opts) => {
   const { tenantScopedPreHandler } = opts.middleware;

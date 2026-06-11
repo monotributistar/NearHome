@@ -1,0 +1,94 @@
+# NearHome POC Stack — Consolidated docker-compose
+# Single file replacing docker-compose.yml + docker-compose.local.yml + onprem overrides
+name: nearhome-poc
+
+services:
+  # ─── Core services ───────────────────────────────────────────────────
+
+  api:
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile.node-workspace
+    command: ["pnpm", "--filter", "@app/api", "dev"]
+    environment:
+      PORT: 3001
+      JWT_SECRET: dev-super-secret
+      STREAM_TOKEN_SECRET: dev-stream-token-secret
+      DATABASE_URL: file:./dev.db
+      STREAM_GATEWAY_URL: http://stream-gateway:3010
+      STREAM_GATEWAY_PUBLIC_URL: http://localhost:3010
+      EVENT_GATEWAY_URL: http://event-gateway:3011
+      EVENT_PUBLISH_SECRET: dev-event-publish-secret
+      SUPERUSER_EMAILS: admin@nearhome.dev
+      CORS_ORIGIN_ADMIN: http://localhost:5173
+      CORS_ORIGIN_PORTAL: http://localhost:5174
+      PORTAL_BASE_URL: http://localhost:5174
+    ports:
+      - "3001:3001"
+    depends_on:
+      - stream-gateway
+      - event-gateway
+    networks:
+      - poc_net
+
+  stream-gateway:
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile.node-workspace
+    command: ["pnpm", "--filter", "@app/stream-gateway", "dev"]
+    environment:
+      PORT: 3010
+      STREAM_STORAGE_DIR: /data/storage
+      STREAM_TOKEN_SECRET: dev-stream-token-secret
+      STREAM_PROBE_INTERVAL_MS: 5000
+      STREAM_MEDIA_ENGINE: mock
+      STREAM_S3_ARCHIVE_ENABLED: "0"
+    ports:
+      - "3010:3010"
+    networks:
+      - poc_net
+
+  event-gateway:
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile.node-workspace
+    command: ["pnpm", "--filter", "@app/event-gateway", "dev"]
+    environment:
+      PORT: 3011
+      JWT_SECRET: dev-super-secret
+      EVENT_PUBLISH_SECRET: dev-event-publish-secret
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "3011:3011"
+    depends_on:
+      - redis
+    networks:
+      - poc_net
+
+  # ─── Detection plane ─────────────────────────────────────────────────
+
+  inference-bridge:
+    build:
+      context: ../apps/inference-bridge
+      dockerfile: Dockerfile
+    environment:
+      NODE_AUTH_JWT_SECRET: dev-node-auth-secret
+      NODE_AUTH_ADMIN_SECRET: dev-node-auth-admin-secret
+      NODE_HEARTBEAT_TTL_MS: "60000"
+    ports:
+      - "8090:8090"
+    networks:
+      - poc_net
+
+  # ─── Dependencies ────────────────────────────────────────────────────
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - poc_net
+
+networks:
+  poc_net:
+    driver: bridge

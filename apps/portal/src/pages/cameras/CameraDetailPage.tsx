@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useParams } from "react-router-dom";
 import { ApiClient } from "@app/api-client";
 import { PageCard, PrimaryButton, Badge, Surface } from "@app/ui";
+import { DetectionOverlay, useDetectionFeed } from "@app/ui";
 import { formatApiError } from "../../lib/client.js";
 
 export function CameraDetailPage({ api }: { api: ApiClient }) {
@@ -12,6 +13,16 @@ export function CameraDetailPage({ api }: { api: ApiClient }) {
   const [session, setSession] = useState<any>(null);
   const [sessions, setSessions] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [detectionOn, setDetectionOn] = useState(false);
+
+  const inferenceUrl = `${window.location.protocol}//${window.location.hostname}:8090/v1/infer/hf/yolo`;
+  const {
+    videoRef,
+    detections,
+    error: detectionError,
+    loading: detectionLoading,
+    frameCount,
+  } = useDetectionFeed({ inferenceUrl, intervalMs: 1000, enabled: detectionOn });
 
   async function loadCamera(cameraId: string) {
     const res = await api.get<any>(`/cameras/${cameraId}`);
@@ -125,8 +136,47 @@ export function CameraDetailPage({ api }: { api: ApiClient }) {
         )}
         {token?.playbackUrl && (
           <div className="rounded-lg bg-slate-100 p-3">
-            <div className="mb-2 text-xs text-slate-600">Playback preview</div>
-            <video className="w-full rounded-lg" controls muted src={token.playbackUrl} />
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-xs text-slate-600">Playback preview</span>
+              <button
+                data-testid="toggle-detection"
+                className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                  detectionOn
+                    ? "bg-green-600 text-white"
+                    : "border border-slate-300 text-slate-600 hover:bg-slate-200"
+                }`}
+                onClick={() => setDetectionOn((v) => !v)}
+              >
+                {detectionOn ? "✓ Live Detection ON" : "Live Detection"}
+              </button>
+            </div>
+            <div className="relative" data-testid="video-detection-container">
+              <video
+                ref={videoRef}
+                className="w-full rounded-lg"
+                controls
+                muted
+                src={token.playbackUrl}
+              />
+              <DetectionOverlay
+                detections={detections}
+                width={videoRef.current?.videoWidth || 640}
+                height={videoRef.current?.videoHeight || 480}
+                visible={detectionOn}
+              />
+            </div>
+            {detectionOn && (
+              <div className="mt-2 flex items-center gap-3 text-xs text-slate-500">
+                <span data-testid="detection-frame-count">Frames: {frameCount}</span>
+                <span data-testid="detection-count">Detections: {detections.length}</span>
+                {detectionLoading && (
+                  <span className="text-amber-600">Analyzing...</span>
+                )}
+                {detectionError && (
+                  <span className="text-rose-600" data-testid="detection-error">{detectionError}</span>
+                )}
+              </div>
+            )}
           </div>
         )}
         {session && (

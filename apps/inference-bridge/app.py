@@ -4,16 +4,22 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException, Response
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Response, UploadFile
 from pydantic import BaseModel, Field
 
+from hf_client import get_space_pool, HF_SPACE_YOLO
+
 app = FastAPI(title="NearHome Inference Bridge", version="0.2.0")
+
+logger = logging.getLogger("inference-bridge")
 
 JWT_SECRET = os.environ.get("NODE_AUTH_JWT_SECRET", "dev-node-auth-secret")
 JWT_ISSUER = os.environ.get("NODE_AUTH_JWT_ISSUER", "nearhome-control-plane")
@@ -68,6 +74,14 @@ class InferRequest(BaseModel):
     deadlineMs: int = 15000
     priority: int = 5
     provider: Literal["onprem_bento", "huggingface_space", "external_http"] = "onprem_bento"
+
+
+class HFInferResponse(BaseModel):
+    status: str = "ok"
+    detections: List[Dict[str, Any]] = Field(default_factory=list)
+    coldStart: bool = False
+    eventId: Optional[str] = None
+    providerLatencyMs: int = 0
 
 
 class InferResponse(BaseModel):
@@ -571,3 +585,84 @@ async def infer(payload: InferRequest):
         providerMeta={"nodeId": node.nodeId, **body.get("providerMeta", {})},
         rawRef=body.get("rawRef"),
     )
+
+
+# ─── HF Zero GPU Inference Routes ────────────────────────────────────────
+
+@app.post("/v1/infer/hf/yolo", response_model=HFInferResponse)
+async def infer_hf_yolo(
+    file: UploadFile = File(...),
+    tenantId: str = Form(""),
+    cameraId: str = Form(""),
+    frameTs: str = Form(""),
+    motionPct: str = Form("0"),
+):
+    """Forward a JPEG frame to YOLO HF Space for object detection.
+
+    Receives frames from change-detector, returns YOLO detections.
+    Falls back to mock if HF_TOKEN is not configured.
+    """
+    t0 = time.monotonic()
+
+    image_data = await file.read()
+
+    # Mock fallback if no HF token
+    if not os.environ.get("HF_TOKEN"):
+        logger.info("HF_TOKEN not set, returning mock YOLO detection")
+        return HFInferResponse(
+            status="ok",
+            detections=[
+                {
+                    "label": "person",
+                    "confidence": 0.87,
+                    "bbox": {"x": 0.22, "y": 0.16, "w": 0.20, "h": 0.40},
+                }
+            ],
+            providerLatencyMs=int((time.monotonic() - t0) * 1000),
+        )
+
+    pool = get_space_pool()
+    client = pool.get(HF_SPACE_YOLO)
+
+    try:
+        result = await client.infer(image_data)
+    except Exception as exc:
+        logger.error("HF YOLO inference failed: %s", exc)
+        return HFInferResponse(
+            status="error",
+            detections=[],
+            providerLatencyMs=int((time.monotonic() - t0) * 1000),
+        )
+
+    if result.get("status") == "cold_start":
+        return HFInferResponse(
+            status="cold_start",
+            coldStart=True,
+            detections=[],
+            providerLatencyMs=int((time.monotonic() - t0) * 1000),
+        )
+
+    return HFInferResponse(
+        status="ok",
+        detections=result.get("detections", []),
+        providerLatencyMs=int((time.monotonic() - t0) * 1000),
+    )
+
+
+@app.get("/v1/infer/hf/health")
+async def infer_hf_health():
+    """Check availability of all configured HF Spaces."""
+    pool = get_space_pool()
+    results = await pool.health_all()
+    return {
+        "spaces": results,
+        "hfTokenConfigured": bool(os.environ.get("HF_TOKEN")),
+    }
+
+
+@app.post("/v1/infer/hf/keep-warm")
+async def infer_hf_keep_warm():
+    """Wake up all configured HF Spaces."""
+    pool = get_space_pool()
+    await pool.keep_warm_all()
+    return {"status": "waking"}

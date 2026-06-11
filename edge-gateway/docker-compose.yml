@@ -20,6 +20,27 @@ services:
     labels:
       io.balena.supervised: "true"
 
+  wireguard-router:
+    build:
+      context: ./wireguard-router
+      dockerfile: Dockerfile
+    restart: always
+    network_mode: host
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - ./wireguard-router/wg0.conf.example:/etc/wireguard/wg0.conf:ro
+    environment:
+      - WG_INTERFACE=${WG_INTERFACE:-wg0}
+      - WG_CONFIG_PATH=${WG_CONFIG_PATH:-/etc/wireguard/wg0.conf}
+      - CAMERA_SUBNET_CIDR=${CAMERA_SUBNET_CIDR:-192.168.10.0/24}
+      - INFRA_ALLOWED_CIDRS=${INFRA_ALLOWED_CIDRS:-10.88.0.0/16}
+      - CAMERA_IFACE=${CAMERA_IFACE:-eth0}
+      - ROUTING_MODE=${ROUTING_MODE:-route}
+    labels:
+      io.balena.supervised: "true"
+
   # Optional: tunnel manager as separate service
   # tunnel-manager:
   #   build: ./discovery-agent

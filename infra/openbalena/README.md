@@ -26,6 +26,12 @@ cp .env.example .env
 docker-compose up -d
 ```
 
+Or with the helper script:
+
+```bash
+bash scripts/openbalena/stack-up.sh base
+```
+
 ### 3. Verify Services
 
 ```bash
@@ -42,6 +48,47 @@ Point your domain to the server:
 | A           | api.balena      | YOUR_SERVER_IP |
 | A           | vpn.balena      | YOUR_SERVER_IP |
 | A           | registry.balena | YOUR_SERVER_IP |
+
+## Cloudflare Tunnel (recommended for API + Registry)
+
+Use Cloudflare Tunnel to publish HTTP services (`api`, `registry`) without exposing origin ports.
+
+Important:
+
+- Keep `vpn` exposed directly on your server/public IP for device onboarding stability.
+- openBalena VPN device traffic uses port ranges that are better handled with direct host networking/firewall controls.
+
+### 1. Configure environment
+
+```bash
+cp infra/openbalena/.env.example infra/openbalena/.env
+```
+
+Set at least:
+
+- `OPENBALENA_API_HOSTNAME`
+- `OPENBALENA_REGISTRY_HOSTNAME`
+- `OPENBALENA_VPN_HOSTNAME`
+- `CLOUDFLARE_TUNNEL_TOKEN`
+
+### 2. Configure tunnel routes in Cloudflare
+
+- `api.<your-domain>` -> `http://api:3000`
+- `registry.<your-domain>` -> `http://registry:80`
+
+Reference template: `infra/openbalena/cloudflared-config.example.yml`
+
+### 3. Start with tunnel profile
+
+```bash
+bash scripts/openbalena/stack-up.sh tunnel
+```
+
+### 4. Verify end-to-end
+
+```bash
+bash scripts/openbalena/verify-tunnel.sh
+```
 
 ### 5. Access openbalena
 
@@ -87,6 +134,8 @@ Create a `config.json` for your Raspberry Pi:
   "provisioningApiKey": "your_provisioning_key"
 }
 ```
+
+For tunnel deployments, set hostnames matching your published endpoints and keep VPN endpoint public/reachable from devices.
 
 Flash this config to the Raspberry Pi SD card using balenaEtcher with balenaOS.
 

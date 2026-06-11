@@ -87,6 +87,10 @@ Diagrama completo y extendido: `/Users/monotributistar/SOURCES/NearHome/docs/SIS
 - Contrato ControlPlane/DataPlane: `/Users/monotributistar/SOURCES/NearHome/docs/CONTROLPLANE_DATAPLANE_CONTRACT.md`
 - Contrato de seguridad/autenticación de nodos de detección: `/Users/monotributistar/SOURCES/NearHome/docs/NODE_AUTH_CONTRACT.md`
 - Contrato de VPN y espacios de red por tenant: `/Users/monotributistar/SOURCES/NearHome/docs/VPN_NETWORK_LIFECYCLE_CONTRACT.md`
+- Runbook Cloudflare Tunnel + openBalena multi-cliente: `/Users/monotributistar/SOURCES/NearHome/docs/OPENBALENA_CLOUDFLARE_TUNNEL_RUNBOOK.md`
+- Plan ejecutable VPN RTSP (BalenaOS como router): `/Users/monotributistar/SOURCES/NearHome/docs/OPENBALENA_BALENAOS_VPN_RTSP_EXECUTION_PLAN.md`
+- Arquitectura media-plane WireGuard para RTSP multi-stream: `/Users/monotributistar/SOURCES/NearHome/docs/OPENBALENA_WIREGUARD_MEDIA_PLANE.md`
+- Operación completa (Edge RPi + Cloudflare + VPN por cliente): `/Users/monotributistar/SOURCES/NearHome/docs/OPENBALENA_WIREGUARD_CLIENT_OPERATIONS.md`
 - Historias técnicas + plan TDD de VPN/red: `/Users/monotributistar/SOURCES/NearHome/docs/HISTORIAS_TECNICAS_VPN_TDD.md`
 - Contrato de Entitlements: `/Users/monotributistar/SOURCES/NearHome/docs/ENTITLEMENTS_CONTRACT.md`
 - Guía de storage vaults (local/LAN/VPN): `/Users/monotributistar/SOURCES/NearHome/docs/STORAGE_VAULTS.md`

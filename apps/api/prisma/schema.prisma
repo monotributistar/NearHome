@@ -30,16 +30,6 @@ model Tenant {
   notificationChannels     NotificationChannel[]
   notificationDeliveries   NotificationDelivery[]
   cameraAssignments        CameraAssignment[]
-  households               Household[]
-  householdMembers         HouseholdMember[]
-  subscriptionRequests     SubscriptionRequest[]
-  faceDetections          FaceDetection[]
-  faceEmbeddings          FaceEmbedding[]
-  faceClusters            FaceCluster[]
-  faceClusterMembers      FaceClusterMember[]
-  faceIdentities          FaceIdentity[]
-  faceIdentityMembers     FaceIdentityMember[]
-  faceIdentityMergeLogs   FaceIdentityMergeLog[]
   vpns                    TenantVpn[]
   networkSpaces           TenantNetworkSpace[]
   vpnRoutePolicies        TenantVpnRoutePolicy[]
@@ -48,7 +38,7 @@ model Tenant {
   edgeGateways            EdgeGateway[]
   discoveredCameras       DiscoveredCamera[]
   discoveredDevices       DiscoveredDevice[]
-  deploymentManifests     DeploymentManifest[]
+  sites                   Site[]
 }
 
 model Fleet {
@@ -65,6 +55,21 @@ model Fleet {
 
   @@unique([tenantId, name])
   @@index([tenantId, status])
+}
+
+model Site {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  address     String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  edgeGateways EdgeGateway[]
+  networkSpaces TenantNetworkSpace[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
 }
 
 model EdgeGateway {
@@ -88,18 +93,16 @@ model EdgeGateway {
   pairedAt            DateTime?
   tenant              Tenant?           @relation(fields: [tenantId], references: [id], onDelete: SetNull)
   fleet               Fleet?            @relation(fields: [fleetId], references: [id], onDelete: SetNull)
+  siteId              String?
+  site                Site?             @relation(fields: [siteId], references: [id], onDelete: SetNull)
+  pairingTokens       EdgeGatewayPairingToken[]
   discoveredCameras   DiscoveredCamera[]
   discoveredDevices   DiscoveredDevice[]
-  pairingTokens       EdgeGatewayPairingToken[]
-  fleetGroupId        String?
-  fleetGroup          FleetGroup?       @relation(fields: [fleetGroupId], references: [id])
-  rollouts            DeploymentRollout[]
 
   @@index([tenantId, status])
   @@index([balenaDeviceUUID])
   @@index([fleetId])
   @@index([apiTokenHash])
-  @@index([fleetGroupId])
 }
 
 model EdgeGatewayPairingToken {
@@ -177,11 +180,7 @@ model TenantVpn {
   tenantId              String
   name                  String
   provider              String
-  topology              String
   status                String                @default("draft")
-  lifecycleStatusReason String?
-  credentialsRef        String?
-  tunnelInterface       String?
   createdAt             DateTime              @default(now())
   updatedAt             DateTime              @updatedAt
   activatedAt           DateTime?
@@ -210,6 +209,8 @@ model TenantNetworkSpace {
   updatedAt  DateTime  @updatedAt
   tenant     Tenant    @relation(fields: [tenantId], references: [id])
   vpn        TenantVpn @relation(fields: [vpnId], references: [id])
+  siteId     String?
+  site       Site?     @relation(fields: [siteId], references: [id], onDelete: SetNull)
 
   @@index([tenantId, vpnId])
   @@index([tenantId, cidr])
@@ -262,11 +263,6 @@ model User {
   memberships  Membership[]
   streamSessions StreamSession[]
   cameraAssignments CameraAssignment[]
-  householdsCreated Household[]
-  householdMembersCreated HouseholdMember[]
-  subscriptionRequestsCreated SubscriptionRequest[] @relation("SubscriptionRequestCreatedBy")
-  subscriptionRequestsReviewed SubscriptionRequest[] @relation("SubscriptionRequestReviewedBy")
-  faceIdentityMergeLogs       FaceIdentityMergeLog[]
 }
 
 model Membership {
@@ -308,7 +304,6 @@ model Camera {
   incidentEvents        IncidentEvent[]
   notificationDeliveries NotificationDelivery[]
   assignments           CameraAssignment[]
-  faceDetections        FaceDetection[]
 }
 
 model CameraAssignment {
@@ -382,7 +377,6 @@ model Plan {
   features  String
   createdAt DateTime       @default(now())
   subscriptions Subscription[]
-  subscriptionRequests SubscriptionRequest[]
 }
 
 model Subscription {
@@ -397,31 +391,6 @@ model Subscription {
   plan               Plan     @relation(fields: [planId], references: [id])
 
   @@unique([tenantId])
-}
-
-model SubscriptionRequest {
-  id                 String   @id @default(cuid())
-  tenantId           String
-  planId             String
-  requestedByUserId  String
-  status             String   @default("pending_review")
-  proofImageUrl      String
-  proofFileName      String
-  proofMimeType      String
-  proofSizeBytes     Int
-  proofMetadata      String?
-  notes              String?
-  reviewedByUserId   String?
-  reviewNotes        String?
-  reviewedAt         DateTime?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
-  tenant             Tenant   @relation(fields: [tenantId], references: [id])
-  plan               Plan     @relation(fields: [planId], references: [id])
-  requestedByUser    User     @relation("SubscriptionRequestCreatedBy", fields: [requestedByUserId], references: [id])
-  reviewedByUser     User?    @relation("SubscriptionRequestReviewedBy", fields: [reviewedByUserId], references: [id])
-
-  @@index([tenantId, status, createdAt])
 }
 
 model Event {
@@ -446,43 +415,6 @@ model AuditLog {
   payload     String?
   createdAt   DateTime @default(now())
   tenant      Tenant   @relation(fields: [tenantId], references: [id])
-}
-
-model Household {
-  id              String            @id @default(cuid())
-  tenantId        String
-  name            String
-  address         String?
-  notes           String?
-  isActive        Boolean           @default(true)
-  createdByUserId String?
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
-  tenant          Tenant            @relation(fields: [tenantId], references: [id])
-  createdByUser   User?             @relation(fields: [createdByUserId], references: [id])
-  members         HouseholdMember[]
-
-  @@index([tenantId, createdAt])
-}
-
-model HouseholdMember {
-  id              String    @id @default(cuid())
-  tenantId        String
-  householdId     String
-  fullName        String
-  relationship    String
-  phone           String?
-  canViewCameras  Boolean   @default(true)
-  canReceiveAlerts Boolean  @default(true)
-  isActive        Boolean   @default(true)
-  createdByUserId String?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-  tenant          Tenant    @relation(fields: [tenantId], references: [id])
-  household       Household @relation(fields: [householdId], references: [id])
-  createdByUser   User?     @relation(fields: [createdByUserId], references: [id])
-
-  @@index([tenantId, householdId, createdAt])
 }
 
 model StreamSession {
@@ -564,143 +496,9 @@ model DetectionObservation {
   tenant          Tenant   @relation(fields: [tenantId], references: [id])
   camera          Camera   @relation(fields: [cameraId], references: [id])
   evidence        IncidentEvidence[]
-  faceDetection   FaceDetection?
 
   @@index([tenantId, cameraId, frameTs])
   @@index([jobId])
-}
-
-model FaceDetection {
-  id                  String                @id @default(cuid())
-  tenantId            String
-  cameraId            String
-  observationId       String                @unique
-  detectorProvider    String
-  detectorTaskType    String
-  cropStorageKey      String?
-  qualityScore        Float?
-  bbox                String
-  frameTs             DateTime
-  createdAt           DateTime              @default(now())
-  updatedAt           DateTime              @updatedAt
-  tenant              Tenant                @relation(fields: [tenantId], references: [id])
-  camera              Camera                @relation(fields: [cameraId], references: [id])
-  observation         DetectionObservation  @relation(fields: [observationId], references: [id])
-  embedding           FaceEmbedding?
-  clusterMembership   FaceClusterMember?
-  identityMembership  FaceIdentityMember?
-
-  @@index([tenantId, cameraId, frameTs])
-  @@index([tenantId, createdAt])
-}
-
-model FaceEmbedding {
-  id                 String          @id @default(cuid())
-  tenantId           String
-  faceDetectionId    String          @unique
-  embeddingVector    String?
-  embeddingRef       String?
-  embeddingModelRef  String?
-  embeddingVersion   String?
-  qualityScore       Float?
-  vectorNorm         Float?
-  dimensions         Int?
-  createdAt          DateTime        @default(now())
-  updatedAt          DateTime        @updatedAt
-  tenant             Tenant          @relation(fields: [tenantId], references: [id])
-  faceDetection      FaceDetection   @relation(fields: [faceDetectionId], references: [id])
-  clusterMembership  FaceClusterMember?
-  identityMembership FaceIdentityMember?
-
-  @@index([tenantId, createdAt])
-}
-
-model FaceCluster {
-  id                  String              @id @default(cuid())
-  tenantId            String
-  status              String              @default("open")
-  displayName         String?
-  centroidEmbedding   String?
-  memberCount         Int                 @default(0)
-  confirmedIdentityId String?
-  createdAt           DateTime            @default(now())
-  updatedAt           DateTime            @updatedAt
-  tenant              Tenant              @relation(fields: [tenantId], references: [id])
-  confirmedIdentity   FaceIdentity?       @relation("FaceClusterConfirmedIdentity", fields: [confirmedIdentityId], references: [id])
-  members             FaceClusterMember[]
-  identityMembers     FaceIdentityMember[]
-
-  @@index([tenantId, status, updatedAt])
-}
-
-model FaceClusterMember {
-  id               String         @id @default(cuid())
-  tenantId         String
-  clusterId        String
-  faceDetectionId  String         @unique
-  faceEmbeddingId  String?        @unique
-  similarityScore  Float?
-  createdAt        DateTime       @default(now())
-  tenant           Tenant         @relation(fields: [tenantId], references: [id])
-  cluster          FaceCluster    @relation(fields: [clusterId], references: [id])
-  faceDetection    FaceDetection  @relation(fields: [faceDetectionId], references: [id])
-  faceEmbedding    FaceEmbedding? @relation(fields: [faceEmbeddingId], references: [id])
-
-  @@index([tenantId, clusterId, createdAt])
-}
-
-model FaceIdentity {
-  id                    String                @id @default(cuid())
-  tenantId              String
-  displayName           String?
-  status                String                @default("unresolved")
-  mergedIntoIdentityId  String?
-  createdAt             DateTime              @default(now())
-  updatedAt             DateTime              @updatedAt
-  tenant                Tenant                @relation(fields: [tenantId], references: [id])
-  mergedIntoIdentity    FaceIdentity?         @relation("FaceIdentityMergeChain", fields: [mergedIntoIdentityId], references: [id])
-  mergedIdentities      FaceIdentity[]        @relation("FaceIdentityMergeChain")
-  members               FaceIdentityMember[]
-  confirmedClusters     FaceCluster[]         @relation("FaceClusterConfirmedIdentity")
-  sourceMergeLogs       FaceIdentityMergeLog[] @relation("FaceIdentityMergeSource")
-  targetMergeLogs       FaceIdentityMergeLog[] @relation("FaceIdentityMergeTarget")
-
-  @@index([tenantId, status, updatedAt])
-}
-
-model FaceIdentityMember {
-  id               String         @id @default(cuid())
-  tenantId         String
-  identityId       String
-  faceDetectionId  String         @unique
-  faceEmbeddingId  String?        @unique
-  sourceClusterId  String?
-  createdAt        DateTime       @default(now())
-  tenant           Tenant         @relation(fields: [tenantId], references: [id])
-  identity         FaceIdentity   @relation(fields: [identityId], references: [id])
-  faceDetection    FaceDetection  @relation(fields: [faceDetectionId], references: [id])
-  faceEmbedding    FaceEmbedding? @relation(fields: [faceEmbeddingId], references: [id])
-  sourceCluster    FaceCluster?   @relation(fields: [sourceClusterId], references: [id])
-
-  @@index([tenantId, identityId, createdAt])
-}
-
-model FaceIdentityMergeLog {
-  id                String       @id @default(cuid())
-  tenantId          String
-  sourceIdentityId  String
-  targetIdentityId  String
-  actorUserId       String?
-  reason            String?
-  createdAt         DateTime     @default(now())
-  tenant            Tenant       @relation(fields: [tenantId], references: [id])
-  sourceIdentity    FaceIdentity @relation("FaceIdentityMergeSource", fields: [sourceIdentityId], references: [id])
-  targetIdentity    FaceIdentity @relation("FaceIdentityMergeTarget", fields: [targetIdentityId], references: [id])
-  actorUser         User?        @relation(fields: [actorUserId], references: [id])
-
-  @@index([tenantId, createdAt])
-  @@index([sourceIdentityId])
-  @@index([targetIdentityId])
 }
 
 model Track {
@@ -929,60 +727,4 @@ model InferenceNodeDesiredConfig {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
   node             InferenceNodeSnapshot @relation(fields: [nodeId], references: [nodeId], onDelete: Cascade)
-}
-
-model FleetGroup {
-  id          String        @id @default(cuid())
-  name        String
-  description String?
-  tags        String        @default("[]") // JSON string[]
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
-
-  gateways    EdgeGateway[]
-
-  @@index([name])
-}
-
-model DeploymentManifest {
-  id            String   @id @default(cuid())
-  tenantId      String?  // null = platform-wide manifest
-  name          String
-  version       String   // semver e.g. "1.4.2"
-  services      String   // JSON: { [serviceName]: { image, tag, env, ports } }
-  targetType    String   // "fleet" | "gateway" | "platform"
-  targetId      String?  // fleetGroupId or edgeGatewayId
-  status        String   @default("draft") // draft|staged|rolling_out|deployed|rolled_back|failed
-  stagedAt      DateTime?
-  deployedAt    DateTime?
-  rolledBackAt  DateTime?
-  rolledBackTo  String?
-  createdBy     String
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  tenant        Tenant?  @relation(fields: [tenantId], references: [id])
-  rollouts      DeploymentRollout[]
-
-  @@index([tenantId, status])
-  @@index([tenantId, createdAt])
-}
-
-model DeploymentRollout {
-  id           String   @id @default(cuid())
-  manifestId   String
-  gatewayId    String
-  status       String   @default("pending") // pending|in_progress|success|failed|skipped
-  startedAt    DateTime?
-  completedAt  DateTime?
-  errorMessage String?
-  attempt      Int      @default(1)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  manifest     DeploymentManifest @relation(fields: [manifestId], references: [id])
-  gateway      EdgeGateway        @relation(fields: [gatewayId], references: [id])
-
-  @@index([manifestId, status])
-  @@index([gatewayId, status])
 }

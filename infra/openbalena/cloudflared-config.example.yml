@@ -1,0 +1,9 @@
+tunnel: replace-with-openbalena-tunnel-name
+credentials-file: /etc/cloudflared/credentials.json
+
+ingress:
+  - hostname: api.ob.example.com
+    service: http://api:3000
+  - hostname: registry.ob.example.com
+    service: http://registry:80
+  - service: http_status:404

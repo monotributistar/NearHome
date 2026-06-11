@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useParams } from "react-router-dom";
 import { Camera, HomeAlt, Internet, UserCircle, ViewGrid, WarningSquare, Group, Medal } from "iconoir-react";
 import { WorkspaceShell, SelectInput, type WorkspaceNavGroup } from "@app/ui";
 import { usePortalClient, PORTAL_ROUTES } from "../lib/client.js";
+import { DashboardPage } from "../pages/operations/DashboardPage.js";
 import { CamerasPage } from "../pages/cameras/CamerasPage.js";
 import { CameraDetailPage } from "../pages/cameras/CameraDetailPage.js";
 import { EventsPage } from "../pages/events/EventsPage.js";
@@ -50,6 +51,7 @@ export function ProtectedLayout() {
     {
       title: "Operations",
       items: [
+        { to: PORTAL_ROUTES.operations.dashboard, label: "Dashboard", icon: <ViewGrid width={16} height={16} /> },
         { to: PORTAL_ROUTES.operations.cameras, label: "Cameras", icon: <Camera width={16} height={16} /> },
         { to: PORTAL_ROUTES.operations.events, label: "Events", icon: <WarningSquare width={16} height={16} /> },
         { to: PORTAL_ROUTES.operations.realtime, label: "Realtime", icon: <Internet width={16} height={16} /> }
@@ -88,8 +90,9 @@ export function ProtectedLayout() {
       navigation={navigation}
     >
       <Routes>
-        <Route path="/" element={<Navigate to={PORTAL_ROUTES.operations.cameras} replace />} />
+        <Route path="/" element={<Navigate to={PORTAL_ROUTES.operations.dashboard} replace />} />
 
+        <Route path={PORTAL_ROUTES.operations.dashboard} element={<DashboardPage api={api} />} />
         <Route path={PORTAL_ROUTES.operations.cameras} element={<CamerasPage api={api} />} />
         <Route path="/operations/cameras/:id" element={<CameraDetailPage api={api} />} />
         <Route path={PORTAL_ROUTES.operations.events} element={<EventsPage api={api} />} />

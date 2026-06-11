@@ -222,3 +222,7 @@ export function Modal({
     </Dialog.Root>
   );
 }
+
+export { DetectionOverlay } from "./components/DetectionOverlay";
+export { useDetectionFeed } from "./hooks/useDetectionFeed";
+export type { Detection } from "./hooks/useDetectionFeed";

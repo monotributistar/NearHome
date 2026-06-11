@@ -1,0 +1,12 @@
+# Edge peer config (placed as /etc/wireguard/wg0.conf in container)
+[Interface]
+Address = 10.88.1.1/32
+PrivateKey = REPLACE_EDGE_PRIVATE_KEY
+# Optional DNS for edge container
+DNS = 1.1.1.1
+
+[Peer]
+PublicKey = REPLACE_HUB_PUBLIC_KEY
+Endpoint = wg-hub.example.com:51820
+AllowedIPs = 10.88.0.0/16,192.168.0.0/16
+PersistentKeepalive = 25
