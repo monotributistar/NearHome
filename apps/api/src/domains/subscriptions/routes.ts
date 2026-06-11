@@ -29,6 +29,7 @@ export const subscriptionsPlugin: FastifyPluginAsync<SubscriptionsPluginOptions>
     return { data, total: data.length };
   });
 
+  /* ARCHIVED: SubscriptionRequest model pruned in Phase 0
   app.get("/subscriptions/requests", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
     const ctx = getTenantContext(request);
     assertRole(request, ["tenant_admin", "monitor", "client_user"]);
@@ -89,4 +90,5 @@ export const subscriptionsPlugin: FastifyPluginAsync<SubscriptionsPluginOptions>
     await appendAuditLog({ tenantId: ctx.tenantId, actorUserId: ctx.userId, resource: "subscription_request", action: "review", resourceId: reviewed.id, payload: { status: reviewed.status, planId: reviewed.planId }, context: request.ctx });
     return { data: subscriptionRequestResponse(reviewed) };
   });
+  */
 };

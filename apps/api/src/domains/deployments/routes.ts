@@ -1,3 +1,4 @@
+/* ARCHIVED: models pruned in Phase 0 (DeploymentManifest, DeploymentRollout, FleetGroup)
 import type { FastifyPluginAsync, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
 import type { AppMiddleware } from "../../core/middleware.js";
@@ -300,6 +301,7 @@ export const deploymentsPlugin: FastifyPluginAsync<DeploymentsPluginOptions> = a
       where: { id: gatewayId },
       data: { fleetGroupId: null }
     });
-    return { data: { id: updated.id, fleetGroupId: updated.fleetGroupId } };
-  });
-};
+  return { data: { id: updated.id, fleetGroupId: updated.fleetGroupId } };
+});
+
+*/

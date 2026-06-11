@@ -129,7 +129,6 @@ export const tenantsPlugin: FastifyPluginAsync<TenantsPluginOptions> = async (ap
     const body = z.object({
       name: z.string().trim().min(2),
       provider: TenantVpnProviderSchema.default("wireguard"),
-      topology: TenantVpnTopologySchema.default("site_to_site"),
       networkSpaces: z.array(z.object({
         spaceType: TenantNetworkSpaceTypeSchema.default("camera_lan"),
         cidr: z.string().trim().min(3),
@@ -150,14 +149,14 @@ export const tenantsPlugin: FastifyPluginAsync<TenantsPluginOptions> = async (ap
     if (existing) throw new ApiDomainError({ statusCode: 409, apiCode: "CONFLICT", message: "vpn name already exists for tenant", details: { tenantId, name: body.name } });
 
     const created = await prisma.$transaction(async (tx) => {
-      const vpn = await tx.tenantVpn.create({ data: { tenantId, name: body.name, provider: body.provider, topology: body.topology, status: "draft" } });
+      const vpn = await tx.tenantVpn.create({ data: { tenantId, name: body.name, provider: body.provider, status: "draft" } });
       const spaces = await Promise.all(parsedSpaces.map((space) =>
         tx.tenantNetworkSpace.create({ data: { tenantId, vpnId: vpn.id, spaceType: space.spaceType, cidr: space.parsed.cidr, gatewayIp: space.gatewayIp ?? null, dnsServers: JSON.stringify(space.dnsServers ?? []), isPrimary: Boolean(space.isPrimary), status: "planned" } })
       ));
       return { vpn, spaces };
     });
 
-    return { data: { id: created.vpn.id, tenantId: created.vpn.tenantId, name: created.vpn.name, provider: created.vpn.provider, topology: created.vpn.topology, status: created.vpn.status, createdAt: toISO(created.vpn.createdAt), networkSpaces: created.spaces.map(serializeNetworkSpace) } };
+    return { data: { id: created.vpn.id, tenantId: created.vpn.tenantId, name: created.vpn.name, provider: created.vpn.provider, status: created.vpn.status, createdAt: toISO(created.vpn.createdAt), networkSpaces: created.spaces.map(serializeNetworkSpace) } };
   });
 
   app.get("/network/tenants/:tenantId/vpns/:vpnId", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {
@@ -167,7 +166,7 @@ export const tenantsPlugin: FastifyPluginAsync<TenantsPluginOptions> = async (ap
     if (tenantId !== ctx.tenantId) throw app.httpErrors.forbidden();
     const vpn = await prisma.tenantVpn.findFirst({ where: { id: vpnId, tenantId }, include: { networkSpaces: true } });
     if (!vpn) throw app.httpErrors.notFound("VPN not found");
-    return { data: { id: vpn.id, tenantId: vpn.tenantId, name: vpn.name, provider: vpn.provider, topology: vpn.topology, status: vpn.status, lifecycleStatusReason: vpn.lifecycleStatusReason, credentialsRef: vpn.credentialsRef, tunnelInterface: vpn.tunnelInterface, createdAt: toISO(vpn.createdAt), updatedAt: toISO(vpn.updatedAt), activatedAt: vpn.activatedAt ? toISO(vpn.activatedAt) : null, revokedAt: vpn.revokedAt ? toISO(vpn.revokedAt) : null, networkSpaces: vpn.networkSpaces.map(serializeNetworkSpace) } };
+    return { data: { id: vpn.id, tenantId: vpn.tenantId, name: vpn.name, provider: vpn.provider, status: vpn.status, createdAt: toISO(vpn.createdAt), updatedAt: toISO(vpn.updatedAt), activatedAt: vpn.activatedAt ? toISO(vpn.activatedAt) : null, revokedAt: vpn.revokedAt ? toISO(vpn.revokedAt) : null, networkSpaces: vpn.networkSpaces.map(serializeNetworkSpace) } };
   });
 
   app.post("/network/tenants/:tenantId/vpns/:vpnId/validate", { preHandler: tenantScopedPreHandler }, async (request: FastifyRequest) => {

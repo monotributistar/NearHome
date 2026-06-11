@@ -38,6 +38,7 @@ services:
     command: ["pnpm", "--filter", "@app/stream-gateway", "dev"]
     environment:
       PORT: 3010
+      HOST: 0.0.0.0
       STREAM_STORAGE_DIR: /data/storage
       STREAM_TOKEN_SECRET: dev-stream-token-secret
       STREAM_PROBE_INTERVAL_MS: 5000
