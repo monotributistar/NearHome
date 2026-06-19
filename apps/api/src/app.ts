@@ -20,9 +20,7 @@ import { subscriptionsPlugin } from "./domains/subscriptions/routes.js";
 import { edgeGatewaysPlugin } from "./domains/edge-gateways/routes.js";
 import { opsPlugin } from "./domains/ops/routes.js";
 import { eventsPlugin } from "./domains/events/routes.js";
-import { householdsPlugin } from "./domains/households/routes.js";
 import { notificationsPlugin } from "./domains/notifications/routes.js";
-import { deploymentsPlugin } from "./domains/deployments/routes.js";
 import { sitesPlugin } from "./domains/sites/routes.js";
 
 type StreamHealthSyncStats = {
@@ -234,10 +232,8 @@ export async function buildApp() {
     detectionStackSyncRetryDelayMs
   });
   await app.register(eventsPlugin, { middleware });
-  await app.register(householdsPlugin, { middleware });
   await app.register(notificationsPlugin, { middleware });
   await app.register(sitesPlugin);
-  await app.register(deploymentsPlugin, { middleware });
 
   // ── Stream health sync timer ───────────────────────────────────────────────
   let streamSyncTimer: NodeJS.Timeout | null = null;

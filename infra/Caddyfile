@@ -1,0 +1,37 @@
+# NearHome POC — Caddy reverse proxy
+# Single entry point :8080, no port collisions
+
+:8080 {
+  # ─── API (control plane) ──────────────────────────────────────────
+  handle_path /api/* {
+    reverse_proxy api:3001
+  }
+
+  # ─── Stream Gateway (data plane) ──────────────────────────────────
+  handle_path /stream/* {
+    reverse_proxy stream-gateway:3010
+  }
+
+  # ─── Event Gateway (event plane) ──────────────────────────────────
+  handle_path /events/* {
+    reverse_proxy event-gateway:3011
+  }
+
+  # ─── Inference Bridge (detection plane) ───────────────────────────
+  handle_path /infer/* {
+    reverse_proxy inference-bridge:8090
+  }
+  handle /infer {
+    reverse_proxy inference-bridge:8090
+  }
+
+  # ─── Default: health check ────────────────────────────────────────
+  handle {
+    respond "NearHome POC Gateway — /api /stream /events /infer" 200
+  }
+
+  log {
+    output stdout
+    format json
+  }
+}
