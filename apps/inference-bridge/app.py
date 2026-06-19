@@ -15,7 +15,7 @@ import httpx
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Response, UploadFile
 from pydantic import BaseModel, Field
 
-from hf_client import get_space_pool, HF_SPACE_YOLO
+from hf_client import get_space_pool, HF_SPACE_YOLO, HF_YOLO_FN, HF_SPACE_FACE, HF_FACE_FN
 
 app = FastAPI(title="NearHome Inference Bridge", version="0.2.0")
 
@@ -622,7 +622,7 @@ async def infer_hf_yolo(
         )
 
     pool = get_space_pool()
-    client = pool.get(HF_SPACE_YOLO)
+    client = pool.get(HF_SPACE_YOLO, HF_YOLO_FN)
 
     try:
         result = await client.infer(image_data)
@@ -645,6 +645,57 @@ async def infer_hf_yolo(
     return HFInferResponse(
         status="ok",
         detections=result.get("detections", []),
+        providerLatencyMs=int((time.monotonic() - t0) * 1000),
+    )
+
+
+@app.post("/v1/infer/hf/face", response_model=HFInferResponse)
+async def infer_hf_face(
+    file: UploadFile = File(...),
+    tenantId: str = Form(""),
+    cameraId: str = Form(""),
+    frameTs: str = Form(""),
+    minConfidence: str = Form("0.5"),
+):
+    """Forward a JPEG frame to face-embedder HF Space for face detection + 512D embeddings."""
+    t0 = time.monotonic()
+
+    image_data = await file.read()
+
+    if not os.environ.get("HF_TOKEN"):
+        logger.info("HF_TOKEN not set, returning mock face detection")
+        return HFInferResponse(
+            status="ok",
+            detections=[{"label": "face", "confidence": 0.90, "bbox": {"x": 0.3, "y": 0.2, "w": 0.15, "h": 0.25},
+                       "embedding_dim": 512}],
+            providerLatencyMs=int((time.monotonic() - t0) * 1000),
+        )
+
+    pool = get_space_pool()
+    client = pool.get(HF_SPACE_FACE, HF_FACE_FN)
+
+    try:
+        min_conf = float(minConfidence)
+        result = await client.infer(image_data, call_params=[min_conf, 20])
+    except Exception as exc:
+        logger.error("HF Face inference failed: %s", exc)
+        return HFInferResponse(
+            status="error",
+            detections=[],
+            providerLatencyMs=int((time.monotonic() - t0) * 1000),
+        )
+
+    if result.get("status") == "cold_start":
+        return HFInferResponse(
+            status="cold_start",
+            coldStart=True,
+            detections=[],
+            providerLatencyMs=int((time.monotonic() - t0) * 1000),
+        )
+
+    return HFInferResponse(
+        status="ok",
+        detections=client._parse_face_result(result.get("raw", [])),
         providerLatencyMs=int((time.monotonic() - t0) * 1000),
     )
 

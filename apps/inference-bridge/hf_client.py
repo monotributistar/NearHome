@@ -29,6 +29,10 @@ HF_KEEP_WARM_INTERVAL_S = int(os.environ.get("HF_KEEP_WARM_INTERVAL_S", "240"))
 
 # Default Space IDs
 HF_SPACE_YOLO = os.environ.get("HF_SPACE_YOLO", "monotributistar/yolo-detector")
+HF_YOLO_FN = os.environ.get("HF_YOLO_FN", "/predict")
+
+HF_SPACE_FACE = os.environ.get("HF_SPACE_FACE", "monotributistar/face-embedder")
+HF_FACE_FN = os.environ.get("HF_FACE_FN", "/embed_faces")
 
 
 class HFSpaceClient:
@@ -64,11 +68,20 @@ class HFSpaceClient:
             return result[0]
         return result
 
-    async def call(self, file_path: str) -> str:
-        """Start an inference call. Returns event_id."""
+    async def call(self, file_path: str, params: list = None) -> str:
+        """Start an inference call. Returns event_id.
+
+        Args:
+            file_path: server path from upload
+            params: additional parameters for the Space function (after file_path dict).
+                    Default: YOLO params [0.25, 0.45, 100]
+        """
+        if params is None:
+            params = [0.25, 0.45, 100]  # YOLO defaults
+        data_list = [{"path": file_path}] + params
         resp = await self._client.post(
             f"/gradio_api/call{self.fn_name}",
-            json={"data": [file_path]},
+            json={"data": data_list},
         )
         resp.raise_for_status()
         result = resp.json()
@@ -103,16 +116,19 @@ class HFSpaceClient:
                 logger.error("Space returned error: %s", data_buffer[:500])
             return []
 
-    async def infer(self, image_data: bytes) -> Dict[str, Any]:
+    async def infer(self, image_data: bytes, call_params: list = None) -> Dict[str, Any]:
         """Full inference pipeline: upload → call → poll.
 
+        Args:
+            image_data: raw image bytes
+            call_params: additional params for the Space function (passed to call())
         Returns dict with detections or cold_start status.
         """
         await self._maybe_keep_warm()
 
         try:
             file_path = await self.upload_file(image_data)
-            event_id = await self.call(file_path)
+            event_id = await self.call(file_path, params=call_params)
             result = await self.poll_result(event_id)
 
             self._healthy = True
@@ -160,8 +176,32 @@ class HFSpaceClient:
     def _parse_yolo_result(self, raw: List[Any]) -> List[Dict[str, Any]]:
         """Parse YOLO inference result into standard detection format.
 
-        YOLO typically returns: [{label, confidence, box: {xmin,ymin,xmax,ymax}}, ...]
+        Space returns: [image_path, summary_text, detections_json]
+        The third element (gr.JSON) contains structured detections.
+        Falls back to parsing summary text if JSON is absent.
         """
+        # Structured JSON from gr.JSON output (Space v2+)
+        if isinstance(raw, list) and len(raw) >= 3 and isinstance(raw[2], list):
+            detections = []
+            for item in raw[2]:
+                if not isinstance(item, dict):
+                    continue
+                cls_name = item.get("class", "unknown")
+                confidence = item.get("confidence", 0.0)
+                bbox_list = item.get("bbox", [])
+                bbox = None
+                if isinstance(bbox_list, list) and len(bbox_list) == 4:
+                    bbox = {"x": bbox_list[0], "y": bbox_list[1],
+                            "w": bbox_list[2] - bbox_list[0],
+                            "h": bbox_list[3] - bbox_list[1]}
+                detections.append({
+                    "label": str(cls_name),
+                    "confidence": float(confidence),
+                    "bbox": bbox,
+                })
+            return detections
+
+        # Fallback: parse old format (summary text)
         detections = []
         if not raw or not isinstance(raw, list):
             return detections
@@ -193,6 +233,35 @@ class HFSpaceClient:
             })
 
         return detections
+
+    def _parse_face_result(self, raw: List[Any]) -> List[Dict[str, Any]]:
+        """Parse face embedding result into standard detection format.
+
+        Face-embedder returns: [image_path, summary_text, face_data_json]
+        face_data = [{index, bbox, confidence, landmarks, embedding(512D), embedding_dim, quality_score}]
+        """
+        if isinstance(raw, list) and len(raw) >= 3 and isinstance(raw[2], list):
+            faces = []
+            for fd in raw[2]:
+                if not isinstance(fd, dict):
+                    continue
+                bbox_list = fd.get("bbox", [])
+                bbox = None
+                if isinstance(bbox_list, list) and len(bbox_list) == 4:
+                    bbox = {"x": bbox_list[0], "y": bbox_list[1],
+                            "w": bbox_list[2] - bbox_list[0],
+                            "h": bbox_list[3] - bbox_list[1]}
+                faces.append({
+                    "label": "face",
+                    "confidence": float(fd.get("confidence", 0)),
+                    "bbox": bbox,
+                    "embedding": fd.get("embedding"),       # 512D vector
+                    "embedding_dim": fd.get("embedding_dim", 0),
+                    "landmarks": fd.get("landmarks"),
+                    "quality_score": fd.get("quality_score", 0),
+                })
+            return faces
+        return []
 
     async def close(self) -> None:
         await self._client.aclose()

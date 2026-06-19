@@ -1,9 +1,24 @@
-# NearHome POC Stack — Consolidated docker-compose
-# Single file replacing docker-compose.yml + docker-compose.local.yml + onprem overrides
+# NearHome POC Stack — Caddy reverse proxy, zero port collisions
 name: nearhome-poc
 
 services:
-  # ─── Core services ───────────────────────────────────────────────────
+  # ─── Reverse Proxy (single entry point :8080) ──────────────────────
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - api
+      - stream-gateway
+      - event-gateway
+      - inference-bridge
+    networks:
+      - poc_net
+
+  # ─── Core services (internal only, no host ports) ──────────────────
 
   api:
     build:
@@ -16,15 +31,13 @@ services:
       STREAM_TOKEN_SECRET: dev-stream-token-secret
       DATABASE_URL: file:./dev.db
       STREAM_GATEWAY_URL: http://stream-gateway:3010
-      STREAM_GATEWAY_PUBLIC_URL: http://localhost:3010
+      STREAM_GATEWAY_PUBLIC_URL: http://localhost:8080/stream
       EVENT_GATEWAY_URL: http://event-gateway:3011
       EVENT_PUBLISH_SECRET: dev-event-publish-secret
       SUPERUSER_EMAILS: admin@nearhome.dev
       CORS_ORIGIN_ADMIN: http://localhost:5173
       CORS_ORIGIN_PORTAL: http://localhost:5174
       PORTAL_BASE_URL: http://localhost:5174
-    ports:
-      - "3001:3001"
     depends_on:
       - stream-gateway
       - event-gateway
@@ -44,8 +57,6 @@ services:
       STREAM_PROBE_INTERVAL_MS: 5000
       STREAM_MEDIA_ENGINE: mock
       STREAM_S3_ARCHIVE_ENABLED: "0"
-    ports:
-      - "3010:3010"
     networks:
       - poc_net
 
@@ -59,34 +70,34 @@ services:
       JWT_SECRET: dev-super-secret
       EVENT_PUBLISH_SECRET: dev-event-publish-secret
       REDIS_URL: redis://redis:6379
-    ports:
-      - "3011:3011"
     depends_on:
       - redis
     networks:
       - poc_net
 
-  # ─── Detection plane ─────────────────────────────────────────────────
+  # ─── Detection plane ───────────────────────────────────────────────
 
   inference-bridge:
     build:
       context: ../apps/inference-bridge
       dockerfile: Dockerfile
     environment:
+      HF_TOKEN: ${HF_TOKEN}
+      HF_SPACE_YOLO: monotributistar/yolo-detector
+      HF_YOLO_FN: /detect_objects
+      HF_SPACE_FACE: monotributistar/face-embedder
+      HF_FACE_FN: /embed_faces
+      HF_COLD_START_TIMEOUT_S: "120"
       NODE_AUTH_JWT_SECRET: dev-node-auth-secret
       NODE_AUTH_ADMIN_SECRET: dev-node-auth-admin-secret
       NODE_HEARTBEAT_TTL_MS: "60000"
-    ports:
-      - "8090:8090"
     networks:
       - poc_net
 
-  # ─── Dependencies ────────────────────────────────────────────────────
+  # ─── Dependencies ──────────────────────────────────────────────────
 
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
     networks:
       - poc_net
 
