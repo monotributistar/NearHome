@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useCan } from "@refinedev/core";
-import { PageCard, PrimaryButton, TextInput, Surface, Badge } from "@app/ui";
+import { PageCard, PrimaryButton, TextInput, Surface, Badge, DetectionOverlay, useSSEDetectionFeed } from "@app/ui";
 import {
   getToken,
   getTenantId,
@@ -27,6 +27,15 @@ export function MonitorPage({ apiUrl }: { apiUrl: string }) {
 
   const tenantId = getTenantId();
   const token = getToken();
+  const eventBaseUrl = getStreamGatewayPublicBaseUrl().replace("/stream", "/events");
+
+  // SSE detection feed
+  const { detections: sseDetections, connected: sseConnected, error: sseError } = useSSEDetectionFeed(
+    `${eventBaseUrl}/events/stream`,
+    tenantId,
+    true,
+    3000
+  );
 
   const visibleCameras = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -246,6 +255,9 @@ export function MonitorPage({ apiUrl }: { apiUrl: string }) {
         <Badge>{visibleCameras.length} visibles</Badge>
         <Badge>{cameras.length} totales</Badge>
         {refreshingFeeds && <Badge className="border-amber-200 bg-amber-50 text-amber-700">actualizando tokens</Badge>}
+        <Badge className={sseConnected ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-rose-200 bg-rose-50 text-rose-700"}>
+          {sseConnected ? "SSE conectado" : "SSE desconectado"}
+        </Badge>
       </div>
       {error && <div className="mb-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
       {loading && <div className="text-sm text-slate-500">Cargando cámaras y sesiones...</div>}
@@ -275,7 +287,15 @@ export function MonitorPage({ apiUrl }: { apiUrl: string }) {
                 {health?.message && <div>diagnóstico: {health.message}</div>}
               </div>
               {feed?.status === "ready" && feed.playbackUrl ? (
-                <CameraFeedPlayer playbackUrl={feed.playbackUrl} cameraName={camera.name} />
+                <div className="relative">
+                  <CameraFeedPlayer playbackUrl={feed.playbackUrl} cameraName={camera.name} />
+                  <DetectionOverlay
+                    detections={sseDetections[camera.id] ?? []}
+                    width={640}
+                    height={480}
+                    visible={true}
+                  />
+                </div>
               ) : (
                 <div className="flex aspect-video items-center justify-center rounded-lg bg-slate-100 text-sm">
                   {feed?.status === "loading" ? "Preparando stream..." : feed?.error ?? "Feed no disponible"}
