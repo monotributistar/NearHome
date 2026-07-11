@@ -14,7 +14,9 @@
 
   # ─── Event Gateway (event plane) ──────────────────────────────────
   handle_path /events/* {
-    reverse_proxy event-gateway:3011
+    reverse_proxy event-gateway:3011 {
+      flush_interval -1
+    }
   }
 
   # ─── Inference Bridge (detection plane) ───────────────────────────
@@ -25,6 +27,36 @@
     reverse_proxy inference-bridge:8090
   }
 
+  # ─── Local YOLO (client-side detection) ───────────────────────
+  handle_path /local-infer/* {
+    reverse_proxy host.docker.internal:8099
+  }
+
+  # ─── Playback (HLS segments from stream-gateway) ──────────────────
+  handle /playback/* {
+    reverse_proxy stream-gateway:3010
+  }
+
+  # ─── Detected Frames (stored by detector service) ─────────────────
+  handle_path /frames/* {
+    root * /data/frames
+    file_server
+  }
+
+  # ─── MediaMTX HLS (direct from RTSP server) ──────────────────────
+  handle_path /mtx-hls/* {
+    reverse_proxy rtsp-sim:8888
+  }
+  handle_path /hls/* {
+    reverse_proxy rtsp-sim:8888
+  }
+  # Cookie redirect catch: MediaMTX redirects /hls/* to /*?cookieCheck=1
+  handle /*/index.m3u8* {
+    reverse_proxy rtsp-sim:8888
+  }
+  handle /*.ts {
+    reverse_proxy rtsp-sim:8888
+  }
   # ─── Default: health check ────────────────────────────────────────
   handle {
     respond "NearHome POC Gateway — /api /stream /events /infer" 200

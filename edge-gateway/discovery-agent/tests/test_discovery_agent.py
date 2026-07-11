@@ -29,7 +29,7 @@ class TestArpScanParsing(unittest.TestCase):
                 }
             ]
         })
-        
+
         data = json.loads(json_output)
         devices = []
         for iface in data.get("interface", []):
@@ -39,7 +39,7 @@ class TestArpScanParsing(unittest.TestCase):
                     "mac": host.get("mac", ""),
                     "vendor": host.get("vendor", "")
                 })
-        
+
         self.assertEqual(len(devices), 2)
         self.assertEqual(devices[0]["ip"], "192.168.1.100")
         self.assertEqual(devices[0]["mac"], "aa:bb:cc:dd:ee:01")
@@ -50,18 +50,18 @@ class TestArpScanParsing(unittest.TestCase):
 192.168.1.100    ether       aa:bb:cc:dd:ee:01       C                     eth0
 192.168.1.101    ether       aa:bb:cc:dd:ee:02       C                     eth0
 """
-        
+
         devices = []
         for line in arp_content.split("\n"):
             parts = line.split()
             if len(parts) >= 4 and parts[0] != "IP":
-                mac = parts[3]
+                mac = parts[2]
                 if mac != "00:00:00:00:00:00":
                     devices.append({
                         "ip": parts[0],
                         "mac": mac.upper()
                     })
-        
+
         self.assertEqual(len(devices), 2)
         self.assertEqual(devices[0]["mac"], "AA:BB:CC:DD:EE:01")
 
@@ -78,7 +78,7 @@ class TestOnvifProbe(unittest.TestCase):
         mock_dev_info.FirmwareVersion = "V5.7.12"
         mock_dev_info.SerialNumber = "ABC123456"
         mock_dev_info.HardwareId = "HW-12345"
-        
+
         result = {
             "manufacturer": mock_dev_info.Manufacturer,
             "model": mock_dev_info.Model,
@@ -86,7 +86,7 @@ class TestOnvifProbe(unittest.TestCase):
             "serial": mock_dev_info.SerialNumber,
             "uuid": str(mock_dev_info.HardwareId)
         }
-        
+
         self.assertEqual(result["manufacturer"], "Hikvision")
         self.assertEqual(result["model"], "DS-2CD2043G2")
         self.assertEqual(result["firmware"], "V5.7.12")
@@ -97,18 +97,18 @@ class TestOnvifProbe(unittest.TestCase):
         mock_profile1 = Mock()
         mock_profile1.token = "main_profile"
         mock_profile1.Name = "Main Stream"
-        
+
         mock_config1 = Mock()
         mock_config1.Encoding = "h264"
         mock_resolution = Mock()
         mock_resolution.Width = 1920
         mock_resolution.Height = 1080
         mock_config1.Resolution = mock_resolution
-        
+
         mock_profile1.VideoEncoderConfiguration = mock_config1
-        
+
         profiles = [mock_profile1]
-        
+
         parsed = [
             {
                 "token": p.token,
@@ -121,7 +121,7 @@ class TestOnvifProbe(unittest.TestCase):
             }
             for p in profiles if hasattr(p, "VideoEncoderConfiguration")
         ]
-        
+
         self.assertEqual(len(parsed), 1)
         self.assertEqual(parsed[0]["video_encoding"], "h264")
         self.assertEqual(parsed[0]["resolution"]["width"], 1920)
@@ -133,11 +133,11 @@ class TestHeartbeatPayload(unittest.TestCase):
     def test_heartbeat_payload_format(self):
         """Test heartbeat payload format"""
         import psutil
-        
+
         # Simulate metrics collection
         cpu_percent = psutil.cpu_percent(interval=0.1)
         memory = psutil.virtual_memory()
-        
+
         payload = {
             "timestamp": datetime.utcnow().isoformat() + "Z",
             "supervisorStatus": {
@@ -160,7 +160,7 @@ class TestHeartbeatPayload(unittest.TestCase):
             },
             "version": "1.0.0"
         }
-        
+
         # Validate structure
         self.assertIn("timestamp", payload)
         self.assertIn("supervisorStatus", payload)
@@ -176,18 +176,18 @@ class TestTunnelReconnection(unittest.TestCase):
         """Test exponential backoff calculation"""
         backoff_base = 5
         backoff_max = 300
-        
+
         backoffs = []
         for attempt in range(10):
             backoff = min(backoff_base * (2 ** attempt), backoff_max)
             backoffs.append(backoff)
-        
+
         # First few should follow exponential growth
         self.assertEqual(backoffs[0], 5)    # 5 * 2^0
         self.assertEqual(backoffs[1], 10)   # 5 * 2^1
         self.assertEqual(backoffs[2], 20)   # 5 * 2^2
         self.assertEqual(backoffs[3], 40)   # 5 * 2^3
-        
+
         # Should cap at max
         self.assertEqual(backoffs[9], backoff_max)
 
@@ -201,15 +201,15 @@ class TestTunnelReconnection(unittest.TestCase):
                 return "degraded"
             else:
                 return "disconnected"
-        
+
         import time
-        
+
         # Recent check
         self.assertEqual(get_tunnel_status(time.time() - 60), "active")
-        
+
         # Older than 5 minutes
         self.assertEqual(get_tunnel_status(time.time() - 400), "degraded")
-        
+
         # Very old
         self.assertEqual(get_tunnel_status(time.time() - 700), "disconnected")
 
@@ -230,16 +230,16 @@ class TestCameraDiscovery(unittest.TestCase):
             },
             "ports": [554, 80]
         }
-        
+
         # Validate required fields
         self.assertIn("ipAddress", camera)
         self.assertIn("macAddress", camera)
         self.assertIn("ports", camera)
-        
+
         # Validate IP address format
         import ipaddress
         ipaddress.ip_address(camera["ipAddress"])
-        
+
         # Validate MAC address format
         self.assertEqual(len(camera["macAddress"].split(":")), 6)
 

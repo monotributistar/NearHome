@@ -1,7 +1,7 @@
 """HuggingFace Space client using Gradio 5 SSE protocol.
 
 Communicates with HF Zero GPU Spaces via REST/SSE — no gradio_client library needed.
-Handles cold starts, keep-warm pings, and SSE event parsing.
+Handles cold starts, keep-warm pings, SSE event parsing, and batch inference.
 
 Protocol:
   1. Upload:  POST /gradio_api/upload  (multipart file)
@@ -17,7 +17,7 @@ import json
 import logging
 import os
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
@@ -29,7 +29,7 @@ HF_KEEP_WARM_INTERVAL_S = int(os.environ.get("HF_KEEP_WARM_INTERVAL_S", "240"))
 
 # Default Space IDs
 HF_SPACE_YOLO = os.environ.get("HF_SPACE_YOLO", "monotributistar/yolo-detector")
-HF_YOLO_FN = os.environ.get("HF_YOLO_FN", "/predict")
+HF_YOLO_FN = os.environ.get("HF_YOLO_FN", "/detect_objects")
 
 HF_SPACE_FACE = os.environ.get("HF_SPACE_FACE", "monotributistar/face-embedder")
 HF_FACE_FN = os.environ.get("HF_FACE_FN", "/embed_faces")
@@ -77,7 +77,7 @@ class HFSpaceClient:
                     Default: YOLO params [0.25, 0.45, 100]
         """
         if params is None:
-            params = [0.25, 0.45, 100]  # YOLO defaults
+            params = [0.25, 100]  # YOLO defaults (conf, max_det)
         data_list = [{"path": file_path}] + params
         resp = await self._client.post(
             f"/gradio_api/call{self.fn_name}",
@@ -165,6 +165,65 @@ class HFSpaceClient:
             self._last_keep_warm = time.monotonic()
         except Exception as exc:
             logger.debug("Keep-warm ping failed for %s: %s", self.space_id, exc)
+
+    async def batch_infer(self, images_data: List[bytes],
+                           call_params: list = None) -> Dict[str, Any]:
+        """Batch inference: upload MULTIPLE images, call batch_detect, parse results.
+
+        Args:
+            images_data: list of raw image bytes
+            call_params: optional [conf, iou, max_det] overrides
+        Returns dict with list of per-image detection results.
+        """
+        await self._maybe_keep_warm()
+
+        if call_params is None:
+            call_params = [0.25, 0.45, 100]
+
+        try:
+            # Upload all images concurrently
+            upload_tasks = [
+                self.upload_file(data, f"batch_{i}.jpg")
+                for i, data in enumerate(images_data)
+            ]
+            file_paths = await asyncio.gather(*upload_tasks)
+
+            # Call batch_detect with [file_paths, conf, iou, max_det]
+            data_list = [file_paths] + call_params
+            resp = await self._client.post(
+                "/gradio_api/call/batch_detect",
+                json={"data": data_list},
+            )
+            resp.raise_for_status()
+            event_id = resp.json().get("event_id", "")
+
+            result = await self.poll_result(event_id)
+
+            self._healthy = True
+            # Parse batch results
+            detections_list = []
+            if isinstance(result, list) and len(result) > 0:
+                batch_raw = result[0] if isinstance(result[0], list) else result
+                for item in batch_raw:
+                    if isinstance(item, dict):
+                        detections = self._parse_yolo_result([item.get("detections", [])])
+                        detections_list.append(detections)
+                    else:
+                        detections_list.append([])
+            else:
+                detections_list = [[] for _ in images_data]
+
+            return {
+                "status": "ok",
+                "batch_results": detections_list,
+            }
+
+        except httpx.HTTPStatusError as exc:
+            if 500 <= exc.response.status_code < 600:
+                return {"status": "cold_start", "retryAfterS": HF_COLD_START_TIMEOUT_S}
+            raise
+        except httpx.TimeoutException:
+            return {"status": "cold_start", "retryAfterS": HF_COLD_START_TIMEOUT_S}
 
     async def _maybe_keep_warm(self) -> None:
         """Ping Space if keep-warm interval has elapsed."""

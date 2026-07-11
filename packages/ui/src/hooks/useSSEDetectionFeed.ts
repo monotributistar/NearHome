@@ -8,6 +8,9 @@ export interface SSEDetection {
   tenantId: string;
   frameTimestamp: string;
   occurredAt: string;
+  frameWidth: number;
+  frameHeight: number;
+  frameUrl: string;
 }
 
 interface SSEDetectionFeedResult {
@@ -15,12 +18,11 @@ interface SSEDetectionFeedResult {
   getDetections: (cameraId: string) => SSEDetection[];
   clearDetections: (cameraId?: string) => void;
   connected: boolean;
-  error: string | null;
 }
 
 /**
- * Subscribes to detection.object events via SSE (fetch-based, supports custom headers).
- * Returns latest detections per camera with auto-fade after fadeAfterMs.
+ * Subscribes to detection.object events via native EventSource.
+ * Tenant ID passed as query param (no custom headers needed).
  */
 export function useSSEDetectionFeed(
   sseUrl: string,
@@ -30,148 +32,76 @@ export function useSSEDetectionFeed(
 ): SSEDetectionFeedResult {
   const [detections, setDetections] = useState<Record<string, SSEDetection[]>>({});
   const [connected, setConnected] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
+  const esRef = useRef<EventSource | null>(null);
   const fadeTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (!enabled || !tenantId || !sseUrl) return;
 
-    let reconnectPending = false;
+    const url = `${sseUrl}?tenantId=${encodeURIComponent(tenantId)}&topics=detection.object`;
+    const es = new EventSource(url);
+    esRef.current = es;
 
-    const connect = async () => {
-      if (abortRef.current) abortRef.current.abort();
-      const abort = new AbortController();
-      abortRef.current = abort;
+    es.onopen = () => setConnected(true);
+    es.onerror = () => setConnected(false);
 
+    es.addEventListener("detection.object", (event: MessageEvent) => {
       try {
-        const resp = await fetch(sseUrl, {
-          headers: {
-            "X-Tenant-Id": tenantId,
-            Accept: "text/event-stream",
-            "Cache-Control": "no-cache",
-          },
-          signal: abort.signal,
-        });
+        const data = JSON.parse(event.data);
+        const camId = data.cameraId;
+        if (!camId) return;
 
-        if (!resp.ok) {
-          setError(`SSE connection failed: ${resp.status}`);
-          setConnected(false);
-          scheduleReconnect();
-          return;
+        // Support both single and batch events
+        const detectionsList = data.payload?.detections
+          ? data.payload.detections // batch format: {detections: [...]}
+          : [data.payload]; // single format: {label, confidence, ...}
+
+        for (const det of detectionsList) {
+          const detection: SSEDetection = {
+            label: det?.label ?? "unknown",
+            confidence: det?.confidence ?? 0,
+            bbox: det?.bbox ?? { x: 0, y: 0, w: 0.1, h: 0.1 },
+            cameraId: camId,
+            tenantId: data.tenantId,
+            frameTimestamp: data.payload?.frameTimestamp,
+            occurredAt: data.occurredAt,
+            frameWidth: data.payload?.frameWidth ?? 640,
+            frameHeight: data.payload?.frameHeight ?? 480,
+            frameUrl: data.payload?.frameUrl ?? ""
+          };
+
+          const key = `${camId}-${data.eventId ?? detection.occurredAt}`;
+          const existing = fadeTimers.current.get(key);
+          if (existing) clearTimeout(existing);
+
+          setDetections((prev) => {
+            const camDets = [...(prev[camId] ?? []), detection].slice(-20);
+            return { ...prev, [camId]: camDets };
+          });
+
+          const timer = setTimeout(() => {
+            setDetections((prev) => {
+              const camDets = (prev[camId] ?? []).filter((d) => d.occurredAt !== detection.occurredAt);
+              return camDets.length > 0 ? { ...prev, [camId]: camDets } : { ...prev, [camId]: [] };
+            });
+            fadeTimers.current.delete(key);
+          }, fadeAfterMs);
+          fadeTimers.current.set(key, timer);
         }
-
-        if (!resp.body) {
-          setError("No response body for SSE");
-          setConnected(false);
-          return;
-        }
-
-        setConnected(true);
-        setError(null);
-
-        const reader = resp.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-
-          // Parse SSE events from buffer
-          const events = buffer.split("\n\n");
-          buffer = events.pop() ?? ""; // keep incomplete event in buffer
-
-          for (const event of events) {
-            const lines = event.split("\n");
-            let eventType = "";
-            let dataStr = "";
-            for (const line of lines) {
-              if (line.startsWith("event: ")) eventType = line.slice(7);
-              if (line.startsWith("data: ")) dataStr = line.slice(6);
-            }
-
-            if (eventType === "detection.object" && dataStr) {
-              try {
-                const data = JSON.parse(dataStr);
-                const camId = data.cameraId;
-                if (!camId) continue;
-
-                const detection: SSEDetection = {
-                  label: data.payload?.label ?? "unknown",
-                  confidence: data.payload?.confidence ?? 0,
-                  bbox: data.payload?.bbox ?? { x: 0, y: 0, w: 0.1, h: 0.1 },
-                  cameraId: camId,
-                  tenantId: data.tenantId,
-                  frameTimestamp: data.payload?.frameTimestamp,
-                  occurredAt: data.occurredAt,
-                };
-
-                const key = `${camId}-${data.eventId}`;
-                const existing = fadeTimers.current.get(key);
-                if (existing) clearTimeout(existing);
-
-                setDetections((prev) => {
-                  const camDets = [...(prev[camId] ?? []), detection].slice(-5);
-                  return { ...prev, [camId]: camDets };
-                });
-
-                const timer = setTimeout(() => {
-                  setDetections((prev) => {
-                    const camDets = (prev[camId] ?? []).filter(
-                      (d) => d.occurredAt !== detection.occurredAt
-                    );
-                    return camDets.length > 0
-                      ? { ...prev, [camId]: camDets }
-                      : { ...prev, [camId]: [] };
-                  });
-                  fadeTimers.current.delete(key);
-                }, fadeAfterMs);
-                fadeTimers.current.set(key, timer);
-              } catch {
-                // skip parse errors
-              }
-            }
-          }
-        }
-
-        setConnected(false);
-        scheduleReconnect();
-      } catch (err: any) {
-        if (err.name === "AbortError") return;
-        setError(`SSE error: ${err.message}`);
-        setConnected(false);
-        scheduleReconnect();
+      } catch (e) {
+        // skip
       }
-    };
-
-    const scheduleReconnect = () => {
-      if (reconnectPending) return;
-      reconnectPending = true;
-      reconnectTimer.current = setTimeout(() => {
-        reconnectPending = false;
-        connect();
-      }, 5000);
-    };
-
-    connect();
+    });
 
     return () => {
-      reconnectPending = false;
-      if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
-      if (abortRef.current) abortRef.current.abort();
+      es.close();
       for (const timer of fadeTimers.current.values()) clearTimeout(timer);
       fadeTimers.current.clear();
+      setConnected(false);
     };
   }, [enabled, tenantId, sseUrl, fadeAfterMs]);
 
-  const getDetections = useCallback(
-    (cameraId: string): SSEDetection[] => detections[cameraId] ?? [],
-    [detections]
-  );
+  const getDetections = useCallback((cameraId: string): SSEDetection[] => detections[cameraId] ?? [], [detections]);
 
   const clearDetections = useCallback((cameraId?: string) => {
     setDetections((prev) => {
@@ -183,5 +113,5 @@ export function useSSEDetectionFeed(
     });
   }, []);
 
-  return { detections, getDetections, clearDetections, connected, error };
+  return { detections, getDetections, clearDetections, connected };
 }

@@ -649,6 +649,56 @@ async def infer_hf_yolo(
     )
 
 
+class HFBatchInferResponse(BaseModel):
+    status: str = "ok"
+    coldStart: bool = False
+    batchDetections: List[List[Dict[str, Any]]] = Field(default_factory=list)
+    providerLatencyMs: int = 0
+
+
+@app.post("/v1/infer/hf/yolo-batch", response_model=HFBatchInferResponse)
+async def infer_hf_yolo_batch(
+    files: List[UploadFile] = File(...),
+    tenantId: str = Form(""),
+    cameraIds: str = Form(""),
+    frameTs: str = Form(""),
+    confThreshold: str = Form("0.25"),
+    iouThreshold: str = Form("0.45"),
+    maxDetections: str = Form("100"),
+):
+    """Batch inference: forward MULTIPLE JPEG frames to YOLO HF Space."""
+    t0 = time.monotonic()
+    if not os.environ.get("HF_TOKEN"):
+        return HFBatchInferResponse(status="ok", batchDetections=[], providerLatencyMs=0)
+
+    pool = get_space_pool()
+    client = pool.get(HF_SPACE_YOLO, HF_YOLO_FN)
+
+    images_data = []
+    for f in files:
+        images_data.append(await f.read())
+
+    try:
+        result = await client.batch_infer(
+            images_data,
+            call_params=[float(confThreshold), float(iouThreshold), int(maxDetections)]
+        )
+    except Exception as exc:
+        logger.error("HF YOLO batch inference failed: %s", exc)
+        return HFBatchInferResponse(
+            status="error", batchDetections=[], providerLatencyMs=int((time.monotonic() - t0) * 1000),
+        )
+
+    if result.get("status") == "cold_start":
+        return HFBatchInferResponse(status="cold_start", coldStart=True, providerLatencyMs=int((time.monotonic() - t0) * 1000))
+
+    return HFBatchInferResponse(
+        status="ok",
+        batchDetections=result.get("batch_results", []),
+        providerLatencyMs=int((time.monotonic() - t0) * 1000),
+    )
+
+
 @app.post("/v1/infer/hf/face", response_model=HFInferResponse)
 async def infer_hf_face(
     file: UploadFile = File(...),

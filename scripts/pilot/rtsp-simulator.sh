@@ -21,11 +21,13 @@ VIDEO_DIR="${VIDEO_DIR:-/tmp/nearhome-real-videos}"
 
 # Virtual cameras: path → video_file → label
 STREAMS=(
-  "office-v2|office-v2.mp4|Oficina — Personas"
-  "parking-v2|parking-v2.mp4|Estacionamiento — Autos"
-  "street-v2|street-v2.mp4|Cruce de Calle"
-  "corridor|corridor.mp4|Pasillo — Ocasional"
-  "loading-dock|loading-dock.mp4|Muelle de Carga"
+  "towncentre|TownCentreXVID.mp4|Oxford Town Centre — Calle peatones CCTV"
+  "mall-interior|mall-interior.mp4|Centro Comercial — Pasillos, tiendas"
+  "pets-campus|pets-campus.mp4|Campus Universitario — Edificios, entradas"
+  "entrance-corridor|EnterExitCrossingPaths1cor.mp4|Puerta Entrada — Pasillo (CAVIAR)"
+  "entrance-frontal|EnterExitCrossingPaths2front.mp4|Puerta Entrada — Vista Frontal (CAVIAR)"
+  "browse-tienda|Browse1.mp4|Tienda — Personas navegando (CAVIAR)"
+  "browse-tienda2|Browse3.mp4|Tienda 2 — Personas caminando (CAVIAR)"
 )
 
 PID_DIR="${PID_DIR:-/tmp/nearhome-rtsp-sim}"

@@ -8,7 +8,7 @@ import type { FastifyRequest } from "fastify";
 import { prisma } from "./core/prisma.js";
 import { createMiddleware } from "./core/middleware.js";
 import { statusToCode, resolveRepoRoot, syncCameraHealthFromGateway } from "./core/utils.js";
-import { ApiDomainError } from "./core/types.js";
+import { ApiDomainError, NotFoundError } from "./core/types.js";
 import type { ApiErrorBody, LoginBucket } from "./core/types.js";
 
 import { authPlugin } from "./domains/auth/routes.js";
@@ -60,8 +60,7 @@ export async function buildApp() {
   const inferenceBridgeUrl =
     process.env.INFERENCE_BRIDGE_URL?.replace(/\/$/, "") ?? detectionBridgeUrl ?? "http://inference-bridge:8090";
   const nodeAuthAdminSecret = process.env.NODE_AUTH_ADMIN_SECRET ?? "dev-node-auth-admin-secret";
-  const detectionDeployOutputPath =
-    process.env.DETECTION_DEPLOY_OUTPUT_PATH ?? `${repoRoot}/deploy/detection`;
+  const detectionDeployOutputPath = process.env.DETECTION_DEPLOY_OUTPUT_PATH ?? `${repoRoot}/deploy/detection`;
   const detectionStackSyncCommand = process.env.DETECTION_STACK_SYNC_COMMAND ?? "";
   const detectionStackSyncTimeoutMsRaw = Number(process.env.DETECTION_STACK_SYNC_TIMEOUT_MS ?? 600_000);
   const detectionStackSyncMaxRetriesRaw = Number(process.env.DETECTION_STACK_SYNC_MAX_RETRIES ?? 0);
@@ -142,6 +141,7 @@ export async function buildApp() {
     if (err.message === "CAMERA_NOT_FOUND") statusCode = 404;
     if (err.message === "STREAM_SESSION_NOT_FOUND") statusCode = 404;
     if (err.message === "INVALID_STREAM_SESSION_TRANSITION") statusCode = 400;
+    if (error instanceof NotFoundError) statusCode = 404;
     if (error instanceof ApiDomainError) statusCode = error.statusCode;
 
     const code =
@@ -317,7 +317,10 @@ export async function buildApp() {
                 syncedInCycle += 1;
               } catch (error) {
                 failedInCycle += 1;
-                app.log.warn({ error, tenantId: camera.tenantId, cameraId: camera.id }, "stream_health_sync.camera_failed");
+                app.log.warn(
+                  { error, tenantId: camera.tenantId, cameraId: camera.id },
+                  "stream_health_sync.camera_failed"
+                );
               }
             }
           }
@@ -412,14 +415,26 @@ export async function buildApp() {
   app.get("/readiness", async (request: FastifyRequest, reply) => {
     if (readinessForceFail) {
       reply.status(503);
-      return { ok: false, db: "down", reason: "forced_failure", timestamp: new Date().toISOString(), requestId: request.requestId ?? request.id };
+      return {
+        ok: false,
+        db: "down",
+        reason: "forced_failure",
+        timestamp: new Date().toISOString(),
+        requestId: request.requestId ?? request.id
+      };
     }
     try {
       await prisma.$queryRaw`SELECT 1`;
       return { ok: true, db: "up", timestamp: new Date().toISOString(), requestId: request.requestId ?? request.id };
     } catch {
       reply.status(503);
-      return { ok: false, db: "down", reason: "db_unreachable", timestamp: new Date().toISOString(), requestId: request.requestId ?? request.id };
+      return {
+        ok: false,
+        db: "down",
+        reason: "db_unreachable",
+        timestamp: new Date().toISOString(),
+        requestId: request.requestId ?? request.id
+      };
     }
   });
 

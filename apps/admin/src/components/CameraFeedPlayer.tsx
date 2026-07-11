@@ -1,8 +1,17 @@
 import { useEffect, useRef } from "react";
 import Hls from "hls.js";
 
-export function CameraFeedPlayer({ playbackUrl, cameraName }: { playbackUrl: string; cameraName: string }) {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
+export function CameraFeedPlayer({
+  playbackUrl,
+  cameraName,
+  videoRef: externalVideoRef
+}: {
+  playbackUrl: string;
+  cameraName: string;
+  videoRef?: React.MutableRefObject<HTMLVideoElement | null>;
+}) {
+  const internalRef = useRef<HTMLVideoElement | null>(null);
+  const videoRef = externalVideoRef ?? internalRef;
   const hlsRef = useRef<Hls | null>(null);
 
   useEffect(() => {
@@ -72,5 +81,14 @@ export function CameraFeedPlayer({ playbackUrl, cameraName }: { playbackUrl: str
     };
   }, [playbackUrl]);
 
-  return <video ref={videoRef} className="aspect-video w-full rounded-box bg-black" controls autoPlay playsInline title={cameraName} />;
+  return (
+    <video
+      ref={videoRef}
+      className="aspect-video w-full rounded-box bg-black"
+      controls
+      autoPlay
+      playsInline
+      title={cameraName}
+    />
+  );
 }
