@@ -8,8 +8,9 @@ services:
     command: ["pnpm", "--filter", "@app/api", "dev"]
     environment:
       PORT: 3001
-      JWT_SECRET: dev-super-secret
-      STREAM_TOKEN_SECRET: dev-stream-token-secret
+      JWT_SECRET: ${JWT_SECRET:-dev-super-secret}
+      CAMERA_CREDENTIALS_KEY: ${CAMERA_CREDENTIALS_KEY:-dev-camera-credentials-key}
+      STREAM_TOKEN_SECRET: ${STREAM_TOKEN_SECRET:-dev-stream-token-secret}
       DATABASE_URL: file:./dev.db
       STREAM_GATEWAY_URL: http://stream-gateway:3010
       STREAM_GATEWAY_PUBLIC_URL: http://localhost:3010
@@ -18,7 +19,7 @@ services:
       AUDIO_DETECTION_RUNNER_URL: http://audio-detection-runner:8074
       DETECTION_CALLBACK_SECRET: dev-detection-callback-secret
       EVENT_GATEWAY_URL: http://event-gateway:3011
-      EVENT_PUBLISH_SECRET: dev-event-publish-secret
+      EVENT_PUBLISH_SECRET: ${EVENT_PUBLISH_SECRET:-dev-event-publish-secret}
       SUPERUSER_EMAILS: ${SUPERUSER_EMAILS:-admin@nearhome.dev}
       CORS_ORIGIN_ADMIN: http://localhost:5173
       CORS_ORIGIN_PORTAL: http://localhost:5174
@@ -42,7 +43,7 @@ services:
     environment:
       PORT: 3010
       STREAM_STORAGE_DIR: /data/storage
-      STREAM_TOKEN_SECRET: dev-stream-token-secret
+      STREAM_TOKEN_SECRET: ${STREAM_TOKEN_SECRET:-dev-stream-token-secret}
       STREAM_PROBE_INTERVAL_MS: 5000
       STREAM_MEDIA_ENGINE: ${STREAM_MEDIA_ENGINE:-process}
       STREAM_TRANSCODER_PRESET: ${STREAM_TRANSCODER_PRESET:-ffmpeg-hls}
@@ -70,8 +71,8 @@ services:
     command: ["pnpm", "--filter", "@app/event-gateway", "dev"]
     environment:
       PORT: 3011
-      JWT_SECRET: dev-super-secret
-      EVENT_PUBLISH_SECRET: dev-event-publish-secret
+      JWT_SECRET: ${JWT_SECRET:-dev-super-secret}
+      EVENT_PUBLISH_SECRET: ${EVENT_PUBLISH_SECRET:-dev-event-publish-secret}
       REDIS_URL: redis://redis:6379
     ports:
       - "3011:3011"
