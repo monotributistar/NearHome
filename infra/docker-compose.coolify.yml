@@ -2,8 +2,18 @@
 # Configure the required secrets in Coolify; do not commit a .env file.
 name: nearhome-platform
 
+x-coolify-labels: &coolify-labels
+  coolify.applicationId: "5"
+  coolify.environmentName: production
+  coolify.managed: "true"
+  coolify.name: vt3fy7ppbp8ry1xc4e52kee6
+  coolify.projectName: nearhome
+  coolify.resourceName: nearhome-platform
+  coolify.type: application
+
 services:
   postgres:
+    labels: *coolify-labels
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
@@ -19,6 +29,7 @@ services:
       retries: 10
 
   redis:
+    labels: *coolify-labels
     image: redis:7-alpine
     restart: unless-stopped
     volumes:
@@ -30,6 +41,7 @@ services:
       retries: 5
 
   api:
+    labels: *coolify-labels
     build:
       context: .
       dockerfile: infra/docker/Dockerfile.node-workspace
@@ -60,6 +72,7 @@ services:
         condition: service_healthy
 
   event-gateway:
+    labels: *coolify-labels
     build:
       context: .
       dockerfile: infra/docker/Dockerfile.node-workspace
@@ -76,6 +89,7 @@ services:
         condition: service_healthy
 
   stream-gateway:
+    labels: *coolify-labels
     build:
       context: .
       dockerfile: infra/docker/Dockerfile.node-workspace
@@ -94,6 +108,7 @@ services:
       - nearhome-streams:/data/storage
 
   inference-bridge:
+    labels: *coolify-labels
     build:
       context: apps/inference-bridge
       dockerfile: Dockerfile
@@ -110,6 +125,7 @@ services:
       retries: 3
 
   frame-hub:
+    labels: *coolify-labels
     build:
       context: .
       dockerfile: apps/frame-hub/Dockerfile
@@ -137,6 +153,7 @@ services:
       retries: 3
 
   inference-node-yolo:
+    labels: *coolify-labels
     build:
       context: .
       dockerfile: apps/inference-node-yolo/Dockerfile
@@ -169,6 +186,7 @@ services:
       retries: 3
 
   inference-node-tensorrt:
+    labels: *coolify-labels
     # This image is prebuilt and benchmarked on the target RTX 3070. Keeping it
     # local avoids a multi-gigabyte CUDA rebuild during the first Coolify rollout.
     image: nearhome/inference-node-tensorrt:gpu
@@ -201,6 +219,7 @@ services:
       retries: 3
 
   inference-node-mediapipe:
+    labels: *coolify-labels
     build:
       context: .
       dockerfile: apps/inference-node-mediapipe/Dockerfile
