@@ -172,9 +172,9 @@ services:
       retries: 3
 
   inference-node-tensorrt:
-    build:
-      context: .
-      dockerfile: apps/inference-node-tensorrt/Dockerfile
+    # This image is prebuilt and benchmarked on the target RTX 3070. Keeping it
+    # local avoids a multi-gigabyte CUDA rebuild during the first Coolify rollout.
+    image: nearhome/inference-node-tensorrt:gpu
     runtime: nvidia
     restart: unless-stopped
     environment:
