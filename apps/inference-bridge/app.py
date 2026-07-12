@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import hmac
 import json
@@ -29,6 +30,7 @@ NODE_TOKEN_TTL_SECONDS = max(60, int(os.environ.get("NODE_AUTH_TOKEN_TTL_SECONDS
 NODE_REFRESH_TTL_SECONDS = max(300, int(os.environ.get("NODE_AUTH_REFRESH_TTL_SECONDS", "86400")))
 ENROLLMENT_TOKEN_TTL_SECONDS = max(60, int(os.environ.get("NODE_AUTH_ENROLLMENT_TTL_SECONDS", "600")))
 NODE_HEARTBEAT_TTL_MS = max(5_000, int(os.environ.get("NODE_HEARTBEAT_TTL_MS", "60000")))
+INFERENCE_MAX_FRAME_BYTES = max(1_024, int(os.environ.get("INFERENCE_MAX_FRAME_BYTES", str(12 * 1024 * 1024))))
 
 
 class NodeCapability(BaseModel):
@@ -51,8 +53,9 @@ class InferenceNode(BaseModel):
     maxConcurrent: int = 1
     queueDepth: int = 0
     isDrained: bool = False
+    metrics: Dict[str, Any] = Field(default_factory=dict)
     lastHeartbeatAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    contractVersion: str = "1.0"
+    contractVersion: str = "1.1"
 
 
 class HeartbeatRequest(BaseModel):
@@ -60,6 +63,7 @@ class HeartbeatRequest(BaseModel):
     status: Literal["online", "degraded", "offline"] = "online"
     queueDepth: Optional[int] = None
     resources: Optional[Dict[str, int]] = None
+    metrics: Optional[Dict[str, Any]] = None
 
 
 class InferRequest(BaseModel):
@@ -89,6 +93,60 @@ class InferResponse(BaseModel):
     providerLatencyMs: int
     providerMeta: Dict[str, Any] = Field(default_factory=dict)
     rawRef: Optional[str] = None
+
+
+def _frame_from_media_ref(media_ref: Dict[str, Any]) -> tuple[bytes, str, str]:
+    """Extract one encoded image frame from the bridge's canonical media reference.
+
+    Nodes receive multipart image bytes. Stream URLs are deliberately not decoded here:
+    a Frame Hub must own RTSP decoding so multiple downstream detectors share a frame.
+    """
+    encoded = media_ref.get("dataBase64") or media_ref.get("imageBase64")
+    data_url = media_ref.get("dataUrl")
+    content_type = str(media_ref.get("contentType") or "image/jpeg")
+
+    if data_url:
+        if not isinstance(data_url, str) or not data_url.startswith("data:image/") or "," not in data_url:
+            raise HTTPException(status_code=422, detail="mediaRef.dataUrl must be an image data URL")
+        header, encoded = data_url.split(",", 1)
+        if ";base64" not in header:
+            raise HTTPException(status_code=422, detail="mediaRef.dataUrl must use base64 encoding")
+        content_type = header[5:].split(";", 1)[0]
+
+    if not isinstance(encoded, str) or not encoded:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "on-prem inference requires mediaRef.dataBase64 (or imageBase64/dataUrl). "
+                "RTSP URLs must first be decoded by the Frame Hub."
+            ),
+        )
+    if not content_type.startswith("image/"):
+        raise HTTPException(status_code=422, detail="mediaRef.contentType must be an image MIME type")
+
+    try:
+        image_bytes = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="mediaRef contains invalid base64 image data") from exc
+    if not image_bytes:
+        raise HTTPException(status_code=422, detail="mediaRef image data is empty")
+    if len(image_bytes) > INFERENCE_MAX_FRAME_BYTES:
+        raise HTTPException(status_code=413, detail=f"frame exceeds {INFERENCE_MAX_FRAME_BYTES} byte limit")
+
+    filename = str(media_ref.get("filename") or "frame.jpg")
+    return image_bytes, content_type, filename
+
+
+def _node_form_data(thresholds: Dict[str, Any]) -> Dict[str, str]:
+    """Map stable bridge threshold names to the node's multipart contract."""
+    form: Dict[str, str] = {}
+    confidence = thresholds.get("conf", thresholds.get("confidence"))
+    max_det = thresholds.get("max_det", thresholds.get("maxDet"))
+    if isinstance(confidence, (int, float)):
+        form["conf"] = str(confidence)
+    if isinstance(max_det, int):
+        form["max_det"] = str(max_det)
+    return form
 
 
 class EnrollmentTokenCreateRequest(BaseModel):
@@ -275,6 +333,18 @@ def _prom_escape(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
 
+def _node_score(node: InferenceNode) -> tuple[float, float, int, str]:
+    """Prefer unsaturated accelerated nodes while retaining a deterministic fallback."""
+    capacity = max(1, node.maxConcurrent)
+    load = node.queueDepth / capacity
+    runtime_rank = {"tensorrt": 0.0, "cuda": 0.1, "yolo": 0.2}.get(node.runtime.lower(), 0.6)
+    if node.resources.get("gpu", 0) <= 0:
+        runtime_rank += 0.4
+    latency_ms = float(node.metrics.get("lastLatencyMs", 10_000))
+    # Saturation is the dominant signal. Runtime and latency resolve healthy-node ties.
+    return (load + runtime_rank, latency_ms, node.queueDepth, node.nodeId)
+
+
 def _select_node(task_type: str, model_ref: str, tenant_id: str) -> Optional[InferenceNode]:
     _apply_heartbeat_ttl()
     candidates: List[InferenceNode] = []
@@ -293,7 +363,7 @@ def _select_node(task_type: str, model_ref: str, tenant_id: str) -> Optional[Inf
             candidates.append(node)
     if not candidates:
         return None
-    return sorted(candidates, key=lambda n: (n.queueDepth, n.nodeId))[0]
+    return min(candidates, key=_node_score)
 
 
 @app.get("/health")
@@ -494,6 +564,8 @@ def heartbeat(payload: HeartbeatRequest, auth: NodeAuthClaims = Depends(_require
         current.queueDepth = payload.queueDepth
     if payload.resources is not None:
         current.resources = payload.resources
+    if payload.metrics is not None:
+        current.metrics = payload.metrics
     current.lastHeartbeatAt = _now()
     NODE_REGISTRY[payload.nodeId] = current
     return {"data": current}
@@ -573,15 +645,21 @@ async def infer(payload: InferRequest):
         raise HTTPException(status_code=501, detail="grpc transport not implemented in bridge v1")
 
     endpoint = node.endpoint.rstrip("/")
+    image_bytes, content_type, filename = _frame_from_media_ref(payload.mediaRef)
+    files = {"image": (filename, image_bytes, content_type)}
     async with httpx.AsyncClient(timeout=max(1, payload.deadlineMs / 1000)) as client:
-        response = await client.post(f"{endpoint}/v1/infer", json=payload.model_dump(mode="json"))
+        response = await client.post(
+            f"{endpoint}/v1/infer",
+            files=files,
+            data=_node_form_data(payload.thresholds),
+        )
         if response.status_code >= 400:
             raise HTTPException(status_code=502, detail=f"node inference failed: {response.text}")
         body = response.json()
 
     return InferResponse(
         detections=body.get("detections", []),
-        providerLatencyMs=int(body.get("providerLatencyMs", 0)),
+        providerLatencyMs=int(body.get("providerLatencyMs", body.get("latencyMs", 0))),
         providerMeta={"nodeId": node.nodeId, **body.get("providerMeta", {})},
         rawRef=body.get("rawRef"),
     )

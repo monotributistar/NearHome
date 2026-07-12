@@ -8,13 +8,20 @@ LOCAL_RTSP_CAMERAS="${LOCAL_RTSP_CAMERAS:-[]}"
 WG_HUB_PUBLIC_KEY="${WG_HUB_PUBLIC_KEY:-}"
 WG_HUB_ENDPOINT="${WG_HUB_ENDPOINT:-192.168.0.156:51820}"
 API_BASE_URL="${API_BASE_URL:-http://192.168.0.115:3001}"
-HEADSACLE_URL="${HEADSACLE_URL:-}"
-HEADSACLE_AUTH_KEY="${HEADSACLE_AUTH_KEY:-}"
+HEADSCALE_URL="${HEADSCALE_URL:-}"
+HEADSCALE_AUTH_KEY="${HEADSCALE_AUTH_KEY:-}"
+WG_STATE_DIR="${WG_STATE_DIR:-/var/lib/nearhome}"
 
 echo "=== RPi Simulado: $RPI_ID (tenant: $TENANT_ID) ==="
 
 # ─── 1. Configurar WireGuard ────────────────────────────────────────
-WG_PRIVATE_KEY=$(wg genkey)
+mkdir -p "$WG_STATE_DIR"
+chmod 700 "$WG_STATE_DIR"
+if [[ ! -s "$WG_STATE_DIR/wireguard.key" ]]; then
+  umask 077
+  wg genkey > "$WG_STATE_DIR/wireguard.key"
+fi
+WG_PRIVATE_KEY=$(cat "$WG_STATE_DIR/wireguard.key")
 WG_PUBLIC_KEY=$(echo "$WG_PRIVATE_KEY" | wg pubkey)
 
 cat > /etc/wireguard/wg0.conf <<WGCONF
@@ -31,10 +38,14 @@ PersistentKeepalive = 25
 WGCONF
 
 echo "RPi PublicKey: $WG_PUBLIC_KEY"
-echo "Esperando que WireGuard se conecte..."
-wg-quick up wg0
-sleep 2
-wg show
+if [[ -n "$WG_HUB_PUBLIC_KEY" && -n "$WG_HUB_ENDPOINT" ]]; then
+  echo "Iniciando WireGuard hacia $WG_HUB_ENDPOINT..."
+  wg-quick up wg0
+  sleep 2
+  wg show
+else
+  echo "WireGuard deshabilitado: faltan WG_HUB_PUBLIC_KEY/WG_HUB_ENDPOINT"
+fi
 
 # ─── 2. Discovery Agent: escanear cámaras y reportar ────────────────
 report_cameras() {
@@ -74,13 +85,17 @@ report_cameras() {
 
 # ─── 3. Health Keeper ───────────────────────────────────────────────
 report_health() {
+  local wireguard_peers=0
+  if ip link show wg0 >/dev/null 2>&1; then
+    wireguard_peers=$(wg show wg0 peers 2>/dev/null | sed '/^$/d' | wc -l | tr -d ' ')
+  fi
   local report=$(cat <<EOF
 {
   "rpiId": "$RPI_ID",
   "tenantId": "$TENANT_ID",
   "cpu": $(cat /proc/loadavg | cut -d' ' -f1),
   "uptime": $(cat /proc/uptime | cut -d' ' -f1 | cut -d. -f1),
-  "wireguard": "$(wg show wg0 2>/dev/null | grep -c 'peer:' || echo 0)",
+  "wireguard": $wireguard_peers,
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
 EOF

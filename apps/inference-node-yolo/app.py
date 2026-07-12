@@ -114,7 +114,13 @@ COCO_CLASSES = [
 def _coco_label(cls_id: int) -> str:
     return COCO_CLASSES[cls_id] if 0 <= cls_id < len(COCO_CLASSES) else str(cls_id)
 
-def infer_bytes(image_bytes: bytes, width: int = 640, height: int = 0) -> List[Dict[str, Any]]:
+def infer_bytes(
+    image_bytes: bytes,
+    width: int = 640,
+    height: int = 0,
+    conf: float = YOLO_CONF,
+    max_det: int = YOLO_MAX_DET,
+) -> List[Dict[str, Any]]:
     """Run YOLO on raw image bytes. Returns detections."""
     import cv2
     import numpy as np
@@ -135,7 +141,7 @@ def infer_bytes(image_bytes: bytes, width: int = 640, height: int = 0) -> List[D
 
     # Infer
     model = get_model()
-    results = model(img, verbose=False, conf=YOLO_CONF, max_det=YOLO_MAX_DET)
+    results = model(img, verbose=False, conf=conf, max_det=max_det)
 
     dets = []
     for b in results[0].boxes:
@@ -178,7 +184,7 @@ def _node_payload() -> Dict[str, Any]:
         "maxConcurrent": NODE_MAX_CONCURRENT,
         "queueDepth": metrics.queue_depth,
         "isDrained": False,
-        "contractVersion": "1.0",
+        "contractVersion": "1.1",
         "metrics": metrics.snapshot(),
     }
 
@@ -313,12 +319,7 @@ async def infer(
         effective_conf = conf if conf is not None else YOLO_CONF
         effective_max_det = max_det if max_det is not None else YOLO_MAX_DET
 
-        # Temporarily override for this request
-        global saved_conf, saved_max_det
-        saved_conf = YOLO_CONF
-        saved_max_det = YOLO_MAX_DET
-
-        dets = infer_bytes(image_bytes, YOLO_RESOLUTION)
+        dets = infer_bytes(image_bytes, YOLO_RESOLUTION, conf=effective_conf, max_det=effective_max_det)
 
         ms = (time.monotonic() - t0) * 1000
         metrics.record(ms, True)
@@ -327,9 +328,11 @@ async def infer(
             "detections": dets,
             "count": len(dets),
             "latencyMs": round(ms),
+            "providerLatencyMs": round(ms),
             "nodeId": NODE_ID,
             "model": YOLO_MODEL,
             "config": {"conf": effective_conf, "max_det": effective_max_det},
+            "providerMeta": {"nodeId": NODE_ID, "runtime": NODE_RUNTIME, "model": YOLO_MODEL},
         }
     except Exception as e:
         metrics.record(0, False)

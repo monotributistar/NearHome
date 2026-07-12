@@ -41,6 +41,8 @@ services:
       STREAM_GATEWAY_PUBLIC_URL: http://localhost:8080/stream
       EVENT_GATEWAY_URL: http://event-gateway:3011
       EVENT_PUBLISH_SECRET: ${EVENT_PUBLISH_SECRET:-dev-event-publish-secret}
+      FRAME_HUB_HEALTH_URL: http://frame-hub:8100/health
+      INFERENCE_TENSORRT_URL: ${INFERENCE_TENSORRT_URL:-http://inference-node-tensorrt:8093/health}
       SUPERUSER_EMAILS: admin@nearhome.dev
       CORS_ORIGIN_ADMIN: http://localhost:5173
       CORS_ORIGIN_PORTAL: http://localhost:5174
@@ -130,13 +132,39 @@ services:
     networks:
       - poc_net
 
-  # ─── Frame Grabber (captures RTSP frames, sends to detector) ──────
+  # ─── Frame Hub (motion gate + camera policy + detector orchestration) ──
+  frame-hub:
+    build:
+      context: ..
+      dockerfile: apps/frame-hub/Dockerfile
+    restart: unless-stopped
+    environment:
+      INFERENCE_BRIDGE_URL: http://inference-bridge:8090
+      EVENT_GATEWAY_URL: http://event-gateway:3011
+      EVENT_PUBLISH_SECRET: ${EVENT_PUBLISH_SECRET:-dev-event-publish-secret}
+      FRAME_HUB_DEFAULT_MODEL_REF: yolo11n@1.0
+      FRAME_HUB_MOTION_WIDTH: "320"
+      FRAME_HUB_MOTION_THRESHOLD: "0.025"
+      FRAME_HUB_MOTION_WARMUP_FRAMES: "20"
+      FRAME_HUB_FRAME_TTL_SECONDS: "120"
+    volumes:
+      - poc-frame-hub:/data/frames
+    ports:
+      - "8100:8100"
+    depends_on:
+      - inference-bridge
+      - event-gateway
+    networks:
+      - poc_net
+
+  # ─── Frame Grabber (captures RTSP frames, sends to Frame Hub) ──────
   frame-grabber:
     build:
       context: ..
       dockerfile: apps/frame-grabber/Dockerfile
     restart: unless-stopped
     environment:
+      FRAME_HUB_URL: http://frame-hub:8100/v1/frames
       DETECTOR_URL: http://detector:8000/detect
       # Cameras defined as JSON array via env
       CAMERAS: '[{"id":"cam-a-entrada","tenant":"tenant-a-oficinas","rtsp":"rtsp://host.docker.internal:8554/entrance-frontal"},{"id":"cam-a-pasillo","tenant":"tenant-a-oficinas","rtsp":"rtsp://host.docker.internal:8554/entrance-corridor"},{"id":"cam-a-exterior","tenant":"tenant-a-oficinas","rtsp":"rtsp://host.docker.internal:8554/towncentre"},{"id":"cam-b-ingreso","tenant":"tenant-b-logistica","rtsp":"rtsp://host.docker.internal:8554/pets-campus"},{"id":"cam-b-bodega","tenant":"tenant-b-logistica","rtsp":"rtsp://host.docker.internal:8554/mall-interior"},{"id":"cam-b-muelle","tenant":"tenant-b-logistica","rtsp":"rtsp://host.docker.internal:8554/browse-tienda"},{"id":"cam-b-externa","tenant":"tenant-b-logistica","rtsp":"https://mistserver.telpin.com.ar:8443/hls/fuente/index.m3u8"}]'
@@ -145,7 +173,7 @@ services:
     networks:
       - poc_net
     depends_on:
-      - detector
+      - frame-hub
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -190,7 +218,7 @@ services:
       YOLO_RESOLUTION: "640"
       INFERENCE_BRIDGE_URL: http://inference-bridge:8090
       NODE_ENROLLMENT_TOKEN: ""
-      NODE_AUTH_ADMIN_SECRET: ""
+      NODE_AUTH_ADMIN_SECRET: ${NODE_AUTH_ADMIN_SECRET:-dev-node-auth-admin-secret}
     ports:
       - "8091:8091"
     networks:
@@ -211,7 +239,7 @@ services:
       MP_MIN_TRACK_CONF: "0.5"
       INFERENCE_BRIDGE_URL: http://inference-bridge:8090
       NODE_ENROLLMENT_TOKEN: ""
-      NODE_AUTH_ADMIN_SECRET: ""
+      NODE_AUTH_ADMIN_SECRET: ${NODE_AUTH_ADMIN_SECRET:-dev-node-auth-admin-secret}
     ports:
       - "8092:8092"
     networks:
@@ -223,5 +251,6 @@ networks:
 
 volumes:
   poc-frames:
+  poc-frame-hub:
   poc-db:
   poc-hls:

@@ -658,6 +658,8 @@ export const opsPlugin: FastifyPluginAsync<OpsPluginOptions> = async (app, opts)
     checks.push(probeService("detector", `http://detector:8000/health`));
     checks.push(probeService("inference-node-yolo", `http://inference-node-yolo:8091/health`));
     checks.push(probeService("inference-node-mediapipe", `http://inference-node-mediapipe:8092/health`));
+    checks.push(probeService("frame-hub", process.env.FRAME_HUB_HEALTH_URL ?? "http://frame-hub:8100/health"));
+    checks.push(probeService("inference-node-tensorrt", process.env.INFERENCE_TENSORRT_URL ?? "http://inference-node-tensorrt:8093/health"));
     checks.push(probeService("mediamtx", `http://rtsp-sim:8888/hls/`));
     if (temporalDispatchUrl) checks.push(probeService("detection-dispatcher", `${temporalDispatchUrl}/health`));
     const services = await Promise.all(checks);
@@ -678,6 +680,23 @@ export const opsPlugin: FastifyPluginAsync<OpsPluginOptions> = async (app, opts)
     const offline = nodesRaw.filter((n) => n.status === "offline").length;
     const drained = nodesRaw.filter((n) => n.isDrained === true).length;
     const inferredRevoked = nodesRaw.filter((n) => n.isDrained === true && n.status === "offline").length;
+    const tenants = await prisma.tenant.findMany({
+      where: { deletedAt: null },
+      orderBy: { name: "asc" },
+      select: {
+        id: true,
+        name: true,
+        cameras: {
+          where: { deletedAt: null },
+          orderBy: { name: "asc" },
+          select: {
+            id: true, name: true, location: true, isActive: true, lifecycleStatus: true,
+            profile: { select: { status: true, lastHealthAt: true, lastError: true } },
+            latestHealthSnapshot: { select: { connectivity: true, latencyMs: true, error: true, checkedAt: true } }
+          }
+        }
+      }
+    });
     return {
       data: {
         generatedAt: new Date().toISOString(),
@@ -693,6 +712,34 @@ export const opsPlugin: FastifyPluginAsync<OpsPluginOptions> = async (app, opts)
           drained,
           revokedEstimate: inferredRevoked,
           items: nodesRaw
+        },
+        topology: {
+          tenants: tenants.map((tenant) => ({
+            tenantId: tenant.id,
+            tenantName: tenant.name,
+            cameras: tenant.cameras.map((camera) => ({
+              cameraId: camera.id,
+              name: camera.name,
+              location: camera.location,
+              isActive: camera.isActive,
+              lifecycleStatus: camera.lifecycleStatus,
+              profile: camera.profile
+                ? {
+                    status: camera.profile.status,
+                    lastHealthAt: camera.profile.lastHealthAt?.toISOString() ?? null,
+                    lastError: camera.profile.lastError
+                  }
+                : null,
+              health: camera.latestHealthSnapshot
+                ? {
+                    connectivity: camera.latestHealthSnapshot.connectivity,
+                    latencyMs: camera.latestHealthSnapshot.latencyMs,
+                    error: camera.latestHealthSnapshot.error,
+                    checkedAt: camera.latestHealthSnapshot.checkedAt.toISOString()
+                  }
+                : null
+            }))
+          }))
         }
       }
     };

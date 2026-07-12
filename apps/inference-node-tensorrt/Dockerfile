@@ -6,13 +6,13 @@ RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY apps/inference-node-tensorrt/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Pre-download model
 RUN python3 -c "from ultralytics import YOLO; YOLO('yolo11n.pt')"
 
-COPY app.py .
+COPY apps/inference-node-tensorrt/app.py .
 
 EXPOSE 8093
 

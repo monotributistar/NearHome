@@ -9,6 +9,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 log = logging.getLogger("frame-grabber")
 
 DETECTOR_URL = os.environ.get("DETECTOR_URL", "http://detector:8000/detect")
+FRAME_HUB_URL = os.environ.get("FRAME_HUB_URL", "").rstrip("/")
 CAMERAS_JSON = os.environ.get("CAMERAS", "[]")
 FPS = int(os.environ.get("FPS", "1"))
 MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT", "3"))
@@ -72,12 +73,23 @@ def _build_multipart(fields: dict, img_bytes: bytes) -> tuple:
     return body, boundary
 
 # ─── Frame detector dispatch ──────────────────────────────────────────────
-def detect_frame(cam, frame):
-    """Send frame to detector with the camera's detector_mode."""
+def detect_frame(cam, frame, pts: int):
+    """Send a frame to Frame Hub, falling back to the legacy detector when unset."""
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     try:
         _, img_data = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
         img_bytes = img_data.tobytes()
+        if FRAME_HUB_URL:
+            body, boundary = _build_multipart({
+                "image": "frame.jpg", "cameraId": cam['id'], "tenantId": cam['tenant'],
+                "pts": pts, "capturedAt": ts,
+            }, img_bytes)
+            req = Request(FRAME_HUB_URL, data=body, method="POST")
+            req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+            result = json.loads(urlopen(req, timeout=15).read())
+            log.info(f"[{cam['id']}] pts={pts} accepted={result.get('accepted')} motion={result.get('motionPct', 0):.4f}")
+            return
+
         mode = get_detector_mode(cam['id'])
 
         if mode == "none":
@@ -139,7 +151,11 @@ def camera_loop(cam):
                 s = 640.0 / w
                 frame = cv2.resize(frame, (int(w*s), int(h*s)), interpolation=cv2.INTER_LINEAR)
 
-            detect_frame(cam, frame)
+            stream_pts = cap.get(cv2.CAP_PROP_POS_MSEC)
+            # Some RTSP implementations do not expose PTS through OpenCV. Keep an
+            # explicit millisecond fallback so frame ids remain monotonic enough to correlate.
+            pts = int(stream_pts) if stream_pts > 0 else time.time_ns() // 1_000_000
+            detect_frame(cam, frame, pts)
 
             elapsed = time.monotonic() - t0
             sleep = max(0, rest - elapsed)

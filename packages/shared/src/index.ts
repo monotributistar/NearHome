@@ -65,7 +65,7 @@ export const CameraSchema = z.object({
             .array(
               z.object({
                 pipelineId: z.string(),
-                provider: z.enum(["yolo", "mediapipe", "audio_vad", "audio_classifier"]),
+                provider: z.enum(["yolo", "mediapipe", "lpr", "audio_vad", "audio_classifier"]),
                 taskType: z.enum([
                   "person_detection",
                   "object_detection",
@@ -470,7 +470,7 @@ export const NodeCapabilitySchema = z.object({
   models: z.array(z.string())
 });
 
-export const DetectionProviderRuntimeSchema = z.enum(["yolo", "mediapipe", "audio_vad", "audio_classifier"]);
+export const DetectionProviderRuntimeSchema = z.enum(["yolo", "mediapipe", "lpr", "audio_vad", "audio_classifier"]);
 export const DetectionTaskTypeSchema = z.enum([
   "person_detection",
   "object_detection",
