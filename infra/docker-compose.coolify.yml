@@ -37,8 +37,7 @@ services:
     command: >-
       sh -lc 'pnpm --filter @app/api prisma:generate:postgres &&
       pnpm --filter @app/api db:push:postgres &&
-      pnpm --filter @app/api build &&
-      pnpm --filter @app/api start'
+      pnpm --filter @app/api dev'
     environment:
       PORT: "3001"
       DATABASE_URL: postgresql://${POSTGRES_USER:-nearhome}:${POSTGRES_PASSWORD:?set in Coolify}@postgres:5432/${POSTGRES_DB:-nearhome}?schema=public
@@ -66,8 +65,7 @@ services:
       dockerfile: infra/docker/Dockerfile.node-workspace
     restart: unless-stopped
     command: >-
-      sh -lc 'pnpm --filter @app/event-gateway build &&
-      pnpm --filter @app/event-gateway start'
+      pnpm --filter @app/event-gateway dev
     environment:
       PORT: "3011"
       JWT_SECRET: ${JWT_SECRET:?set in Coolify}
@@ -83,8 +81,7 @@ services:
       dockerfile: infra/docker/Dockerfile.node-workspace
     restart: unless-stopped
     command: >-
-      sh -lc 'pnpm --filter @app/stream-gateway build &&
-      pnpm --filter @app/stream-gateway start'
+      pnpm --filter @app/stream-gateway dev
     environment:
       PORT: "3010"
       HOST: 0.0.0.0
