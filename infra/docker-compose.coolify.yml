@@ -31,7 +31,7 @@ services:
 
   api:
     build:
-      context: ..
+      context: .
       dockerfile: infra/docker/Dockerfile.node-workspace
     restart: unless-stopped
     command: >-
@@ -62,7 +62,7 @@ services:
 
   event-gateway:
     build:
-      context: ..
+      context: .
       dockerfile: infra/docker/Dockerfile.node-workspace
     restart: unless-stopped
     command: >-
@@ -79,7 +79,7 @@ services:
 
   stream-gateway:
     build:
-      context: ..
+      context: .
       dockerfile: infra/docker/Dockerfile.node-workspace
     restart: unless-stopped
     command: >-
@@ -98,7 +98,7 @@ services:
 
   inference-bridge:
     build:
-      context: ../apps/inference-bridge
+      context: apps/inference-bridge
       dockerfile: Dockerfile
     restart: unless-stopped
     environment:
@@ -114,7 +114,7 @@ services:
 
   frame-hub:
     build:
-      context: ..
+      context: .
       dockerfile: apps/frame-hub/Dockerfile
     restart: unless-stopped
     environment:
@@ -141,7 +141,7 @@ services:
 
   inference-node-yolo:
     build:
-      context: ..
+      context: .
       dockerfile: apps/inference-node-yolo/Dockerfile
     runtime: nvidia
     restart: unless-stopped
@@ -173,7 +173,7 @@ services:
 
   inference-node-tensorrt:
     build:
-      context: ..
+      context: .
       dockerfile: apps/inference-node-tensorrt/Dockerfile
     runtime: nvidia
     restart: unless-stopped
@@ -205,7 +205,7 @@ services:
 
   inference-node-mediapipe:
     build:
-      context: ..
+      context: .
       dockerfile: apps/inference-node-mediapipe/Dockerfile
     restart: unless-stopped
     environment:
