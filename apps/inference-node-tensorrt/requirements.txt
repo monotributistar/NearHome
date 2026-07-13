@@ -1,0 +1,10 @@
+fastapi>=0.115.0
+uvicorn>=0.30.0
+httpx>=0.28.0
+ultralytics>=8.3.0
+opencv-python-headless>=4.9.0
+Pillow>=10.0.0
+numpy>=1.26.0
+python-multipart>=0.0.9
+tensorrt>=10.0.0
+tensorrt-cu12-libs>=10.0.0

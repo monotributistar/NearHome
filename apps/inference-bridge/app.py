@@ -1,19 +1,26 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException, Response
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Response, UploadFile
 from pydantic import BaseModel, Field
 
+from hf_client import get_space_pool, HF_SPACE_YOLO, HF_YOLO_FN, HF_SPACE_FACE, HF_FACE_FN
+
 app = FastAPI(title="NearHome Inference Bridge", version="0.2.0")
+
+logger = logging.getLogger("inference-bridge")
 
 JWT_SECRET = os.environ.get("NODE_AUTH_JWT_SECRET", "dev-node-auth-secret")
 JWT_ISSUER = os.environ.get("NODE_AUTH_JWT_ISSUER", "nearhome-control-plane")
@@ -23,6 +30,7 @@ NODE_TOKEN_TTL_SECONDS = max(60, int(os.environ.get("NODE_AUTH_TOKEN_TTL_SECONDS
 NODE_REFRESH_TTL_SECONDS = max(300, int(os.environ.get("NODE_AUTH_REFRESH_TTL_SECONDS", "86400")))
 ENROLLMENT_TOKEN_TTL_SECONDS = max(60, int(os.environ.get("NODE_AUTH_ENROLLMENT_TTL_SECONDS", "600")))
 NODE_HEARTBEAT_TTL_MS = max(5_000, int(os.environ.get("NODE_HEARTBEAT_TTL_MS", "60000")))
+INFERENCE_MAX_FRAME_BYTES = max(1_024, int(os.environ.get("INFERENCE_MAX_FRAME_BYTES", str(12 * 1024 * 1024))))
 
 
 class NodeCapability(BaseModel):
@@ -45,8 +53,9 @@ class InferenceNode(BaseModel):
     maxConcurrent: int = 1
     queueDepth: int = 0
     isDrained: bool = False
+    metrics: Dict[str, Any] = Field(default_factory=dict)
     lastHeartbeatAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    contractVersion: str = "1.0"
+    contractVersion: str = "1.1"
 
 
 class HeartbeatRequest(BaseModel):
@@ -54,6 +63,7 @@ class HeartbeatRequest(BaseModel):
     status: Literal["online", "degraded", "offline"] = "online"
     queueDepth: Optional[int] = None
     resources: Optional[Dict[str, int]] = None
+    metrics: Optional[Dict[str, Any]] = None
 
 
 class InferRequest(BaseModel):
@@ -70,11 +80,73 @@ class InferRequest(BaseModel):
     provider: Literal["onprem_bento", "huggingface_space", "external_http"] = "onprem_bento"
 
 
+class HFInferResponse(BaseModel):
+    status: str = "ok"
+    detections: List[Dict[str, Any]] = Field(default_factory=list)
+    coldStart: bool = False
+    eventId: Optional[str] = None
+    providerLatencyMs: int = 0
+
+
 class InferResponse(BaseModel):
     detections: List[Dict[str, Any]]
     providerLatencyMs: int
     providerMeta: Dict[str, Any] = Field(default_factory=dict)
     rawRef: Optional[str] = None
+
+
+def _frame_from_media_ref(media_ref: Dict[str, Any]) -> tuple[bytes, str, str]:
+    """Extract one encoded image frame from the bridge's canonical media reference.
+
+    Nodes receive multipart image bytes. Stream URLs are deliberately not decoded here:
+    a Frame Hub must own RTSP decoding so multiple downstream detectors share a frame.
+    """
+    encoded = media_ref.get("dataBase64") or media_ref.get("imageBase64")
+    data_url = media_ref.get("dataUrl")
+    content_type = str(media_ref.get("contentType") or "image/jpeg")
+
+    if data_url:
+        if not isinstance(data_url, str) or not data_url.startswith("data:image/") or "," not in data_url:
+            raise HTTPException(status_code=422, detail="mediaRef.dataUrl must be an image data URL")
+        header, encoded = data_url.split(",", 1)
+        if ";base64" not in header:
+            raise HTTPException(status_code=422, detail="mediaRef.dataUrl must use base64 encoding")
+        content_type = header[5:].split(";", 1)[0]
+
+    if not isinstance(encoded, str) or not encoded:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "on-prem inference requires mediaRef.dataBase64 (or imageBase64/dataUrl). "
+                "RTSP URLs must first be decoded by the Frame Hub."
+            ),
+        )
+    if not content_type.startswith("image/"):
+        raise HTTPException(status_code=422, detail="mediaRef.contentType must be an image MIME type")
+
+    try:
+        image_bytes = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="mediaRef contains invalid base64 image data") from exc
+    if not image_bytes:
+        raise HTTPException(status_code=422, detail="mediaRef image data is empty")
+    if len(image_bytes) > INFERENCE_MAX_FRAME_BYTES:
+        raise HTTPException(status_code=413, detail=f"frame exceeds {INFERENCE_MAX_FRAME_BYTES} byte limit")
+
+    filename = str(media_ref.get("filename") or "frame.jpg")
+    return image_bytes, content_type, filename
+
+
+def _node_form_data(thresholds: Dict[str, Any]) -> Dict[str, str]:
+    """Map stable bridge threshold names to the node's multipart contract."""
+    form: Dict[str, str] = {}
+    confidence = thresholds.get("conf", thresholds.get("confidence"))
+    max_det = thresholds.get("max_det", thresholds.get("maxDet"))
+    if isinstance(confidence, (int, float)):
+        form["conf"] = str(confidence)
+    if isinstance(max_det, int):
+        form["max_det"] = str(max_det)
+    return form
 
 
 class EnrollmentTokenCreateRequest(BaseModel):
@@ -261,6 +333,18 @@ def _prom_escape(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
 
+def _node_score(node: InferenceNode) -> tuple[float, float, int, str]:
+    """Prefer unsaturated accelerated nodes while retaining a deterministic fallback."""
+    capacity = max(1, node.maxConcurrent)
+    load = node.queueDepth / capacity
+    runtime_rank = {"tensorrt": 0.0, "cuda": 0.1, "yolo": 0.2}.get(node.runtime.lower(), 0.6)
+    if node.resources.get("gpu", 0) <= 0:
+        runtime_rank += 0.4
+    latency_ms = float(node.metrics.get("lastLatencyMs", 10_000))
+    # Saturation is the dominant signal. Runtime and latency resolve healthy-node ties.
+    return (load + runtime_rank, latency_ms, node.queueDepth, node.nodeId)
+
+
 def _select_node(task_type: str, model_ref: str, tenant_id: str) -> Optional[InferenceNode]:
     _apply_heartbeat_ttl()
     candidates: List[InferenceNode] = []
@@ -279,7 +363,7 @@ def _select_node(task_type: str, model_ref: str, tenant_id: str) -> Optional[Inf
             candidates.append(node)
     if not candidates:
         return None
-    return sorted(candidates, key=lambda n: (n.queueDepth, n.nodeId))[0]
+    return min(candidates, key=_node_score)
 
 
 @app.get("/health")
@@ -480,6 +564,8 @@ def heartbeat(payload: HeartbeatRequest, auth: NodeAuthClaims = Depends(_require
         current.queueDepth = payload.queueDepth
     if payload.resources is not None:
         current.resources = payload.resources
+    if payload.metrics is not None:
+        current.metrics = payload.metrics
     current.lastHeartbeatAt = _now()
     NODE_REGISTRY[payload.nodeId] = current
     return {"data": current}
@@ -559,15 +645,203 @@ async def infer(payload: InferRequest):
         raise HTTPException(status_code=501, detail="grpc transport not implemented in bridge v1")
 
     endpoint = node.endpoint.rstrip("/")
+    image_bytes, content_type, filename = _frame_from_media_ref(payload.mediaRef)
+    files = {"image": (filename, image_bytes, content_type)}
     async with httpx.AsyncClient(timeout=max(1, payload.deadlineMs / 1000)) as client:
-        response = await client.post(f"{endpoint}/v1/infer", json=payload.model_dump(mode="json"))
+        response = await client.post(
+            f"{endpoint}/v1/infer",
+            files=files,
+            data=_node_form_data(payload.thresholds),
+        )
         if response.status_code >= 400:
             raise HTTPException(status_code=502, detail=f"node inference failed: {response.text}")
         body = response.json()
 
     return InferResponse(
         detections=body.get("detections", []),
-        providerLatencyMs=int(body.get("providerLatencyMs", 0)),
+        providerLatencyMs=int(body.get("providerLatencyMs", body.get("latencyMs", 0))),
         providerMeta={"nodeId": node.nodeId, **body.get("providerMeta", {})},
         rawRef=body.get("rawRef"),
     )
+
+
+# ─── HF Zero GPU Inference Routes ────────────────────────────────────────
+
+@app.post("/v1/infer/hf/yolo", response_model=HFInferResponse)
+async def infer_hf_yolo(
+    file: UploadFile = File(...),
+    tenantId: str = Form(""),
+    cameraId: str = Form(""),
+    frameTs: str = Form(""),
+    motionPct: str = Form("0"),
+):
+    """Forward a JPEG frame to YOLO HF Space for object detection.
+
+    Receives frames from change-detector, returns YOLO detections.
+    Falls back to mock if HF_TOKEN is not configured.
+    """
+    t0 = time.monotonic()
+
+    image_data = await file.read()
+
+    # Mock fallback if no HF token
+    if not os.environ.get("HF_TOKEN"):
+        logger.info("HF_TOKEN not set, returning mock YOLO detection")
+        return HFInferResponse(
+            status="ok",
+            detections=[
+                {
+                    "label": "person",
+                    "confidence": 0.87,
+                    "bbox": {"x": 0.22, "y": 0.16, "w": 0.20, "h": 0.40},
+                }
+            ],
+            providerLatencyMs=int((time.monotonic() - t0) * 1000),
+        )
+
+    pool = get_space_pool()
+    client = pool.get(HF_SPACE_YOLO, HF_YOLO_FN)
+
+    try:
+        result = await client.infer(image_data)
+    except Exception as exc:
+        logger.error("HF YOLO inference failed: %s", exc)
+        return HFInferResponse(
+            status="error",
+            detections=[],
+            providerLatencyMs=int((time.monotonic() - t0) * 1000),
+        )
+
+    if result.get("status") == "cold_start":
+        return HFInferResponse(
+            status="cold_start",
+            coldStart=True,
+            detections=[],
+            providerLatencyMs=int((time.monotonic() - t0) * 1000),
+        )
+
+    return HFInferResponse(
+        status="ok",
+        detections=result.get("detections", []),
+        providerLatencyMs=int((time.monotonic() - t0) * 1000),
+    )
+
+
+class HFBatchInferResponse(BaseModel):
+    status: str = "ok"
+    coldStart: bool = False
+    batchDetections: List[List[Dict[str, Any]]] = Field(default_factory=list)
+    providerLatencyMs: int = 0
+
+
+@app.post("/v1/infer/hf/yolo-batch", response_model=HFBatchInferResponse)
+async def infer_hf_yolo_batch(
+    files: List[UploadFile] = File(...),
+    tenantId: str = Form(""),
+    cameraIds: str = Form(""),
+    frameTs: str = Form(""),
+    confThreshold: str = Form("0.25"),
+    iouThreshold: str = Form("0.45"),
+    maxDetections: str = Form("100"),
+):
+    """Batch inference: forward MULTIPLE JPEG frames to YOLO HF Space."""
+    t0 = time.monotonic()
+    if not os.environ.get("HF_TOKEN"):
+        return HFBatchInferResponse(status="ok", batchDetections=[], providerLatencyMs=0)
+
+    pool = get_space_pool()
+    client = pool.get(HF_SPACE_YOLO, HF_YOLO_FN)
+
+    images_data = []
+    for f in files:
+        images_data.append(await f.read())
+
+    try:
+        result = await client.batch_infer(
+            images_data,
+            call_params=[float(confThreshold), float(iouThreshold), int(maxDetections)]
+        )
+    except Exception as exc:
+        logger.error("HF YOLO batch inference failed: %s", exc)
+        return HFBatchInferResponse(
+            status="error", batchDetections=[], providerLatencyMs=int((time.monotonic() - t0) * 1000),
+        )
+
+    if result.get("status") == "cold_start":
+        return HFBatchInferResponse(status="cold_start", coldStart=True, providerLatencyMs=int((time.monotonic() - t0) * 1000))
+
+    return HFBatchInferResponse(
+        status="ok",
+        batchDetections=result.get("batch_results", []),
+        providerLatencyMs=int((time.monotonic() - t0) * 1000),
+    )
+
+
+@app.post("/v1/infer/hf/face", response_model=HFInferResponse)
+async def infer_hf_face(
+    file: UploadFile = File(...),
+    tenantId: str = Form(""),
+    cameraId: str = Form(""),
+    frameTs: str = Form(""),
+    minConfidence: str = Form("0.5"),
+):
+    """Forward a JPEG frame to face-embedder HF Space for face detection + 512D embeddings."""
+    t0 = time.monotonic()
+
+    image_data = await file.read()
+
+    if not os.environ.get("HF_TOKEN"):
+        logger.info("HF_TOKEN not set, returning mock face detection")
+        return HFInferResponse(
+            status="ok",
+            detections=[{"label": "face", "confidence": 0.90, "bbox": {"x": 0.3, "y": 0.2, "w": 0.15, "h": 0.25},
+                       "embedding_dim": 512}],
+            providerLatencyMs=int((time.monotonic() - t0) * 1000),
+        )
+
+    pool = get_space_pool()
+    client = pool.get(HF_SPACE_FACE, HF_FACE_FN)
+
+    try:
+        min_conf = float(minConfidence)
+        result = await client.infer(image_data, call_params=[min_conf, 20])
+    except Exception as exc:
+        logger.error("HF Face inference failed: %s", exc)
+        return HFInferResponse(
+            status="error",
+            detections=[],
+            providerLatencyMs=int((time.monotonic() - t0) * 1000),
+        )
+
+    if result.get("status") == "cold_start":
+        return HFInferResponse(
+            status="cold_start",
+            coldStart=True,
+            detections=[],
+            providerLatencyMs=int((time.monotonic() - t0) * 1000),
+        )
+
+    return HFInferResponse(
+        status="ok",
+        detections=client._parse_face_result(result.get("raw", [])),
+        providerLatencyMs=int((time.monotonic() - t0) * 1000),
+    )
+
+
+@app.get("/v1/infer/hf/health")
+async def infer_hf_health():
+    """Check availability of all configured HF Spaces."""
+    pool = get_space_pool()
+    results = await pool.health_all()
+    return {
+        "spaces": results,
+        "hfTokenConfigured": bool(os.environ.get("HF_TOKEN")),
+    }
+
+
+@app.post("/v1/infer/hf/keep-warm")
+async def infer_hf_keep_warm():
+    """Wake up all configured HF Spaces."""
+    pool = get_space_pool()
+    await pool.keep_warm_all()
+    return {"status": "waking"}

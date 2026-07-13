@@ -7,6 +7,7 @@ export const EVENT_GATEWAY_URL = import.meta.env.VITE_EVENT_GATEWAY_URL ?? "http
 
 export const PORTAL_ROUTES = {
   operations: {
+    dashboard: "/operations/dashboard",
     cameras: "/operations/cameras",
     cameraDetail: (id: string) => `/operations/cameras/${id}`,
     events: "/operations/events",

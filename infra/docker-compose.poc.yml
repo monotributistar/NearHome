@@ -1,0 +1,256 @@
+# NearHome POC Stack — Caddy reverse proxy, zero port collisions
+name: nearhome-poc
+
+services:
+  # ─── Reverse Proxy (single entry point :8080) ──────────────────────
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - poc-frames:/data/frames:ro
+      - poc-hls:/data/hls:ro
+    restart: unless-stopped
+    depends_on:
+      - api
+      - stream-gateway
+      - event-gateway
+      - inference-bridge
+    networks:
+      - poc_net
+
+  # ─── Core services (internal only, no host ports) ──────────────────
+
+  api:
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile.node-workspace
+    command: ["pnpm", "--filter", "@app/api", "dev"]
+    restart: unless-stopped
+    volumes:
+      - poc-db:/workspace/apps/api/prisma
+    environment:
+      PORT: 3001
+      JWT_SECRET: ${JWT_SECRET:-dev-super-secret}
+      CAMERA_CREDENTIALS_KEY: ${CAMERA_CREDENTIALS_KEY:-dev-camera-credentials-key}
+      STREAM_TOKEN_SECRET: ${STREAM_TOKEN_SECRET:-dev-stream-token-secret}
+      DATABASE_URL: file:./dev.db
+      STREAM_GATEWAY_URL: http://stream-gateway:3010
+      STREAM_GATEWAY_PUBLIC_URL: http://localhost:8080/stream
+      EVENT_GATEWAY_URL: http://event-gateway:3011
+      EVENT_PUBLISH_SECRET: ${EVENT_PUBLISH_SECRET:-dev-event-publish-secret}
+      FRAME_HUB_HEALTH_URL: http://frame-hub:8100/health
+      INFERENCE_TENSORRT_URL: ${INFERENCE_TENSORRT_URL:-http://inference-node-tensorrt:8093/health}
+      SUPERUSER_EMAILS: admin@nearhome.dev
+      CORS_ORIGIN_ADMIN: http://localhost:5173
+      CORS_ORIGIN_PORTAL: http://localhost:5174
+      PORTAL_BASE_URL: http://localhost:5174
+    depends_on:
+      - stream-gateway
+      - event-gateway
+    networks:
+      - poc_net
+
+  stream-gateway:
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile.node-workspace
+    command: ["pnpm", "--filter", "@app/stream-gateway", "dev"]
+    environment:
+      PORT: 3010
+      HOST: 0.0.0.0
+      STREAM_STORAGE_DIR: /data/storage
+      STREAM_TOKEN_SECRET: ${STREAM_TOKEN_SECRET:-dev-stream-token-secret}
+      STREAM_PROBE_INTERVAL_MS: 5000
+      STREAM_MEDIA_ENGINE: process
+      STREAM_TRANSCODER_CMD: ffmpeg -rtsp_transport tcp -i '{{rtspUrl}}' -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p -profile:v baseline -level 3.0 -g 30 -r 10 -an -f hls -hls_time 2 -hls_list_size 5 -hls_flags delete_segments+append_list -hls_segment_filename '/data/storage/{{tenantId}}/{{cameraId}}/segment%d.ts' '/data/storage/{{tenantId}}/{{cameraId}}/index.m3u8'
+      STREAM_PROCESS_SEED_ASSETS: "0"
+      STREAM_S3_ARCHIVE_ENABLED: "0"
+    networks:
+      - poc_net
+
+  event-gateway:
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile.node-workspace
+    command: ["pnpm", "--filter", "@app/event-gateway", "dev"]
+    environment:
+      PORT: 3011
+      JWT_SECRET: ${JWT_SECRET:-dev-super-secret}
+      EVENT_PUBLISH_SECRET: ${EVENT_PUBLISH_SECRET:-dev-event-publish-secret}
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      - redis
+    networks:
+      - poc_net
+
+  # ─── Detection plane ───────────────────────────────────────────────
+
+  inference-bridge:
+    build:
+      context: ../apps/inference-bridge
+      dockerfile: Dockerfile
+    ports:
+      - "8090:8090"
+    environment:
+      HF_TOKEN: ${HF_TOKEN}
+      HF_SPACE_YOLO: monotributistar/yolo-detector
+      HF_YOLO_FN: /detect_objects
+      HF_SPACE_FACE: monotributistar/face-embedder
+      HF_FACE_FN: /embed_faces
+      HF_COLD_START_TIMEOUT_S: "120"
+      NODE_AUTH_JWT_SECRET: ${NODE_AUTH_JWT_SECRET:-dev-node-auth-secret}
+      NODE_AUTH_ADMIN_SECRET: ${NODE_AUTH_ADMIN_SECRET:-dev-node-auth-admin-secret}
+      NODE_HEARTBEAT_TTL_MS: "60000"
+    networks:
+      - poc_net
+
+  # ─── Dependencies ──────────────────────────────────────────────────
+
+  redis:
+    image: redis:7-alpine
+    networks:
+      - poc_net
+
+  # ─── RTSP Server + HLS (MediaMTX) ─────────────────────────────────
+  rtsp-sim:
+    image: bluenviron/mediamtx:latest
+    container_name: nearhome-rtsp-sim
+    restart: unless-stopped
+    ports:
+      - "8554:8554"
+    environment:
+      - MTX_RTSPADDRESS=:8554
+      - MTX_HLS=yes
+      - MTX_HLSDIRECTORY=/data/hls
+      - MTX_HLSSEGMENTCOUNT=3
+      - MTX_HLSSEGMENTDURATION=1s
+    volumes:
+      - poc-hls:/data/hls
+    networks:
+      - poc_net
+
+  # ─── Frame Hub (motion gate + camera policy + detector orchestration) ──
+  frame-hub:
+    build:
+      context: ..
+      dockerfile: apps/frame-hub/Dockerfile
+    restart: unless-stopped
+    environment:
+      INFERENCE_BRIDGE_URL: http://inference-bridge:8090
+      EVENT_GATEWAY_URL: http://event-gateway:3011
+      EVENT_PUBLISH_SECRET: ${EVENT_PUBLISH_SECRET:-dev-event-publish-secret}
+      FRAME_HUB_DEFAULT_MODEL_REF: yolo11n@1.0
+      FRAME_HUB_MOTION_WIDTH: "320"
+      FRAME_HUB_MOTION_THRESHOLD: "0.025"
+      FRAME_HUB_MOTION_WARMUP_FRAMES: "20"
+      FRAME_HUB_FRAME_TTL_SECONDS: "120"
+    volumes:
+      - poc-frame-hub:/data/frames
+    ports:
+      - "8100:8100"
+    depends_on:
+      - inference-bridge
+      - event-gateway
+    networks:
+      - poc_net
+
+  # ─── Frame Grabber (captures RTSP frames, sends to Frame Hub) ──────
+  frame-grabber:
+    build:
+      context: ..
+      dockerfile: apps/frame-grabber/Dockerfile
+    restart: unless-stopped
+    environment:
+      FRAME_HUB_URL: http://frame-hub:8100/v1/frames
+      DETECTOR_URL: http://detector:8000/detect
+      # Cameras defined as JSON array via env
+      CAMERAS: '[{"id":"cam-a-entrada","tenant":"tenant-a-oficinas","rtsp":"rtsp://host.docker.internal:8554/entrance-frontal"},{"id":"cam-a-pasillo","tenant":"tenant-a-oficinas","rtsp":"rtsp://host.docker.internal:8554/entrance-corridor"},{"id":"cam-a-exterior","tenant":"tenant-a-oficinas","rtsp":"rtsp://host.docker.internal:8554/towncentre"},{"id":"cam-b-ingreso","tenant":"tenant-b-logistica","rtsp":"rtsp://host.docker.internal:8554/pets-campus"},{"id":"cam-b-bodega","tenant":"tenant-b-logistica","rtsp":"rtsp://host.docker.internal:8554/mall-interior"},{"id":"cam-b-muelle","tenant":"tenant-b-logistica","rtsp":"rtsp://host.docker.internal:8554/browse-tienda"},{"id":"cam-b-externa","tenant":"tenant-b-logistica","rtsp":"https://mistserver.telpin.com.ar:8443/hls/fuente/index.m3u8"}]'
+      FPS: "1"
+      MAX_CONCURRENT: "3"
+    networks:
+      - poc_net
+    depends_on:
+      - frame-hub
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # ─── Detector (YOLO + frame storage + DB persistence) ─────────────
+  detector:
+    build:
+      context: ..
+      dockerfile: apps/detector/Dockerfile
+    restart: unless-stopped
+    volumes:
+      - poc-frames:/data/frames
+    environment:
+      API_URL: http://api:3001
+      EVENT_URL: http://event-gateway:3011
+      EVENT_PUBLISH_SECRET: ${EVENT_PUBLISH_SECRET:-dev-event-publish-secret}
+      DETECTOR_JWT: ""
+      FRAMES_DIR: /data/frames
+      YOLO_RESOLUTION: "480"
+      YOLO_MAX_DET: "10"
+    ports:
+      - "8000:8000"
+    networks:
+      - poc_net
+    depends_on:
+      - api
+      - event-gateway
+
+  # ─── Inference Node — YOLO (real, configurable, observable) ─────────
+  inference-node-yolo:
+    build:
+      context: ..
+      dockerfile: apps/inference-node-yolo/Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ID: node-yolo-1
+      NODE_MODELS: yolo11n@1.0
+      NODE_MAX_CONCURRENT: "4"
+      NODE_RESOURCES_CPU: "4"
+      YOLO_MODEL: yolo11s.pt
+      YOLO_CONF: "0.25"
+      YOLO_MAX_DET: "20"
+      YOLO_RESOLUTION: "640"
+      INFERENCE_BRIDGE_URL: http://inference-bridge:8090
+      NODE_ENROLLMENT_TOKEN: ""
+      NODE_AUTH_ADMIN_SECRET: ${NODE_AUTH_ADMIN_SECRET:-dev-node-auth-admin-secret}
+    ports:
+      - "8091:8091"
+    networks:
+      - poc_net
+
+  # ─── Inference Node — MediaPipe (pose, real, configurable) ─────────
+  inference-node-mediapipe:
+    build:
+      context: ..
+      dockerfile: apps/inference-node-mediapipe/Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ID: node-mediapipe-1
+      NODE_MODELS: mediapipe_pose@0.10.0
+      NODE_MAX_CONCURRENT: "4"
+      NODE_RESOURCES_CPU: "2"
+      MP_MIN_DET_CONF: "0.5"
+      MP_MIN_TRACK_CONF: "0.5"
+      INFERENCE_BRIDGE_URL: http://inference-bridge:8090
+      NODE_ENROLLMENT_TOKEN: ""
+      NODE_AUTH_ADMIN_SECRET: ${NODE_AUTH_ADMIN_SECRET:-dev-node-auth-admin-secret}
+    ports:
+      - "8092:8092"
+    networks:
+      - poc_net
+
+networks:
+  poc_net:
+    driver: bridge
+
+volumes:
+  poc-frames:
+  poc-frame-hub:
+  poc-db:
+  poc-hls:

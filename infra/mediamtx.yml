@@ -1,0 +1,20 @@
+# MediaMTX POC Configuration
+# RTSP server + HLS publishing without cookie auth
+
+rtspAddress: :8554
+
+# ─── HLS Server ────────────────────────────────────────────────────────
+hls: yes
+hlsDirectory: /data/hls
+hlsSegmentCount: 3
+hlsSegmentDuration: 1s
+
+hlsServer:
+  listenAddress: :8888
+  cookieAuth: no
+
+# ─── Paths ──────────────────────────────────────────────────────────────
+paths:
+  all:
+    source: publisher
+    sourceOnDemand: yes

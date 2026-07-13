@@ -124,7 +124,7 @@ class DiscoveryAgent:
                 text=True,
                 timeout=30
             )
-            
+
             if result.returncode == 0 and result.stdout:
                 try:
                     data = json.loads(result.stdout)
@@ -153,7 +153,7 @@ class DiscoveryAgent:
             logger.warning("ARP scan timed out")
         except Exception as e:
             logger.error(f"ARP scan failed: {e}")
-        
+
         logger.info(f"ARP scan found {len(devices)} devices")
         return devices
 
@@ -165,7 +165,7 @@ class DiscoveryAgent:
                 for line in f:
                     parts = line.split()
                     if len(parts) >= 4 and parts[0] != "IP":
-                        mac = parts[3]
+                        mac = parts[2]
                         if mac != "00:00:00:00:00:00":
                             devices.append({
                                 "ip": parts[0],
@@ -192,19 +192,19 @@ class DiscoveryAgent:
         """Probe ONVIF endpoint for device information"""
         try:
             from onvif import ONVIFCamera
-            
+
             # Create ONVIF camera connection
             cam = ONVIFCamera(ip, port, "admin", "admin", "/tmp/onvif")
-            
+
             # Get device information
             dev_info = cam.devicemgmt.GetDeviceInformation()
-            
+
             # Get network interfaces
             net_interfaces = cam.devicemgmt.GetNetworkInterfaces()
-            
+
             # Get profiles
             profiles = cam.media.GetProfiles()
-            
+
             return {
                 "manufacturer": getattr(dev_info, "Manufacturer", ""),
                 "model": getattr(dev_info, "Model", ""),
@@ -228,33 +228,33 @@ class DiscoveryAgent:
             logger.debug("ONVIF library not available")
         except Exception as e:
             logger.debug(f"ONVIF probe failed for {ip}:{port}: {e}")
-        
+
         return None
 
     def _discover_cameras(self) -> list[dict[str, Any]]:
         """Discover cameras on the local network"""
         cameras = []
-        
+
         # Step 1: ARP scan to find devices
         devices = self._arp_scan()
-        
+
         # Step 2: Check for RTSP/ONVIF ports
         rtsp_ports = self.config.get("rtsp_ports", [554, 8554, 8080, 8000])
         onvif_ports = self.config.get("onvif_ports", [80, 8000, 8080])
-        
+
         for device in devices:
             ip = device.get("ip", "")
             if not ip or ip.startswith("127."):
                 continue
-            
+
             discovered_ports = []
-            
+
             # Check RTSP ports
             for port in rtsp_ports:
                 if self._check_port(ip, port):
                     discovered_ports.append(port)
                     logger.info(f"Found RTSP port {port} on {ip}")
-            
+
             # Check ONVIF ports and probe
             onvif_info = None
             for port in onvif_ports:
@@ -263,7 +263,7 @@ class DiscoveryAgent:
                     if onvif_info:
                         logger.info(f"Found ONVIF device at {ip}:{port} - {onvif_info.get('manufacturer')} {onvif_info.get('model')}")
                         break
-            
+
             # If we found RTSP or ONVIF, add to cameras
             if discovered_ports or onvif_info:
                 camera = {
@@ -272,15 +272,15 @@ class DiscoveryAgent:
                     "ports": discovered_ports,
                     "onvifInfo": onvif_info
                 }
-                
+
                 # Generate RTSP URL if RTSP port found
                 if 554 in discovered_ports:
                     camera["rtspUrl"] = f"rtsp://{ip}/stream"
                 elif 8554 in discovered_ports:
                     camera["rtspUrl"] = f"rtsp://{ip}:8554/stream"
-                
+
                 cameras.append(camera)
-        
+
         logger.info(f"Discovery found {len(cameras)} potential cameras")
         return cameras
 
@@ -410,7 +410,7 @@ class DiscoveryAgent:
         try:
             # Collect system metrics
             import psutil
-            
+
             metrics = {
                 "cpuUsagePercent": psutil.cpu_percent(interval=1),
                 "cpuTemperatureCelsius": self._get_cpu_temp(),
@@ -419,7 +419,7 @@ class DiscoveryAgent:
                 "discoveredCamerasCount": len(self.discovered_cameras),
                 "registeredCamerasCount": 0  # Would come from API
             }
-            
+
             # Try to get VPN latency
             try:
                 result = subprocess.run(
@@ -436,7 +436,7 @@ class DiscoveryAgent:
                         metrics["vpnLatencyMs"] = float(match.group(1))
             except Exception:
                 pass
-            
+
             heartbeat_data = {
                 "timestamp": datetime.utcnow().isoformat() + "Z",
                 "supervisorStatus": {
@@ -447,7 +447,7 @@ class DiscoveryAgent:
                 "customMetrics": metrics,
                 "version": "1.0.0"
             }
-            
+
             # Send heartbeat
             if self.api_token:
                 url = f"{self.api_base_url}/api/v1/edge-gateways/{self.gateway_id}/heartbeat"
@@ -458,7 +458,7 @@ class DiscoveryAgent:
                 logger.info(f"Heartbeat sent: {response.status_code}")
             else:
                 logger.warning("No API token, skipping heartbeat")
-                
+
         except Exception as e:
             logger.error(f"Failed to send heartbeat: {e}")
 
@@ -470,7 +470,7 @@ class DiscoveryAgent:
                 return float(f.read().strip()) / 1000
         except Exception:
             pass
-        
+
         # Try vcgencmd (Raspberry Pi)
         try:
             result = subprocess.run(
@@ -484,33 +484,33 @@ class DiscoveryAgent:
                 return float(temp_str)
         except Exception:
             pass
-        
+
         return 0.0
 
     def _report_cameras(self):
         """Report discovered cameras to Control Plane API"""
         if not self.api_token or not self.discovered_cameras:
             return
-        
+
         try:
             import requests
-            
+
             url = f"{self.api_base_url}/api/v1/edge-gateways/{self.gateway_id}/cameras/discover"
             payload = {
                 "cameras": self.discovered_cameras,
                 "discoveryTimestamp": datetime.utcnow().isoformat() + "Z"
             }
-            
+
             response = requests.post(url, json=payload, headers={
                 "Authorization": f"Bearer {self.api_token}"
             }, timeout=30)
-            
+
             logger.info(f"Camera report sent: {response.status_code}")
-            
+
             if response.status_code == 200:
                 result = response.json()
                 logger.info(f"Discovered: {len(result.get('discovered', []))}, Already registered: {len(result.get('alreadyRegistered', []))}")
-                
+
         except Exception as e:
             logger.error(f"Failed to report cameras: {e}")
 
@@ -530,7 +530,7 @@ class DiscoveryAgent:
 
             except Exception as e:
                 logger.error(f"Discovery loop error: {e}")
-            
+
             # Wait for next interval
             for _ in range(self.discovery_interval):
                 if not self.running:
@@ -540,13 +540,13 @@ class DiscoveryAgent:
     async def heartbeat_loop(self):
         """Heartbeat loop - runs every 30 seconds"""
         logger.info("Starting heartbeat loop")
-        
+
         while self.running:
             try:
                 self._send_heartbeat()
             except Exception as e:
                 logger.error(f"Heartbeat error: {e}")
-            
+
             # Wait for next interval
             for _ in range(self.heartbeat_interval):
                 if not self.running:
@@ -556,19 +556,19 @@ class DiscoveryAgent:
     def run(self):
         """Run the discovery agent"""
         logger.info("Starting Discovery Agent")
-        
+
         # Setup signal handlers for graceful shutdown
         def signal_handler(signum, frame):
             logger.info("Received shutdown signal")
             self.running = False
-        
+
         signal.signal(signal.SIGTERM, signal_handler)
         signal.signal(signal.SIGINT, signal_handler)
-        
+
         # Run both loops
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        
+
         try:
             loop.run_until_complete(asyncio.gather(
                 self.discovery_loop(),

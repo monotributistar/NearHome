@@ -12,3 +12,5 @@ apps/api/prisma/dev.db-journal
 apps/api/prisma/schema.postgres.prisma
 test-results
 playwright-report
+test-data/*
+!test-data/README.md

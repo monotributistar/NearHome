@@ -1,0 +1,11 @@
+tunnel: f86d12b8-adb2-45e9-af6f-f00d8c81544e
+credentials-file: /etc/cloudflared/f86d12b8-adb2-45e9-af6f-f00d8c81544e.json
+ingress:
+  - hostname: headscale.minarai.xyz
+    service: http://localhost:8081
+    originRequest:
+      noHappyEyeballs: true
+      disableChunkedEncoding: true
+  - hostname: coolify.minarai.xyz
+    service: http://localhost:8000
+  - service: http_status:404

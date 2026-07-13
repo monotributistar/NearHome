@@ -1,3 +1,4 @@
+/* ARCHIVED: models pruned in Phase 0 (Household, HouseholdMember)
 import type { FastifyPluginAsync, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
 import type { AppMiddleware } from "../../core/middleware.js";
@@ -104,6 +105,7 @@ export const householdsPlugin: FastifyPluginAsync<HouseholdsPluginOptions> = asy
     if (!existing) throw app.httpErrors.notFound("Household member not found");
     await prisma.householdMember.delete({ where: { id } });
     await appendAuditLog({ tenantId: ctx.tenantId, actorUserId: ctx.userId, resource: "household_member", action: "delete", resourceId: id, payload: { householdId: existing.householdId, fullName: existing.fullName }, context: request.ctx });
-    return { data: householdMemberResponse(existing) };
-  });
-};
+  return { data: householdMemberResponse(existing) };
+});
+
+*/

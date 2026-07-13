@@ -2,10 +2,14 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
+RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
+    libgl1 libglib2.0-0 && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY apps/inference-node-mediapipe/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app.py .
+COPY apps/inference-node-mediapipe/app.py .
 
 EXPOSE 8092
 

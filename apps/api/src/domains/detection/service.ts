@@ -16,7 +16,7 @@ export const DetectionJobStatusSchema = z.enum(["queued", "running", "succeeded"
 export const DetectionModeSchema = z.enum(["realtime", "batch"]);
 export const DetectionSourceSchema = z.enum(["snapshot", "clip", "range"]);
 export const DetectionProviderSchema = z.enum(["onprem_bento", "huggingface_space", "external_http"]);
-export const DetectionRuntimeProviderSchema = z.enum(["yolo", "mediapipe", "audio_vad", "audio_classifier"]);
+export const DetectionRuntimeProviderSchema = z.enum(["yolo", "mediapipe", "lpr", "audio_vad", "audio_classifier"]);
 export const DetectionTaskTypeSchema = z.enum([
   "person_detection", "object_detection", "license_plate_detection", "face_detection",
   "pose_estimation", "speech_detection", "audio_event_classification", "transcription"

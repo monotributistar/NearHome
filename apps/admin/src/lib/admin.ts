@@ -27,6 +27,10 @@ export const ADMIN_ROUTES = {
   commercial: {
     plans: "/commercial/plans",
     subscriptions: "/commercial/subscriptions"
+  },
+  deployments: {
+    manifests: "/deployments/manifests",
+    fleetGroups: "/deployments/fleet-groups"
   }
 } as const;
 
@@ -307,6 +311,21 @@ export type DeploymentStatusData = {
     drained: number;
     revokedEstimate: number;
     items: DeploymentNodeItem[];
+  };
+  topology: {
+    tenants: Array<{
+      tenantId: string;
+      tenantName: string;
+      cameras: Array<{
+        cameraId: string;
+        name: string;
+        location?: string | null;
+        isActive: boolean;
+        lifecycleStatus: string;
+        profile: { status: string; lastHealthAt?: string | null; lastError?: string | null } | null;
+        health: { connectivity: string; latencyMs?: number | null; error?: string | null; checkedAt: string } | null;
+      }>;
+    }>;
   };
 };
 

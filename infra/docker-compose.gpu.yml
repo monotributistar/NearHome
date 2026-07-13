@@ -1,0 +1,146 @@
+name: nearhome-gpu-node
+
+services:
+  # ─── YOLO Inference Node (CUDA GPU) ───────────────────────────────────
+  # Se registra en inference-bridge (macOS) via Tailscale
+  inference-node-yolo:
+    build:
+      context: ../
+      dockerfile: apps/inference-node-yolo/Dockerfile
+    image: nearhome/inference-node-yolo:gpu
+    runtime: nvidia
+    restart: unless-stopped
+    environment:
+      # Identidad del nodo
+      NODE_ID: node-yolo-gpu-1
+      NODE_RUNTIME: yolo
+      NODE_ENDPOINT: http://${GPU_NODE_TAILSCALE_IP:?set in .env}:8091
+      NODE_MAX_CONCURRENT: "8"
+      NODE_RESOURCES_CPU: "8"
+      NODE_RESOURCES_GPU: "1"
+      NODE_RESOURCES_VRAM_MB: "8192"
+
+      # Modelos soportados
+      NODE_MODELS: yolo11n@1.0,yolo11s@1.0
+      NODE_TASK_TYPES: object_detection
+
+      # Config YOLO
+      YOLO_MODEL: yolo11n.pt
+      YOLO_CONF: "0.25"
+      YOLO_MAX_DET: "20"
+      YOLO_RESOLUTION: "640"
+
+      # Control plane (inference-bridge en macOS)
+      INFERENCE_BRIDGE_URL: http://${MAC_TAILSCALE_IP:?set in .env}:8090
+      NODE_ENROLLMENT_TOKEN: "${NODE_ENROLLMENT_TOKEN:-}"
+      NODE_AUTH_ADMIN_SECRET: "${NODE_AUTH_ADMIN_SECRET:?set in .env}"
+      NODE_HEARTBEAT_INTERVAL_MS: "10000"
+    ports:
+      - "8091:8091"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8091/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ─── TensorRT Node (primary route for object detection) ──────────────
+  # The bridge ranks this runtime ahead of the generic YOLO node while it
+  # has capacity. TensorRT engines are tied to the target GPU architecture.
+  inference-node-tensorrt:
+    build:
+      context: ../
+      dockerfile: apps/inference-node-tensorrt/Dockerfile
+    image: nearhome/inference-node-tensorrt:gpu
+    runtime: nvidia
+    restart: unless-stopped
+    environment:
+      NODE_ID: node-tensorrt-gpu-1
+      NODE_RUNTIME: tensorrt
+      NODE_ENDPOINT: http://${GPU_NODE_TAILSCALE_IP:?set in .env}:8093
+      NODE_MAX_CONCURRENT: "8"
+      NODE_RESOURCES_CPU: "8"
+      NODE_RESOURCES_GPU: "1"
+      NODE_RESOURCES_VRAM_MB: "8192"
+
+      NODE_MODELS: yolo11n@1.0
+      NODE_TASK_TYPES: object_detection
+
+      YOLO_MODEL: yolo11n.engine
+      YOLO_CONF: "0.25"
+      YOLO_MAX_DET: "20"
+      YOLO_RESOLUTION: "640"
+
+      INFERENCE_BRIDGE_URL: http://${MAC_TAILSCALE_IP:?set in .env}:8090
+      NODE_ENROLLMENT_TOKEN: "${NODE_ENROLLMENT_TOKEN_TRT:-}"
+      NODE_AUTH_ADMIN_SECRET: "${NODE_AUTH_ADMIN_SECRET:?set in .env}"
+      NODE_HEARTBEAT_INTERVAL_MS: "10000"
+    ports:
+      - "8093:8093"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8093/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  inference-node-face:
+    build:
+      context: ../
+      dockerfile: apps/inference-node-face/Dockerfile
+    image: nearhome/inference-node-face:gpu
+    runtime: nvidia
+    restart: unless-stopped
+    environment:
+      NODE_ID: node-face-gpu-1
+      NODE_ENDPOINT: http://${GPU_NODE_TAILSCALE_IP:?set in .env}:8094
+      NODE_MAX_CONCURRENT: "2"
+      FACE_MODEL_REF: insightface-buffalo-l@1.0
+      FACE_MODEL_PACK: buffalo_l
+      FACE_MODEL_ROOT: /models
+      FACE_DET_SIZE: "640"
+      INFERENCE_BRIDGE_URL: http://${MAC_TAILSCALE_IP:?set in .env}:8090
+      NODE_AUTH_ADMIN_SECRET: "${NODE_AUTH_ADMIN_SECRET:?set in .env}"
+    volumes:
+      - face-models:/models
+    ports:
+      - "8094:8094"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8094/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ─── MediaPipe Inference Node (CPU, liviano) ─────────────────────────
+  inference-node-mediapipe:
+    build:
+      context: ../
+      dockerfile: apps/inference-node-mediapipe/Dockerfile
+    image: nearhome/inference-node-mediapipe:cpu
+    restart: unless-stopped
+    environment:
+      NODE_ID: node-mediapipe-gpu-1
+      NODE_RUNTIME: mediapipe
+      NODE_ENDPOINT: http://${GPU_NODE_TAILSCALE_IP:?set in .env}:8092
+      NODE_MAX_CONCURRENT: "4"
+      NODE_RESOURCES_CPU: "4"
+      NODE_RESOURCES_GPU: "0"
+
+      NODE_MODELS: mediapipe_pose@0.10.0,mediapipe_face@0.10.0
+      NODE_TASK_TYPES: pose_detection,face_detection
+
+      MP_MIN_DET_CONF: "0.5"
+      MP_MIN_TRACK_CONF: "0.5"
+
+      INFERENCE_BRIDGE_URL: http://${MAC_TAILSCALE_IP:?set in .env}:8090
+      NODE_ENROLLMENT_TOKEN: "${NODE_ENROLLMENT_TOKEN:-}"
+      NODE_AUTH_ADMIN_SECRET: "${NODE_AUTH_ADMIN_SECRET:?set in .env}"
+      NODE_HEARTBEAT_INTERVAL_MS: "15000"
+    ports:
+      - "8092:8092"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8092/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  face-models:

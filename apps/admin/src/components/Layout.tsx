@@ -14,7 +14,8 @@ import {
   MediaImageList,
   Planimetry,
   Settings,
-  User
+  User,
+  DeliveryTruck
 } from "iconoir-react";
 import { ADMIN_ROUTES, useSession, getTenantId, getImpersonateRole } from "../lib/admin.js";
 import { ControlPanelPage } from "../pages/operations/ControlPanelPage.js";
@@ -33,6 +34,8 @@ import { MembershipsPage } from "../pages/identity/MembershipsPage.js";
 import { CameraAssignmentsPage } from "../pages/identity/CameraAssignmentsPage.js";
 import { PlansPage } from "../pages/commercial/PlansPage.js";
 import { SubscriptionPage } from "../pages/commercial/SubscriptionPage.js";
+import { DeploymentManifestsPage } from "../pages/deployments/DeploymentManifestsPage.js";
+import { FleetGroupsPage } from "../pages/deployments/FleetGroupsPage.js";
 
 function LegacyCameraDetailRedirect() {
   const { id } = useParams();
@@ -99,7 +102,18 @@ export function Layout({ apiUrl }: { apiUrl: string }) {
             { to: ADMIN_ROUTES.commercial.plans, label: "Planes", icon: <Planimetry width={16} height={16} /> },
             { to: ADMIN_ROUTES.commercial.subscriptions, label: "Suscripciones", icon: <Planimetry width={16} height={16} /> }
           ]
-        }
+        },
+        ...(role === "super_admin" || role === "tenant_admin"
+          ? [
+              {
+                title: "Deployments",
+                items: [
+                  { to: ADMIN_ROUTES.deployments.manifests, label: "Manifests", icon: <DeliveryTruck width={16} height={16} /> },
+                  { to: ADMIN_ROUTES.deployments.fleetGroups, label: "Fleet Groups", icon: <Group width={16} height={16} /> }
+                ]
+              }
+            ]
+          : [])
       ];
 
   return (
@@ -175,6 +189,9 @@ export function Layout({ apiUrl }: { apiUrl: string }) {
 
         <Route path={ADMIN_ROUTES.commercial.plans} element={<PlansPage />} />
         <Route path={ADMIN_ROUTES.commercial.subscriptions} element={<SubscriptionPage apiUrl={apiUrl} onChanged={refresh} />} />
+
+        <Route path={ADMIN_ROUTES.deployments.manifests} element={<DeploymentManifestsPage apiUrl={apiUrl} />} />
+        <Route path={ADMIN_ROUTES.deployments.fleetGroups} element={<FleetGroupsPage apiUrl={apiUrl} />} />
 
         <Route path="/control" element={<Navigate to={ADMIN_ROUTES.operations.control} replace />} />
         <Route path="/monitor" element={<Navigate to={ADMIN_ROUTES.operations.monitor} replace />} />

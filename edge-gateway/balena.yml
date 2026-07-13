@@ -28,6 +28,11 @@ environment:
 
   # Heartbeat interval in seconds
   HEARTBEAT_INTERVAL: "30"
+  WG_INTERFACE: wg0
+  CAMERA_SUBNET_CIDR: 192.168.10.0/24
+  INFRA_ALLOWED_CIDRS: 10.88.0.0/16
+  CAMERA_IFACE: eth0
+  ROUTING_MODE: route
 
 # Volumes for persistent data
 volumes:

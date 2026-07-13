@@ -130,9 +130,12 @@ async function addBacklogEvent(event: OutboundEvent) {
     try {
       await redis.xadd(
         redisStreamKey(event.tenantId),
-        "MAXLEN", "~", String(MAX_BACKLOG_PER_TENANT),
+        "MAXLEN",
+        "~",
+        String(MAX_BACKLOG_PER_TENANT),
         "*",
-        "data", JSON.stringify(event)
+        "data",
+        JSON.stringify(event)
       );
     } catch {
       // Non-fatal: in-memory backlog is still intact
@@ -213,12 +216,22 @@ export async function buildApp() {
   });
 
   app.get("/events/stream", async (request, reply) => {
-    const tenantId = request.headers["x-tenant-id"];
+    const tenantId = request.headers["x-tenant-id"] || (request.query as Record<string, string | undefined>).tenantId;
     if (typeof tenantId !== "string" || tenantId.length === 0) {
       reply.status(400);
-      return { code: "BAD_REQUEST", message: "X-Tenant-Id required" };
+      return { code: "BAD_REQUEST", message: "X-Tenant-Id header or tenantId query param required" };
     }
     const query = request.query as Record<string, unknown>;
+
+    // Manual CORS headers — @fastify/cors doesn't apply to reply.raw
+    const origin = request.headers.origin || "*";
+    reply.raw.setHeader("access-control-allow-origin", origin);
+    reply.raw.setHeader("access-control-allow-credentials", "true");
+    reply.raw.setHeader("access-control-allow-methods", "GET, OPTIONS");
+    reply.raw.setHeader("access-control-allow-headers", "Content-Type, X-Tenant-Id");
+    reply.raw.setHeader("access-control-max-age", "86400");
+    reply.raw.setHeader("content-type", "text/event-stream");
+    reply.raw.setHeader("cache-control", "no-cache");
     const replayRequested = typeof query.replay === "string" ? Math.max(0, Number(query.replay) || 0) : 0;
     const topics =
       typeof query.topics === "string"
@@ -252,7 +265,11 @@ export async function buildApp() {
             .map(([, fields]) => {
               const idx = fields.indexOf("data");
               if (idx === -1) return null;
-              try { return JSON.parse(fields[idx + 1]) as OutboundEvent; } catch { return null; }
+              try {
+                return JSON.parse(fields[idx + 1]) as OutboundEvent;
+              } catch {
+                return null;
+              }
             })
             .filter((e): e is OutboundEvent => e !== null);
         } catch {

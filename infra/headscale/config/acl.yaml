@@ -1,0 +1,40 @@
+# Headscale ACLs
+# Grupos de usuarios
+groups:
+  admin:
+    - javrod.work@gmail.com
+
+# Tags para dispositivos
+tagOwners:
+  tag:admin:
+    - javrod.work@gmail.com
+  tag:hub:
+    - javrod.work@gmail.com
+  tag:tenant-a:
+    - javrod.work@gmail.com
+  tag:tenant-b:
+    - javrod.work@gmail.com
+
+# Reglas ACL
+acls:
+  # Admin puede acceder a todo
+  - action: accept
+    src: ["tag:admin"]
+    dst: ["*:*"]
+
+  # Hub puede acceder a todo
+  - action: accept
+    src: ["tag:hub"]
+    dst: ["*:*"]
+
+  # Tenant-A solo llega al hub en puertos específicos
+  - action: accept
+    src: ["tag:tenant-a"]
+    dst: ["tag:hub:80,443,3001,8000,8080,8090,8091,8092,8093"]
+
+  # Tenant-B solo llega al hub
+  - action: accept
+    src: ["tag:tenant-b"]
+    dst: ["tag:hub:80,443,3001,8000,8080,8090,8091,8092,8093"]
+
+  # Tenants NO se ven entre sí (default deny)

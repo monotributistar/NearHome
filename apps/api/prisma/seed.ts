@@ -1241,21 +1241,6 @@ async function main() {
     ]
   });
 
-  await prisma.subscriptionRequest.create({
-    data: {
-      tenantId: tenantPortalBrowser.id,
-      planId: pro.id,
-      requestedByUserId: clientUser.id,
-      status: "pending_review",
-      proofImageUrl: "https://cdn.nearhome.dev/seed/portal-proof.jpg",
-      proofFileName: "seed-portal-proof.jpg",
-      proofMimeType: "image/jpeg",
-      proofSizeBytes: 128000,
-      proofMetadata: JSON.stringify({ source: "seed" }),
-      notes: "Solicitud seeded para browser e2e"
-    }
-  });
-
   console.log("Seed ready");
   console.log("Users: admin@nearhome.dev / monitor@nearhome.dev / client@nearhome.dev");
   console.log("Password for all: demo1234");

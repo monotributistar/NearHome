@@ -206,6 +206,70 @@ export function ControlPanelPage({ apiUrl }: { apiUrl: string }) {
           </Surface>
         </div>
       </PageCard>
+
+      <PageCard title="Mapa Operativo">
+        <p className="mb-4 text-sm text-slate-600">
+          Flujo visible: servicios de plataforma → nodos de inferencia → clientes → cámaras. Se actualiza cada 15 segundos.
+        </p>
+        <div className="grid gap-4 xl:grid-cols-[minmax(220px,0.8fr)_minmax(240px,0.9fr)_minmax(360px,1.5fr)]">
+          <Surface>
+            <div className="mb-3 font-semibold">Servicios</div>
+            <div className="space-y-2">
+              {(data?.services ?? []).map((service) => (
+                <div key={service.name} className="rounded border border-slate-200 px-2.5 py-2 text-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium">{service.name}</span>
+                    <span className={service.ok ? "text-emerald-700" : "text-rose-700"}>{service.ok ? "activo" : "caído"}</span>
+                  </div>
+                  <div className="mt-1 text-xs text-slate-500">{service.latencyMs ?? "-"} ms</div>
+                </div>
+              ))}
+            </div>
+          </Surface>
+          <Surface>
+            <div className="mb-3 font-semibold">Nodos</div>
+            <div className="space-y-2">
+              {(data?.nodes.items ?? []).map((node, index) => (
+                <div key={node.nodeId ?? `map-node-${index}`} className="rounded border border-slate-200 px-2.5 py-2 text-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium">{node.nodeId ?? "sin id"}</span>
+                    <span className={node.status === "online" ? "text-emerald-700" : node.status === "degraded" ? "text-amber-700" : "text-rose-700"}>{node.status ?? "offline"}</span>
+                  </div>
+                  <div className="mt-1 text-xs text-slate-500">{node.runtime ?? "-"} · cola {node.queueDepth ?? 0}/{node.maxConcurrent ?? 0}</div>
+                </div>
+              ))}
+              {data?.nodes.items.length === 0 && <div className="text-sm text-slate-500">Sin nodos registrados.</div>}
+            </div>
+          </Surface>
+          <div className="space-y-3">
+            {(data?.topology?.tenants ?? []).map((tenant) => (
+              <Surface key={tenant.tenantId}>
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div className="font-semibold">{tenant.tenantName}</div>
+                  <Badge>{tenant.cameras.length} cámaras</Badge>
+                </div>
+                <div className="grid gap-2 md:grid-cols-2">
+                  {tenant.cameras.map((camera) => {
+                    const healthy = camera.health?.connectivity === "online" || camera.health?.connectivity === "healthy";
+                    const state = !camera.isActive ? "inactiva" : healthy ? "online" : camera.health?.connectivity ?? camera.lifecycleStatus;
+                    return (
+                      <div key={camera.cameraId} className="rounded border border-slate-200 px-3 py-2 text-sm">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-medium">{camera.name}</span>
+                          <span className={healthy ? "text-emerald-700" : "text-amber-700"}>{state}</span>
+                        </div>
+                        <div className="mt-1 text-xs text-slate-500">{camera.location ?? "sin ubicación"} · {camera.health?.latencyMs ?? "-"} ms</div>
+                        {camera.profile?.lastError && <div className="mt-1 text-xs text-rose-700">{camera.profile.lastError}</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </Surface>
+            ))}
+            {(data?.topology?.tenants.length ?? 0) === 0 && <Surface className="text-sm text-slate-500">Sin clientes o cámaras para mostrar.</Surface>}
+          </div>
+        </div>
+      </PageCard>
     </div>
   );
 }

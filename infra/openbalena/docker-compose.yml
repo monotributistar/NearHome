@@ -72,10 +72,10 @@ services:
       # Authentication
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
 
-      # Network configuration - use IP from .env for device access
-      API_HOST: 192.168.0.114
-      BALENA_API_HOST: 192.168.0.114
-      BALENA_VPN_HOST: 192.168.0.114
+      # Network configuration - device reachable hostnames/IP
+      API_HOST: ${API_HOST:-api.balena}
+      BALENA_API_HOST: ${BALENA_API_HOST:-api.balena}
+      BALENA_VPN_HOST: ${BALENA_VPN_HOST:-vpn.balena}
 
       # Optional: Mixpanel for analytics
       MIXPANEL_TOKEN: ${MIXPANEL_TOKEN:-}

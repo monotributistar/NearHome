@@ -1,0 +1,109 @@
+# Simulador de RPi Edge Gateway
+# Crea un tenant aislado con:
+#   - Red propia 10.99.1.0/24
+#   - Cámara RTSP simulada (MediaMTX con video de prueba)
+#   - WireGuard client conectado al Home Hub
+#   - Discovery-agent mock
+
+name: ${RPI_STACK_NAME:-nearhome-rpi-sim}
+
+services:
+  # ─── Cámara RTSP simulada ─────────────────────────────────────────
+  # Corre en la red aislada del "tenant"
+  camara-rtsp:
+    image: bluenviron/mediamtx:latest
+    networks:
+      rpi_net:
+        ipv4_address: ${RPI_CAMERA_IP:-10.99.1.10}
+    environment:
+      MTX_RTSPADDRESS: ":8554"
+      MTX_HLS: "no"
+    ports:
+      - "${RPI_RTSP_HOST_PORT:-8554}:8554"
+
+  # ─── Generador de video de prueba ──────────────────────────────────
+  # Publica un video de prueba en la cámara RTSP simulada
+  generador-video:
+    image: linuxserver/ffmpeg:latest
+    networks:
+      rpi_net:
+        ipv4_address: ${RPI_GENERATOR_IP:-10.99.1.11}
+    environment:
+      MOCK_VIDEO_URL: ${MOCK_VIDEO_URL:-https://github.com/ultralytics/assets/releases/download/v0.0.0/bus.mp4}
+      MOCK_VIDEO_FILE: ${MOCK_VIDEO_FILE:-}
+    volumes:
+      - nearhome-mock-videos:/videos:ro
+    entrypoint: >
+      sh -c "
+      apt-get update -qq && apt-get install -y -qq wget >/dev/null 2>&1;
+      if [ -n \"$$MOCK_VIDEO_FILE\" ] && [ -f \"/videos/$$MOCK_VIDEO_FILE\" ]; then cp \"/videos/$$MOCK_VIDEO_FILE\" /tmp/test.mp4; else
+        wget -q -O /tmp/test.mp4 \"$$MOCK_VIDEO_URL\" 2>/dev/null ||
+          ffmpeg -y -f lavfi -i testsrc2=size=640x480:rate=10:duration=300 -f lavfi -i anullsrc -c:v libx264 -preset ultrafast -t 300 /tmp/test.mp4;
+      fi;
+      sleep 3;
+      exec ffmpeg -stream_loop -1 -re -i /tmp/test.mp4 -c copy -f rtsp -rtsp_transport tcp rtsp://camara-rtsp:8554/test
+      "
+    depends_on:
+      - camara-rtsp
+    restart: unless-stopped
+
+  # ─── RPi Simulado (WireGuard + discovery-agent) ───────────────────
+  rpi-sim:
+    build:
+      context: ../
+      dockerfile: apps/rpi-sim/Dockerfile
+    image: nearhome/rpi-sim:latest
+    networks:
+      rpi_net:
+        ipv4_address: ${RPI_SIM_IP:-10.99.1.2}
+      hub_net:
+        ipv4_address: ${RPI_HUB_IP:-172.20.0.2}
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv4.conf.all.src_valid_mark=1
+    volumes:
+      - /lib/modules:/lib/modules:ro
+      - rpi-state:/var/lib/nearhome
+    environment:
+      TENANT_ID: ${TENANT_ID:-tenant-simulado}
+      RPI_ID: ${RPI_ID:-rpi-sim-1}
+
+      # Red local del tenant (simulada)
+      LOCAL_SUBNET: ${RPI_SIM_SUBNET:-10.99.1.0/24}
+      LOCAL_RTSP_CAMERAS: '["rtsp://camara-rtsp:8554/test"]'
+
+      # WireGuard peer hacia el Home Hub
+      WG_HUB_PUBLIC_KEY: ${WG_HUB_PUBLIC_KEY:-}
+      WG_HUB_ENDPOINT: ${WG_HUB_ENDPOINT:-}
+
+      # API del Home Hub (via Headscale o LAN)
+      API_BASE_URL: ${API_BASE_URL:-http://host.docker.internal:3001}
+
+      # Tailscale/Headscale login (para control)
+      HEADSCALE_URL: ${HEADSCALE_URL:-}
+      HEADSCALE_AUTH_KEY: ${HEADSCALE_AUTH_KEY:-}
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+networks:
+  rpi_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${RPI_SIM_SUBNET:-10.99.1.0/24}
+          gateway: ${RPI_SIM_GATEWAY:-10.99.1.1}
+
+  hub_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${RPI_HUB_SUBNET:-172.20.0.0/24}
+
+volumes:
+  rpi-state:
+  nearhome-mock-videos:
+    external: true

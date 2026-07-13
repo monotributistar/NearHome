@@ -1,0 +1,254 @@
+# NearHome platform managed by a single Coolify Docker Compose application.
+# Configure the required secrets in Coolify; do not commit a .env file.
+name: nearhome-platform
+
+x-coolify-labels: &coolify-labels
+  coolify.applicationId: "5"
+  coolify.environmentName: production
+  coolify.managed: "true"
+  coolify.name: vt3fy7ppbp8ry1xc4e52kee6
+  coolify.projectName: nearhome
+  coolify.resourceName: nearhome-platform
+  coolify.type: application
+
+services:
+  postgres:
+    labels: *coolify-labels
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-nearhome}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in Coolify}
+      POSTGRES_DB: ${POSTGRES_DB:-nearhome}
+    volumes:
+      - nearhome-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    labels: *coolify-labels
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - nearhome-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    labels: *coolify-labels
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.node-workspace
+    restart: unless-stopped
+    command: >-
+      sh -lc 'pnpm --filter @app/api prisma:generate:postgres &&
+      pnpm --filter @app/api db:push:postgres &&
+      pnpm --filter @app/api dev'
+    environment:
+      PORT: "3001"
+      DATABASE_URL: postgresql://${POSTGRES_USER:-nearhome}:${POSTGRES_PASSWORD:?set in Coolify}@postgres:5432/${POSTGRES_DB:-nearhome}?schema=public
+      JWT_SECRET: ${JWT_SECRET:?set in Coolify}
+      CAMERA_CREDENTIALS_KEY: ${CAMERA_CREDENTIALS_KEY:?set in Coolify}
+      STREAM_TOKEN_SECRET: ${STREAM_TOKEN_SECRET:?set in Coolify}
+      STREAM_GATEWAY_URL: http://stream-gateway:3010
+      EVENT_GATEWAY_URL: http://event-gateway:3011
+      EVENT_PUBLISH_SECRET: ${EVENT_PUBLISH_SECRET:?set in Coolify}
+      FRAME_HUB_HEALTH_URL: http://frame-hub:8100/health
+      INFERENCE_TENSORRT_URL: http://inference-node-tensorrt:8093/health
+      SUPERUSER_EMAILS: ${SUPERUSER_EMAILS:?set in Coolify}
+      CORS_ORIGIN_ADMIN: ${CORS_ORIGIN_ADMIN:-}
+      CORS_ORIGIN_PORTAL: ${CORS_ORIGIN_PORTAL:-}
+      PORTAL_BASE_URL: ${PORTAL_BASE_URL:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  event-gateway:
+    labels: *coolify-labels
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.node-workspace
+    restart: unless-stopped
+    command: >-
+      pnpm --filter @app/event-gateway dev
+    environment:
+      PORT: "3011"
+      JWT_SECRET: ${JWT_SECRET:?set in Coolify}
+      EVENT_PUBLISH_SECRET: ${EVENT_PUBLISH_SECRET:?set in Coolify}
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  stream-gateway:
+    labels: *coolify-labels
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.node-workspace
+    restart: unless-stopped
+    command: >-
+      pnpm --filter @app/stream-gateway dev
+    environment:
+      PORT: "3010"
+      HOST: 0.0.0.0
+      STREAM_STORAGE_DIR: /data/storage
+      STREAM_TOKEN_SECRET: ${STREAM_TOKEN_SECRET:?set in Coolify}
+      STREAM_PROBE_INTERVAL_MS: "5000"
+      STREAM_MEDIA_ENGINE: process
+      STREAM_S3_ARCHIVE_ENABLED: "0"
+    volumes:
+      - nearhome-streams:/data/storage
+
+  inference-bridge:
+    labels: *coolify-labels
+    build:
+      context: apps/inference-bridge
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      INFERENCE_TIMEOUT_MS: "15000"
+      NODE_AUTH_JWT_SECRET: ${NODE_AUTH_JWT_SECRET:?set in Coolify}
+      NODE_AUTH_ADMIN_SECRET: ${NODE_AUTH_ADMIN_SECRET:?set in Coolify}
+      NODE_HEARTBEAT_TTL_MS: "60000"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  frame-hub:
+    labels: *coolify-labels
+    build:
+      context: .
+      dockerfile: apps/frame-hub/Dockerfile
+    restart: unless-stopped
+    environment:
+      INFERENCE_BRIDGE_URL: http://inference-bridge:8090
+      EVENT_GATEWAY_URL: http://event-gateway:3011
+      EVENT_PUBLISH_SECRET: ${EVENT_PUBLISH_SECRET:?set in Coolify}
+      FRAME_HUB_DEFAULT_MODEL_REF: yolo11n@1.0
+      FRAME_HUB_MOTION_WIDTH: "320"
+      FRAME_HUB_MOTION_THRESHOLD: "0.008"
+      FRAME_HUB_MOTION_WARMUP_FRAMES: "20"
+      FRAME_HUB_FRAME_TTL_SECONDS: "120"
+    volumes:
+      - nearhome-frames:/data/frames
+    depends_on:
+      inference-bridge:
+        condition: service_healthy
+      event-gateway:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8100/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  inference-node-yolo:
+    labels: *coolify-labels
+    build:
+      context: .
+      dockerfile: apps/inference-node-yolo/Dockerfile
+    runtime: nvidia
+    restart: unless-stopped
+    environment:
+      NODE_ID: node-yolo-gpu-1
+      NODE_RUNTIME: yolo
+      NODE_ENDPOINT: http://inference-node-yolo:8091
+      NODE_MODELS: yolo11n@1.0
+      NODE_TASK_TYPES: object_detection
+      NODE_MAX_CONCURRENT: "4"
+      NODE_RESOURCES_CPU: "4"
+      NODE_RESOURCES_GPU: "1"
+      NODE_RESOURCES_VRAM_MB: "8192"
+      YOLO_MODEL: yolo11n.pt
+      YOLO_CONF: "0.25"
+      YOLO_MAX_DET: "20"
+      YOLO_RESOLUTION: "640"
+      INFERENCE_BRIDGE_URL: http://inference-bridge:8090
+      NODE_AUTH_ADMIN_SECRET: ${NODE_AUTH_ADMIN_SECRET:?set in Coolify}
+      NODE_HEARTBEAT_INTERVAL_MS: "10000"
+    depends_on:
+      inference-bridge:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8091/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  inference-node-tensorrt:
+    labels: *coolify-labels
+    # This image is prebuilt and benchmarked on the target RTX 3070. Keeping it
+    # local avoids a multi-gigabyte CUDA rebuild during the first Coolify rollout.
+    image: nearhome/inference-node-tensorrt:gpu
+    runtime: nvidia
+    restart: unless-stopped
+    environment:
+      NODE_ID: node-tensorrt-gpu-1
+      NODE_RUNTIME: tensorrt
+      NODE_ENDPOINT: http://inference-node-tensorrt:8093
+      NODE_MODELS: yolo11n@1.0
+      NODE_TASK_TYPES: object_detection
+      NODE_MAX_CONCURRENT: "8"
+      NODE_RESOURCES_CPU: "8"
+      NODE_RESOURCES_GPU: "1"
+      NODE_RESOURCES_VRAM_MB: "8192"
+      YOLO_MODEL: yolo11n.engine
+      YOLO_CONF: "0.25"
+      YOLO_MAX_DET: "20"
+      YOLO_RESOLUTION: "640"
+      INFERENCE_BRIDGE_URL: http://inference-bridge:8090
+      NODE_AUTH_ADMIN_SECRET: ${NODE_AUTH_ADMIN_SECRET:?set in Coolify}
+      NODE_HEARTBEAT_INTERVAL_MS: "10000"
+    depends_on:
+      inference-bridge:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8093/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  inference-node-mediapipe:
+    labels: *coolify-labels
+    build:
+      context: .
+      dockerfile: apps/inference-node-mediapipe/Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ID: node-mediapipe-1
+      NODE_RUNTIME: mediapipe
+      NODE_ENDPOINT: http://inference-node-mediapipe:8092
+      NODE_MODELS: mediapipe_pose@0.10.0,mediapipe_face@0.10.0
+      NODE_TASK_TYPES: pose_detection,face_detection
+      NODE_MAX_CONCURRENT: "2"
+      NODE_RESOURCES_CPU: "4"
+      NODE_RESOURCES_GPU: "0"
+      MP_MIN_DET_CONF: "0.5"
+      MP_MIN_TRACK_CONF: "0.5"
+      INFERENCE_BRIDGE_URL: http://inference-bridge:8090
+      NODE_AUTH_ADMIN_SECRET: ${NODE_AUTH_ADMIN_SECRET:?set in Coolify}
+      NODE_HEARTBEAT_INTERVAL_MS: "15000"
+    depends_on:
+      inference-bridge:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8092/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  nearhome-postgres:
+  nearhome-redis:
+  nearhome-streams:
+  nearhome-frames:
